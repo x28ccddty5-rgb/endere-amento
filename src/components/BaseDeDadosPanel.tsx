@@ -5,7 +5,7 @@ import { Database, Search, PlusCircle, ShieldAlert, Check } from "lucide-react";
 interface BaseDeDadosPanelProps {
   productsList: Product[];
   slots: WarehouseSlot[];
-  onRegisterProduct: (ref: string, desc: string) => boolean;
+  onRegisterProduct: (ref: string, desc: string) => Promise<boolean>;
   hasAccess: (level: "Administrador" | "Operador" | "Consulta") => boolean;
 }
 
@@ -28,7 +28,7 @@ export const BaseDeDadosPanel: React.FC<BaseDeDadosPanelProps> = ({
     return refMatch || descMatch;
   });
 
-  const handleAddProduct = () => {
+  const handleAddProduct = async () => {
     if (isReadOnly) {
       alert("Seu nível de permissão (Consulta) não possui privilégios de cadastro.");
       return;
@@ -46,7 +46,7 @@ export const BaseDeDadosPanel: React.FC<BaseDeDadosPanelProps> = ({
       return;
     }
 
-    const success = onRegisterProduct(cleanRef, desc);
+    const success = await onRegisterProduct(cleanRef, desc);
     if (success) {
       setNewRef("");
       setNewDesc("");
