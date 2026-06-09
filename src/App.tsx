@@ -388,7 +388,7 @@ useEffect(() => {
 
   // History Log Filters
   const [histSearchSku, setHistSearchSku] = useState("");
-  const [histFilterEstoque, setHistFilterEstoque] = useState("1");
+  const [histFilterEstoque, setHistFilterEstoque] = useState("");
   const [histFilterModulo, setHistFilterModulo] = useState("");
   const [histFilterPosicao, setHistFilterPosicao] = useState("");
 
@@ -2464,49 +2464,69 @@ if (
           {/* TAB 4: HISTÓRICO */}
           {activeTab === "histórico" && (() => {
             const filteredHistory = history.filter((h) => {
-              return h.estoque === "1";
-            });
+
               if (histSearchSku.trim()) {
                 let cleanIn = histSearchSku.trim().toUpperCase();
                 if (cleanIn.startsWith("S")) cleanIn = cleanIn.slice(1);
+            
                 let cleanH = h.referencia.toUpperCase();
                 if (cleanH.startsWith("S")) cleanH = cleanH.slice(1);
+            
                 if (!cleanH.includes(cleanIn)) return false;
               }
+            
               if (histFilterEstoque) {
-
+            
                 const cleanH = String(h.estoque)
                   .replace("E", "")
                   .trim();
-              
+            
                 const cleanF = String(histFilterEstoque)
                   .replace("E", "")
                   .trim();
-              
-                if (Number(cleanH) !== Number(cleanF)) {
+            
+                if (cleanH !== cleanF) {
                   return false;
                 }
               }
+            
               if (histFilterModulo.trim()) {
-                const cleanH = h.modulo.replace(/^[RM]/i, "");
-                const cleanF = histFilterModulo.trim().replace(/^[RM]/i, "");
+            
+                const cleanH = String(h.modulo || "")
+                  .replace(/^[RM]/i, "");
+            
+                const cleanF = histFilterModulo
+                  .trim()
+                  .replace(/^[RM]/i, "");
+            
                 if (!cleanH.includes(cleanF)) return false;
               }
+            
               if (histFilterPosicao.trim()) {
-                const cleanH = h.posicao.replace(/^[RMG]/i, "").toUpperCase();
-                const cleanF = histFilterPosicao.trim().replace(/^[RMG]/i, "").toUpperCase();
-                const matchesCorredorText = "CORREDOR".includes(cleanF) || cleanF === "";
-                const isCorredorH = h.posicao === "";
-                
-                if (isCorredorH && matchesCorredorText) {
-                  // Keep match
-                } else if (!cleanH.includes(cleanF)) {
+            
+                const cleanH = String(h.posicao || "")
+                  .replace(/^[RMG]/i, "")
+                  .toUpperCase();
+            
+                const cleanF = histFilterPosicao
+                  .trim()
+                  .replace(/^[RMG]/i, "")
+                  .toUpperCase();
+            
+                if (!cleanH.includes(cleanF)) {
                   return false;
                 }
               }
+            
               return true;
             });
 
+            console.log("TOTAL HISTORY:", history.length);
+
+            console.log("FILTRADOS:", filteredHistory.length);
+            
+            console.table(history.slice(0, 10));
+      
             return (
               <div className="space-y-6">
                 <div className="bg-white border border-slate-200 rounded-xl p-6 shadow-xs">
