@@ -2476,19 +2476,21 @@ if (
               }
             
               if (histFilterEstoque) {
-            
-                const cleanH = String(h.estoque)
-                  .replace("E", "")
-                  .trim();
-            
-                const cleanF = String(histFilterEstoque)
-                  .replace("E", "")
-                  .trim();
-            
-                if (cleanH !== cleanF) {
-                  return false;
+
+                  console.log(
+                    "REGISTRO:",
+                    h.estoque,
+                    "FILTRO:",
+                    histFilterEstoque
+                  );
+                
+                  const cleanH = String(h.estoque).trim();
+                  const cleanF = String(histFilterEstoque).trim();
+                
+                  if (cleanH !== cleanF) {
+                    return false;
+                  }
                 }
-              }
             
               if (histFilterModulo.trim()) {
             
