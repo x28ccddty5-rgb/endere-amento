@@ -120,28 +120,32 @@ export default function App() {
 
 useEffect(() => {
   loadUsersFromSupabase();
+  loadProductsFromSupabase();
 }, []);
 
   // --- DYNAMIC REGISTERED CUSTOM PRODUCTS STATE ---
-  const [productsList, setProductsList] = useState<Product[]>(() => {
-    const saved = localStorage.getItem("eb_custom_products");
-    if (saved) {
-      try {
-        const parsed = JSON.parse(saved) as Product[];
-        const migrated = parsed.map(p => ({
-          ...p,
-          referencia: p.referencia.startsWith("S") ? p.referencia.slice(1) : p.referencia
-        }));
-        localStorage.setItem("eb_custom_products", JSON.stringify(migrated));
-        return migrated;
-      } catch (e) {
-        // Fallback if parsing fails
-      }
-    }
-    localStorage.setItem("eb_custom_products", JSON.stringify(PRODUCT_CATALOG));
-    return PRODUCT_CATALOG;
-  });
+  const [productsList, setProductsList] = useState<Product[]>([]);
 
+  const loadProductsFromSupabase = async () => {
+  const { data, error } = await supabase
+    .from("products")
+    .select("*");
+
+  if (error) {
+    console.error("Erro ao carregar produtos:", error);
+    return;
+  }
+
+  if (data) {
+    setProductsList(
+      data.map((p: any) => ({
+        referencia: p.referencia,
+        descricao: p.descricao
+      }))
+    );
+  }
+};
+  
   // Save changes to custom references list
   const registerNewProduct = (ref: string, desc: string): boolean => {
     const code = ref.trim().toUpperCase();
