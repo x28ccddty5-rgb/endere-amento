@@ -98,9 +98,15 @@ const loadHistoryFromSupabase = async (): Promise<HistoricoMov[]> => {
 const saveHistoryToSupabase = async (
   historyData: HistoricoMov[]
 ) => {
-  const { error } = await supabase
+  console.log("SALVANDO HISTORY:", historyData);
+
+  const { data, error } = await supabase
     .from("history")
-    .upsert(historyData);
+    .upsert(historyData)
+    .select();
+
+  console.log("HISTORY DATA:", data);
+  console.log("HISTORY ERROR:", error);
 
   if (error) {
     console.error("Erro ao salvar histórico:", error);
