@@ -146,6 +146,15 @@ useEffect(() => {
   loadProductsFromSupabase();
 }, []);
 
+useEffect(() => {
+  const loadSlots = async () => {
+    const data = await loadSlotsFromSupabase();
+    setSlots(data);
+  };
+
+  loadSlots();
+}, []);
+  
   // --- DYNAMIC REGISTERED CUSTOM PRODUCTS STATE ---
   const [productsList, setProductsList] = useState<Product[]>([]);
 
@@ -249,13 +258,7 @@ useEffect(() => {
 };
 
   // --- CORE SYSTEM DATA PERSISTENCE ---
-  const [slots, setSlots] = useState<WarehouseSlot[]>(() => {
-    const saved = localStorage.getItem("eb_slots_clean_v1");
-    if (saved) return JSON.parse(saved);
-    const initial = getInitialWarehouseSlots();
-    localStorage.setItem("eb_slots_clean_v1", JSON.stringify(initial));
-    return initial;
-  });
+  const [slots, setSlots] = useState<WarehouseSlot[]>([]);
 
   const [history, setHistory] = useState<HistoricoMov[]>(() => {
     const saved = localStorage.getItem("eb_history_clean_v1");
