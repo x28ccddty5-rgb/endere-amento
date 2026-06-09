@@ -163,6 +163,12 @@ useEffect(() => {
     setSlots(data);
   };
 
+  useEffect(() => {
+  const loadHistory = async () => {
+    const data = await loadHistoryFromSupabase();
+    setHistory(data);
+  };
+  
   loadSlots();
 }, []);
   
@@ -271,13 +277,7 @@ useEffect(() => {
   // --- CORE SYSTEM DATA PERSISTENCE ---
   const [slots, setSlots] = useState<WarehouseSlot[]>([]);
 
-  const [history, setHistory] = useState<HistoricoMov[]>(() => {
-    const saved = localStorage.getItem("eb_history_clean_v1");
-    if (saved) return JSON.parse(saved);
-    const initial = getInitialHistory(getInitialWarehouseSlots());
-    localStorage.setItem("eb_history_clean_v1", JSON.stringify(initial));
-    return initial;
-  });
+  const [history, setHistory] = useState<HistoricoMov[]>([]);
 
   const [divergencias, setDivergencias] = useState<Divergencia[]>(() => {
     const saved = localStorage.getItem("eb_divergencias_clean_v1");
@@ -300,8 +300,8 @@ useEffect(() => {
   }, [slots]);
 
   useEffect(() => {
-    localStorage.setItem("eb_history_clean_v1", JSON.stringify(history));
-  }, [history]);
+  saveHistoryToSupabase(history);
+}, [history]);
 
   useEffect(() => {
     localStorage.setItem("eb_divergencias_clean_v1", JSON.stringify(divergencias));
