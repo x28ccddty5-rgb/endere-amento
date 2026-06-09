@@ -185,13 +185,17 @@ useEffect(() => {
 
   const handleDeleteUser = async (username: string) => {
 
-  const { error } = await supabase
+  console.log("Tentando excluir:", username);
+
+  const { data, error } = await supabase
     .from("users")
     .delete()
     .eq("username", username);
 
+  console.log("DELETE DATA:", data);
+  console.log("DELETE ERROR:", error);
+
   if (error) {
-    console.error("Erro ao excluir usuário:", error);
     alert("Erro ao excluir usuário.");
     return;
   }
