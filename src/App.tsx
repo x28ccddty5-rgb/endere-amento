@@ -428,6 +428,27 @@ useEffect(() => {
     return prod ? prod.descricao : "";
   };
 
+const addLancamentoRow = () => {
+  const defaultRow: LancamentoRow = {
+    id: `ROW-${generateId()}`,
+    data: launchDate,
+    estoque: "1",
+    modulo: "",
+    posicao: "",
+    referencia: "",
+    quantidade: "",
+    tipo: "Entrada",
+    dataChacote: "",
+    hora: new Date().toLocaleTimeString("pt-BR", {
+      hour: "2-digit",
+      minute: "2-digit"
+    }),
+    responsavel: operator
+  };
+
+  setLancamentoRows(prev => [...prev, defaultRow]);
+};
+  
   const removeLancamentoRow = (id: string) => {
     if (lancamentoRows.length === 1) {
   setLancamentoRows([]);
