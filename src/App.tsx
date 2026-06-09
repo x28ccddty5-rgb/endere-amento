@@ -71,6 +71,11 @@ const saveSlotsToSupabase = async (slotsData: WarehouseSlot[]) => {
   }
 };
 
+const refreshSlotsFromSupabase = async () => {
+  const data = await loadSlotsFromSupabase();
+  setSlots(data);
+};
+
 export default function App() {
   // --- USER AUTHENTICATION & SECURITY STATE ---
   const [users, setUsers] = useState<AppUser[]>(() => {
@@ -552,7 +557,7 @@ useEffect(() => {
     ]);
   };
 
-  const handleUnitaryLaunch = (type: "Entrada" | "Saída") => {
+  const handleUnitaryLaunch = async (type: "Entrada" | "Saída") => {
     if (!hasAccess("Operador")) {
       alert("Seu nível de permissão jurídica (Consulta) não permite efetuar lançamentos lógicos.");
       return;
@@ -651,7 +656,10 @@ useEffect(() => {
       updatedSlots = updatedSlots.map((s) => (s.id === targetSlot.id ? targetSlot : s));
     }
 
-    setSlots(updatedSlots);
+    await saveSlotsToSupabase(updatedSlots);
+
+    const data = await loadSlotsFromSupabase();
+    setSlots(data);
 
     // Create history record
     const newMovement: HistoricoMov = {
