@@ -415,73 +415,7 @@ useEffect(() => {
   );
 
   // --- LANÇAMENTO (TABULAR BATCH LEDGER) ---
-  const [lancamentoRows, setLancamentoRows] = useState<LancamentoRow[]>([
-    {
-      id: "ROW-1",
-      data: "2026-06-09",
-      estoque: "E1",
-      modulo: "1",
-      posicao: "",
-      referencia: "21401G",
-      quantidade: 450,
-      tipo: "Entrada",
-      dataChacote: "",
-      hora: "21:22",
-      responsavel: "Administrador Geral"
-    },
-    {
-      id: "ROW-2",
-      data: "2026-06-09",
-      estoque: "E2",
-      modulo: "5",
-      posicao: "A1",
-      referencia: "",
-      quantidade: "",
-      tipo: "Entrada",
-      dataChacote: "",
-      hora: "21:22",
-      responsavel: "Administrador Geral"
-    },
-    {
-      id: "ROW-3",
-      data: "2026-06-09",
-      estoque: "E3",
-      modulo: "1",
-      posicao: "A1",
-      referencia: "",
-      quantidade: "",
-      tipo: "Entrada",
-      dataChacote: "",
-      hora: "21:22",
-      responsavel: "Administrador Geral"
-    },
-    {
-      id: "ROW-4",
-      data: "2026-06-09",
-      estoque: "E1",
-      modulo: "1",
-      posicao: "",
-      referencia: "",
-      quantidade: "",
-      tipo: "Entrada",
-      dataChacote: "",
-      hora: "21:22",
-      responsavel: "Administrador Geral"
-    },
-    {
-      id: "ROW-5",
-      data: "2026-06-09",
-      estoque: "E2",
-      modulo: "5",
-      posicao: "A1",
-      referencia: "",
-      quantidade: "",
-      tipo: "Entrada",
-      dataChacote: "",
-      hora: "21:22",
-      responsavel: "Administrador Geral"
-    }
-  ]);
+  const [lancamentoRows, setLancamentoRows] = useState<LancamentoRow[]>([]);
 
   // Bulk Excel import panel state
   const [showBulkImport, setShowBulkImport] = useState(false);
@@ -494,40 +428,11 @@ useEffect(() => {
     return prod ? prod.descricao : "";
   };
 
-  const addLancamentoRow = () => {
-    const defaultRow: LancamentoRow = {
-      id: `ROW-${generateId()}`,
-      data: launchDate,
-      estoque: "E2",
-      modulo: "5",
-      posicao: "A1",
-      referencia: "",
-      quantidade: "",
-      tipo: "Entrada",
-      dataChacote: "",
-      hora: new Date().toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" }),
-      responsavel: operator
-    };
-    setLancamentoRows([...lancamentoRows, defaultRow]);
-  };
-
   const removeLancamentoRow = (id: string) => {
     if (lancamentoRows.length === 1) {
-      setLancamentoRows([{
-        id: "ROW-1",
-        data: launchDate,
-        estoque: "E2",
-        modulo: "5",
-        posicao: "A1",
-        referencia: "",
-        quantidade: "",
-        tipo: "Entrada",
-        dataChacote: "",
-        hora: new Date().toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" }),
-        responsavel: operator
-      }]);
-      return;
-    }
+  setLancamentoRows([]);
+  return;
+}
     setLancamentoRows(lancamentoRows.filter(r => r.id !== id));
   };
 
@@ -608,21 +513,7 @@ useEffect(() => {
     alert(`Lote processado!\n✔️ ${processedCount} movimentações consolidadas de modo sequencial.\n⚠️ ${errorCount} divergências identificadas e enviadas para revisão.`);
 
     // Clear grid
-    setLancamentoRows([
-      {
-        id: "ROW-1",
-        data: launchDate,
-        estoque: "E1",
-        modulo: "11",
-        posicao: "",
-        referencia: "",
-        quantidade: "",
-        tipo: "Entrada",
-        dataChacote: "",
-        hora: new Date().toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" }),
-        responsavel: operator
-      }
-    ]);
+    setLancamentoRows([]);
   };
 
   const handleUnitaryLaunch = async (type: "Entrada" | "Saída") => {
