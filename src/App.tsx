@@ -62,9 +62,15 @@ const loadSlotsFromSupabase = async (): Promise<WarehouseSlot[]> => {
 };
 
 const saveSlotsToSupabase = async (slotsData: WarehouseSlot[]) => {
-  const { error } = await supabase
+  console.log("SALVANDO SLOTS:", slotsData);
+
+  const { data, error } = await supabase
     .from("slots")
-    .upsert(slotsData);
+    .upsert(slotsData)
+    .select();
+
+  console.log("UPSERT DATA:", data);
+  console.log("UPSERT ERROR:", error);
 
   if (error) {
     console.error("Erro ao salvar slots:", error);
