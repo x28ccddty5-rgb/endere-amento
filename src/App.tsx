@@ -1083,7 +1083,9 @@ if (
 
   // --- COMPILATING SYSTEM VIEWS ---
   const filteredSlots = slots.filter(s => {
-    const matchesRef = searchRef ? s.referencia.toLowerCase().includes(searchRef.toLowerCase()) : true;
+    const matchesRef = searchRef
+  ? s.referencia.toLowerCase() === searchRef.toLowerCase()
+  : true;
     const matchesDesc = searchDesc ? s.descricao.toLowerCase().includes(searchDesc.toLowerCase()) : true;
     
     // Normalize both for flawless comparison
