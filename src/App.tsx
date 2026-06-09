@@ -2566,9 +2566,9 @@ if (
                         className="w-full bg-white border border-slate-300 rounded p-1.5 font-bold text-slate-800 focus:outline-none"
                       >
                         <option value="">Todos</option>
-                        <option value="E1">1</option>
-                        <option value="E2">2</option>
-                        <option value="E3">3</option>
+                        <option value="1">1</option>
+                        <option value="2">2</option>
+                        <option value="3">3</option>
                       </select>
                     </div>
                     <div>
