@@ -354,7 +354,7 @@ useEffect(() => {
     return (saved as AppMode) || "basico";
   });
 
-  const [activeTab, setActiveTab] = useState<string>("dashboard");
+  const [activeTab, setActiveTab] = useState<string>("pesquisa");
 
   // Save changes to localStorage on modifier updates
   useEffect(() => {
@@ -384,7 +384,7 @@ useEffect(() => {
   // Product Search Coordinates (Pesquisa Produtos) Filters
   const [searchRef, setSearchRef] = useState("");
   const [searchDesc, setSearchDesc] = useState("");
-  const [filterEstoque, setFilterEstoque] = useState("E1");
+  const [filterEstoque, setFilterEstoque] = useState("");
   const [searchModulo, setSearchModulo] = useState("");
   const [searchPosicao, setSearchPosicao] = useState("");
 
@@ -1321,7 +1321,12 @@ if (
             <button
               onClick={() => setActiveTab("dashboard")}
               className={`w-full flex items-center space-x-3 px-4 py-2 text-xs font-bold transition-all ${
-                activeTab === "dashboard" 
+                {activeTab === "dashboard" &&
+                (currentUser.role === "Administrador" ||
+                 currentUser.role === "Lideranca" ||
+                 currentUser.role === "Visualizador") && (
+                  <Dashboard />
+              )} 
                   ? "bg-blue-600/15 border-l-4 border-blue-500 text-blue-400 font-bold text-xs" 
                   : "hover:bg-slate-800 text-slate-350"
               }`}
@@ -1423,12 +1428,14 @@ if (
           )}
 
           {/* Render advanced sections if any advanced tab is accessible */}
-          {(canAccessTab("mapa") || canAccessTab("ai")) && (
+          {currentUser?.perfil === "Administrador" &&
+           (canAccessTab("mapa") || canAccessTab("ai")) && (
             <>
               <span className="text-[9px] text-slate-500 font-extrabold block pt-4 pb-1.5 px-4 uppercase tracking-wider">Avançado & Controle</span>
 
-              {canAccessTab("mapa") && (
-                <button
+              {canAccessTab("mapa") &&
+             currentUser?.perfil === "Administrador" && (
+                 <button
                   onClick={() => {
                     setAppMode("avancado");
                     setActiveTab("mapa");
@@ -1573,7 +1580,12 @@ if (
         <div className="p-6 flex-1 space-y-6">
           
           {/* TAB 1: DASHBOARD VIEW */}
-          {activeTab === "dashboard" && (
+          {activeTab === "dashboard" &&
+           (
+             currentUser?.perfil === "Administrador" ||
+             currentUser?.perfil === "Lideranca" ||
+             currentUser?.perfil === "Visualizador"
+           ) && (
             <div className="space-y-6">
               
               {/* Linked versions feedback info */}
@@ -1703,6 +1715,10 @@ if (
                         Limpar Planilha
                       </button>
                     )}
+                    {(
+                      currentUser?.perfil === "Administrador" ||
+                      currentUser?.perfil === "Lideranca"
+                    ) && (
                     <button 
                       onClick={handleExportarEnderecamento}
                       className="text-xs text-indigo-600 hover:text-indigo-800 transition font-bold cursor-pointer flex items-center gap-1.5 font-sans uppercase tracking-wider text-[11px]"
