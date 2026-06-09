@@ -172,8 +172,8 @@ useEffect(() => {
     setHistory(data);
   };
   
-  loadSlots();
-}, []);
+   loadHistory();
+  }, []);
   
   // --- DYNAMIC REGISTERED CUSTOM PRODUCTS STATE ---
   const [productsList, setProductsList] = useState<Product[]>([]);
