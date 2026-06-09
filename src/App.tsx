@@ -2477,8 +2477,17 @@ if (
                 if (!cleanH.includes(cleanIn)) return false;
               }
               if (histFilterEstoque) {
-                const cleanH = h.estoque.replace("E", "");
-                const cleanF = histFilterEstoque.replace("E", "");
+
+                console.log(
+                  "Histórico:",
+                  h.estoque,
+                  "Filtro:",
+                  histFilterEstoque
+                );
+              
+                const cleanH = String(h.estoque).replace("E", "");
+                const cleanF = String(histFilterEstoque).replace("E", "");
+              
                 if (cleanH !== cleanF) return false;
               }
               if (histFilterModulo.trim()) {
