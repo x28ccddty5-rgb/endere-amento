@@ -651,9 +651,21 @@ useEffect(() => {
     const posVal = (estVal === "1" || !unitPosicao || unitPosicao.trim() === "") ? "" : unitPosicao.trim().toUpperCase();
 
     // Locate existing slot matching estoque, modulo, and posicao
-    const slotIdx = slots.findIndex(
-      (s) => s.estoque === estVal && s.modulo === cleanCorredor && s.posicao === posVal
+    const slotIdx = slots.findIndex((s) => {
+    if (estVal === "1") {
+      return (
+        s.estoque === estVal &&
+        s.modulo === cleanCorredor &&
+        s.referencia === cleanSku
+      );
+    }
+  
+    return (
+      s.estoque === estVal &&
+      s.modulo === cleanCorredor &&
+      s.posicao === posVal
     );
+  });
 
     let updatedSlots = [...slots];
     let targetSlot: WarehouseSlot;
