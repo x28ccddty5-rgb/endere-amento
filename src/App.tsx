@@ -2134,6 +2134,7 @@ const addLancamentoRow = () => {
                     <table className="w-full text-xs text-left border-collapse">
                       <thead>
                         <tr className="bg-slate-100 border-b border-slate-200 text-slate-600 text-[10px] uppercase font-bold tracking-wider">
+                          <th className="w-12 text-center">#</th>
                           <th className="py-2.5 px-3 w-32">Data do Lançamento</th>
                           <th className="py-2.5 px-3 w-36">Estoque</th>
                           <th className="py-2.5 px-3 w-32">Módulo / Rua</th>
@@ -2149,11 +2150,15 @@ const addLancamentoRow = () => {
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-150">
-                        {lancamentoRows.map((row) => {
+                        {lancamentoRows.map((row, index) => {
                           const isE1 = row.estoque === "E1";
                           const desc = getProductDesc(row.referencia);
+                        
                           return (
                             <tr key={row.id} className="bg-white hover:bg-slate-50 transition-colors">
+                              <td className="py-2 px-2 text-center font-bold text-slate-600">
+                              {index + 1}
+                            </td>
                               {/* Data Lançamento */}
                               <td className="py-2 px-2.5">
                                 <input 
