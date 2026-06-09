@@ -194,32 +194,44 @@ export function processLancamentosInSequence(
     const posVal = (estVal === "1" || !row.posicao || row.posicao.trim() === "") ? "" : row.posicao.trim().toUpperCase();
 
     // Locate matching slot
-    let slotIdx = slots.findIndex(s => 
-      s.estoque === estVal && 
-      s.modulo === modVal && 
-      s.posicao === posVal
+    let slotIdx = slots.findIndex(s => {
+  if (estVal === "1") {
+    return (
+      s.estoque === estVal &&
+      s.modulo === modVal &&
+      s.referencia.toUpperCase() === refUpper
     );
+  }
 
-    // If slot doesn't exist, create it on the fly
-    let slot: WarehouseSlot;
-    if (slotIdx === -1) {
-      slot = {
-        id: `${estVal}-${modVal}-${posVal}`,
-        estoque: estVal,
-        modulo: modVal,
-        posicao: posVal,
-        referencia: "",
-        descricao: "",
-        saldo: 0,
-        dataChacote: "",
-        ultimaData: "",
-        ultimaHora: "",
-        ultimoResponsavel: "",
-      };
-      slots.push(slot);
-    } else {
-      slot = slots[slotIdx];
-    }
+  return (
+    s.estoque === estVal &&
+    s.modulo === modVal &&
+    s.posicao === posVal
+  );
+});
+// If slot doesn't exist, create it on the fly
+let slot: WarehouseSlot;
+if (slotIdx === -1) {
+  slot = {
+    id:
+      estVal === "1"
+        ? `${estVal}-${modVal}-${refUpper}`
+        : `${estVal}-${modVal}-${posVal}`,
+    estoque: estVal,
+    modulo: modVal,
+    posicao: posVal,
+    referencia: "",
+    descricao: "",
+    saldo: 0,
+    dataChacote: "",
+    ultimaData: "",
+    ultimaHora: "",
+    ultimoResponsavel: "",
+  };
+  slots.push(slot);
+} else {
+  slot = slots[slotIdx];
+}
 
     const currentRef = slot.referencia;
     const currentSaldo = slot.saldo;
