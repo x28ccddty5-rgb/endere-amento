@@ -48,6 +48,19 @@ import {
   UserPlus
 } from "lucide-react";
 
+const loadSlotsFromSupabase = async (): Promise<WarehouseSlot[]> => {
+  const { data, error } = await supabase
+    .from("slots")
+    .select("*");
+
+  if (error) {
+    console.error("Erro ao carregar slots:", error);
+    return [];
+  }
+
+  return (data as WarehouseSlot[]) || [];
+};
+
 export default function App() {
   // --- USER AUTHENTICATION & SECURITY STATE ---
   const [users, setUsers] = useState<AppUser[]>(() => {
