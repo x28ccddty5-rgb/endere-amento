@@ -1317,19 +1317,19 @@ if (
         <nav className="flex-1 py-4 space-y-0.5 overflow-y-auto">
           <span className="text-[9px] text-slate-500 font-extrabold block pb-1.5 px-4 uppercase tracking-wider">Módulos Logísticos</span>
           
-          {canAccessTab("dashboard") && (
-            <button
-              onClick={() => setActiveTab("dashboard")}
-              className={`w-full flex items-center space-x-3 px-4 py-2 text-xs font-bold transition-all ${
-                {activeTab === "dashboard" &&
-                (currentUser.role === "Administrador" ||
-                 currentUser.role === "Lideranca" ||
-                 currentUser.role === "Visualizador") && (
-                  <Dashboard />
-              )} 
-                  ? "bg-blue-600/15 border-l-4 border-blue-500 text-blue-400 font-bold text-xs" 
-                  : "hover:bg-slate-800 text-slate-350"
-              }`}
+          {canAccessTab("dashboard") &&
+           (
+             currentUser?.role === "Administrador" ||
+             currentUser?.role === "Lideranca" ||
+             currentUser?.role === "Visualizador"
+           ) && (
+              <button
+            onClick={() => setActiveTab("dashboard")}
+            className={`w-full flex items-center space-x-3 px-4 py-2 text-xs font-bold transition-all ${
+              activeTab === "dashboard"
+                ? "bg-blue-600/15 border-l-4 border-blue-500 text-blue-400"
+                : "hover:bg-slate-800 text-slate-350"
+            }`}
             >
               <LayoutDashboard className="w-4 h-4 shrink-0" />
               <span>DASHBOARD</span>
@@ -1428,13 +1428,13 @@ if (
           )}
 
           {/* Render advanced sections if any advanced tab is accessible */}
-          {currentUser?.perfil === "Administrador" &&
+          {currentUser?.role === "Administrador" &&
            (canAccessTab("mapa") || canAccessTab("ai")) && (
             <>
               <span className="text-[9px] text-slate-500 font-extrabold block pt-4 pb-1.5 px-4 uppercase tracking-wider">Avançado & Controle</span>
 
               {canAccessTab("mapa") &&
-             currentUser?.perfil === "Administrador" && (
+             currentUser?.role === "Administrador" && (
                  <button
                   onClick={() => {
                     setAppMode("avancado");
@@ -1582,9 +1582,9 @@ if (
           {/* TAB 1: DASHBOARD VIEW */}
           {activeTab === "dashboard" &&
            (
-             currentUser?.perfil === "Administrador" ||
-             currentUser?.perfil === "Lideranca" ||
-             currentUser?.perfil === "Visualizador"
+             currentUser?.role === "Administrador" ||
+             currentUser?.role === "Lideranca" ||
+             currentUser?.role === "Visualizador"
            ) && (
             <div className="space-y-6">
               
@@ -1716,8 +1716,8 @@ if (
                       </button>
                     )}
                     {(
-                      currentUser?.perfil === "Administrador" ||
-                      currentUser?.perfil === "Lideranca"
+                      currentUser?.role === "Administrador" ||
+                      currentUser?.role === "Lideranca"
                     ) && (
                     <button 
                       onClick={handleExportarEnderecamento}
@@ -1726,6 +1726,8 @@ if (
                       <Download className="w-3.5 h-3.5 text-indigo-500" />
                       Exportar Endereçamento (CSV)
                     </button>
+                       </>
+                  )}
                     <button 
                       onClick={handleClearSlotsFilter}
                       className="text-xs text-slate-400 hover:text-blue-600 transition font-medium cursor-pointer font-sans uppercase tracking-wider text-[11px]"
