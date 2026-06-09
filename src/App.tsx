@@ -77,11 +77,6 @@ const saveSlotsToSupabase = async (slotsData: WarehouseSlot[]) => {
   }
 };
 
-const refreshSlotsFromSupabase = async () => {
-  const data = await loadSlotsFromSupabase();
-  setSlots(data);
-};
-
 const loadHistoryFromSupabase = async (): Promise<HistoricoMov[]> => {
   const { data, error } = await supabase
     .from("history")
@@ -393,7 +388,7 @@ useEffect(() => {
 
   // History Log Filters
   const [histSearchSku, setHistSearchSku] = useState("");
-  const [histFilterEstoque, setHistFilterEstoque] = useState("E1");
+  const [histFilterEstoque, setHistFilterEstoque] = useState("1");
   const [histFilterModulo, setHistFilterModulo] = useState("");
   const [histFilterPosicao, setHistFilterPosicao] = useState("");
 
@@ -1281,7 +1276,7 @@ if (
     }
 
     // Liderança sees all except user administration & advanced twins/AI mode
-    if (role === "Liderança") {
+    if (role === "Lideranca") {
       return !["users", "mapa", "ai"].includes(tab);
     }
 
