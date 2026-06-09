@@ -163,6 +163,9 @@ useEffect(() => {
     setSlots(data);
   };
 
+    loadSlots();
+}, []);
+  
   useEffect(() => {
   const loadHistory = async () => {
     const data = await loadHistoryFromSupabase();
