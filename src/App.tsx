@@ -2478,17 +2478,17 @@ if (
               }
               if (histFilterEstoque) {
 
-                console.log(
-                  "Histórico:",
-                  h.estoque,
-                  "Filtro:",
-                  histFilterEstoque
-                );
+                const cleanH = String(h.estoque)
+                  .replace("E", "")
+                  .trim();
               
-                const cleanH = String(h.estoque).replace("E", "");
-                const cleanF = String(histFilterEstoque).replace("E", "");
+                const cleanF = String(histFilterEstoque)
+                  .replace("E", "")
+                  .trim();
               
-                if (cleanH !== cleanF) return false;
+                if (Number(cleanH) !== Number(cleanF)) {
+                  return false;
+                }
               }
               if (histFilterModulo.trim()) {
                 const cleanH = h.modulo.replace(/^[RM]/i, "");
