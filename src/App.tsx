@@ -2525,7 +2525,7 @@ if (
 
             console.log("FILTRADOS:", filteredHistory.length);
             
-            console.table(history.slice(0, 10));
+            console.log("PRIMEIRO REGISTRO:", history[0]);
       
             return (
               <div className="space-y-6">
