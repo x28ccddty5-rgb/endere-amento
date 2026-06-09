@@ -61,6 +61,16 @@ const loadSlotsFromSupabase = async (): Promise<WarehouseSlot[]> => {
   return (data as WarehouseSlot[]) || [];
 };
 
+const saveSlotsToSupabase = async (slotsData: WarehouseSlot[]) => {
+  const { error } = await supabase
+    .from("slots")
+    .upsert(slotsData);
+
+  if (error) {
+    console.error("Erro ao salvar slots:", error);
+  }
+};
+
 export default function App() {
   // --- USER AUTHENTICATION & SECURITY STATE ---
   const [users, setUsers] = useState<AppUser[]>(() => {
@@ -272,7 +282,7 @@ useEffect(() => {
 
   // Save changes to localStorage on modifier updates
   useEffect(() => {
-    localStorage.setItem("eb_slots_clean_v1", JSON.stringify(slots));
+  saveSlotsToSupabase(slots);
   }, [slots]);
 
   useEffect(() => {
