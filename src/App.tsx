@@ -82,6 +82,56 @@ const refreshSlotsFromSupabase = async () => {
   setSlots(data);
 };
 
+const loadHistoryFromSupabase = async (): Promise<HistoricoMov[]> => {
+  const { data, error } = await supabase
+    .from("history")
+    .select("*");
+
+  if (error) {
+    console.error("Erro ao carregar histórico:", error);
+    return [];
+  }
+
+  return (data as HistoricoMov[]) || [];
+};
+
+const saveHistoryToSupabase = async (
+  historyData: HistoricoMov[]
+) => {
+  const { error } = await supabase
+    .from("history")
+    .upsert(historyData);
+
+  if (error) {
+    console.error("Erro ao salvar histórico:", error);
+  }
+};
+
+const loadDivergenciasFromSupabase = async (): Promise<Divergencia[]> => {
+  const { data, error } = await supabase
+    .from("divergencias")
+    .select("*");
+
+  if (error) {
+    console.error("Erro ao carregar divergências:", error);
+    return [];
+  }
+
+  return (data as Divergencia[]) || [];
+};
+
+const saveDivergenciasToSupabase = async (
+  divergenciasData: Divergencia[]
+) => {
+  const { error } = await supabase
+    .from("divergencias")
+    .upsert(divergenciasData);
+
+  if (error) {
+    console.error("Erro ao salvar divergências:", error);
+  }
+};
+
 export default function App() {
   // --- USER AUTHENTICATION & SECURITY STATE ---
   const [users, setUsers] = useState<AppUser[]>(() => {
@@ -174,6 +224,15 @@ useEffect(() => {
   
    loadHistory();
   }, []);
+
+useEffect(() => {
+  const loadDivergencias = async () => {
+    const data = await loadDivergenciasFromSupabase();
+    setDivergencias(data);
+  };
+
+  loadDivergencias();
+}, []);
   
   // --- DYNAMIC REGISTERED CUSTOM PRODUCTS STATE ---
   const [productsList, setProductsList] = useState<Product[]>([]);
@@ -282,13 +341,7 @@ useEffect(() => {
 
   const [history, setHistory] = useState<HistoricoMov[]>([]);
 
-  const [divergencias, setDivergencias] = useState<Divergencia[]>(() => {
-    const saved = localStorage.getItem("eb_divergencias_clean_v1");
-    if (saved) return JSON.parse(saved);
-    const initial = getInitialDivergencias();
-    localStorage.setItem("eb_divergencias_clean_v1", JSON.stringify(initial));
-    return initial;
-  });
+  const [divergencias, setDivergencias] = useState<Divergencia[]>([]);
 
   const [appMode, setAppMode] = useState<AppMode>(() => {
     const saved = localStorage.getItem("eb_mode");
@@ -307,8 +360,8 @@ useEffect(() => {
 }, [history]);
 
   useEffect(() => {
-    localStorage.setItem("eb_divergencias_clean_v1", JSON.stringify(divergencias));
-  }, [divergencias]);
+  saveDivergenciasToSupabase(divergencias);
+}, [divergencias]);
 
   useEffect(() => {
     localStorage.setItem("eb_mode", appMode);
