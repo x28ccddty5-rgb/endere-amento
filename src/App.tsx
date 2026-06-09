@@ -183,11 +183,23 @@ useEffect(() => {
   alert("Usuário cadastrado com sucesso!");
 };
 
-  const handleDeleteUser = (username: string) => {
-    const updated = users.filter((u) => u.username !== username);
-    setUsers(updated);
-    localStorage.setItem("eb_users", JSON.stringify(updated));
-  };
+  const handleDeleteUser = async (username: string) => {
+
+  const { error } = await supabase
+    .from("users")
+    .delete()
+    .eq("username", username);
+
+  if (error) {
+    console.error("Erro ao excluir usuário:", error);
+    alert("Erro ao excluir usuário.");
+    return;
+  }
+
+  await loadUsersFromSupabase();
+
+  alert("Usuário excluído com sucesso!");
+};
 
   // --- CORE SYSTEM DATA PERSISTENCE ---
   const [slots, setSlots] = useState<WarehouseSlot[]>(() => {
