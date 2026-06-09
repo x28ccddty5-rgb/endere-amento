@@ -23,7 +23,7 @@ export const BaseDeDadosPanel: React.FC<BaseDeDadosPanelProps> = ({
 
   const filteredProducts = productsList.filter((p) => {
     const q = searchQuery.toLowerCase();
-    const refMatch = p.referencia.toLowerCase().includes(q);
+    const refMatch = p.referencia.toLowerCase() === q;
     const descMatch = p.descricao.toLowerCase().includes(q);
     return refMatch || descMatch;
   });
