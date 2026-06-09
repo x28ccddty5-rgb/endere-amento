@@ -1726,7 +1726,6 @@ if (
                       <Download className="w-3.5 h-3.5 text-indigo-500" />
                       Exportar Endereçamento (CSV)
                     </button>
-                       </>
                   )}
                     <button 
                       onClick={handleClearSlotsFilter}
