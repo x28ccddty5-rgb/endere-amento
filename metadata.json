@@ -1,0 +1,6 @@
+{
+  "name": "Endereçamento de Estoque",
+  "description": "Sistema integrado de endereçamento de estoque básico e avançado com controle de lançamentos, posições, divergências e analytics de armazenagem.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
