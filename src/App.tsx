@@ -147,20 +147,36 @@ useEffect(() => {
 };
   
   // Save changes to custom references list
-  const registerNewProduct = (ref: string, desc: string): boolean => {
-    const code = ref.trim().toUpperCase();
-    if (!code || !desc.trim()) return false;
-    
-    if (productsList.some(p => p.referencia.toUpperCase() === code)) {
-      alert(`Produto com Referência ${code} já está cadastrado.`);
-      return false;
-    }
+  const registerNewProduct = async (ref: string, desc: string): Promise<boolean> => {
+  const code = ref.trim().toUpperCase();
 
-    const updated = [...productsList, { referencia: code, descricao: desc.trim() }];
-    setProductsList(updated);
-    localStorage.setItem("eb_custom_products", JSON.stringify(updated));
-    return true;
-  };
+  if (!code || !desc.trim()) return false;
+
+  if (productsList.some(p => p.referencia.toUpperCase() === code)) {
+    alert(`Produto com Referência ${code} já está cadastrado.`);
+    return false;
+  }
+
+  const { error } = await supabase
+    .from("products")
+    .insert([
+      {
+        referencia: code,
+        descricao: desc.trim()
+      }
+    ]);
+
+  if (error) {
+    console.error(error);
+    alert("Erro ao salvar produto.");
+    return false;
+  }
+
+  await loadProductsFromSupabase();
+
+  alert("Produto cadastrado com sucesso!");
+  return true;
+};
 
   // User Administration callbacks
   const handleRegisterUser = async (newUser: AppUser) => {
