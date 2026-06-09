@@ -422,6 +422,11 @@ useEffect(() => {
   const [bulkText, setBulkText] = useState("");
   const [bulkFeedback, setBulkFeedback] = useState("");
 
+  const [filtroSkuLote, setFiltroSkuLote] = useState("");
+  const [filtroModuloLote, setFiltroModuloLote] = useState("");
+  const [filtroPosicaoLote, setFiltroPosicaoLote] = useState("");
+  const [filtroEstoqueLote, setFiltroEstoqueLote] = useState("");
+  
   // Real-time product lookup
   const getProductDesc = (ref: string) => {
     const prod = findProductInList(ref, productsList);
@@ -482,6 +487,38 @@ const addLancamentoRow = () => {
     }));
   };
 
+const lancamentoRowsFiltradas = lancamentoRows.filter((row) => {
+    if (
+    filtroSkuLote &&
+    row.referencia.toUpperCase() !== filtroSkuLote.toUpperCase()
+  ) {
+    return false;
+  }
+
+  if (
+    filtroModuloLote &&
+    !row.modulo.includes(filtroModuloLote)
+  ) {
+    return false;
+  }
+
+  if (
+    filtroPosicaoLote &&
+    !row.posicao.toUpperCase().includes(filtroPosicaoLote.toUpperCase())
+  ) {
+    return false;
+  }
+
+  if (
+    filtroEstoqueLote &&
+    row.estoque !== filtroEstoqueLote
+  ) {
+    return false;
+  }
+
+  return true;
+});
+  
   // Automated Suggestion of empty slot matching SKU
   const handleAutoSuggestSlot = (id: string, ref: string) => {
     if (!ref.trim()) return;
@@ -2133,24 +2170,81 @@ const addLancamentoRow = () => {
                   <div className="min-w-[1100px] border border-slate-350 rounded-xl overflow-hidden bg-slate-50 shadow-inner">
                     <table className="w-full text-xs text-left border-collapse">
                       <thead>
-                        <tr className="bg-slate-100 border-b border-slate-200 text-slate-600 text-[10px] uppercase font-bold tracking-wider">
-                          <th className="w-12 text-center">#</th>
-                          <th className="py-2.5 px-3 w-32">Data do Lançamento</th>
-                          <th className="py-2.5 px-3 w-36">Estoque</th>
-                          <th className="py-2.5 px-3 w-32">Módulo / Rua</th>
-                          <th className="py-2.5 px-3 w-32">Posição</th>
-                          <th className="py-2.5 px-3 w-40 font-mono">Produto SKU</th>
-                          <th className="py-2.5 px-3">Descrição (Auxiliar)</th>
-                          <th className="py-2.5 px-3 w-28 text-right">Quant. (pçs)</th>
-                          <th className="py-2.5 px-3 w-32 text-center">Tipo</th>
-                          <th className="py-2.5 px-3 w-32">Data Chacote</th>
-                          <th className="py-2.5 px-3 w-24">Hora</th>
-                          <th className="py-2.5 px-3 w-32">Responsável</th>
-                          <th className="py-2.5 px-2 w-12 text-center">Remover</th>
-                        </tr>
-                      </thead>
+                          <tr className="bg-slate-100 border-b border-slate-200 text-slate-600 text-[10px] uppercase font-bold tracking-wider">
+                            <th className="w-12 text-center">#</th>
+                            <th className="py-2.5 px-3 w-32">Data do Lançamento</th>
+                            <th className="py-2.5 px-3 w-36">Estoque</th>
+                            <th className="py-2.5 px-3 w-32">Módulo / Rua</th>
+                            <th className="py-2.5 px-3 w-32">Posição</th>
+                            <th className="py-2.5 px-3 w-40 font-mono">Produto SKU</th>
+                            <th className="py-2.5 px-3">Descrição (Auxiliar)</th>
+                            <th className="py-2.5 px-3 w-28 text-right">Quant. (pçs)</th>
+                            <th className="py-2.5 px-3 w-32 text-center">Tipo</th>
+                            <th className="py-2.5 px-3 w-32">Data Chacote</th>
+                            <th className="py-2.5 px-3 w-24">Hora</th>
+                            <th className="py-2.5 px-3 w-32">Responsável</th>
+                            <th className="py-2.5 px-2 w-12 text-center">Remover</th>
+                          </tr>
+                        
+                          <tr className="bg-white border-b border-slate-200">
+                        
+                            <th></th>
+                        
+                            <th></th>
+                        
+                            <th className="p-1">
+                              <select
+                                value={filtroEstoqueLote}
+                                onChange={(e) => setFiltroEstoqueLote(e.target.value)}
+                                className="w-full border rounded p-1 text-xs"
+                              >
+                                <option value="">Todos</option>
+                                <option value="E1">1</option>
+                                <option value="E2">2</option>
+                                <option value="E3">3</option>
+                              </select>
+                            </th>
+                        
+                            <th className="p-1">
+                              <input
+                                value={filtroModuloLote}
+                                onChange={(e) => setFiltroModuloLote(e.target.value)}
+                                placeholder="Rua"
+                                className="w-full border rounded p-1 text-xs"
+                              />
+                            </th>
+                        
+                            <th className="p-1">
+                              <input
+                                value={filtroPosicaoLote}
+                                onChange={(e) => setFiltroPosicaoLote(e.target.value)}
+                                placeholder="A1"
+                                className="w-full border rounded p-1 text-xs"
+                              />
+                            </th>
+                        
+                            <th className="p-1">
+                              <input
+                                value={filtroSkuLote}
+                                onChange={(e) => setFiltroSkuLote(e.target.value)}
+                                placeholder="SKU"
+                                className="w-full border rounded p-1 text-xs"
+                              />
+                            </th>
+                        
+                            <th></th>
+                            <th></th>
+                            <th></th>
+                            <th></th>
+                            <th></th>
+                            <th></th>
+                            <th></th>
+                        
+                          </tr>
+                        
+                        </thead>
                       <tbody className="divide-y divide-slate-150">
-                        {lancamentoRows.map((row, index) => {
+                        {lancamentoRowsFiltradas.map((row, index) => {
                           const isE1 = row.estoque === "E1";
                           const desc = getProductDesc(row.referencia);
                         
