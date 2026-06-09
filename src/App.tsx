@@ -2469,6 +2469,8 @@ if (
           {/* TAB 4: HISTÓRICO */}
           {activeTab === "histórico" && (() => {
             const filteredHistory = history.filter((h) => {
+              return h.estoque === "1";
+            });
               if (histSearchSku.trim()) {
                 let cleanIn = histSearchSku.trim().toUpperCase();
                 if (cleanIn.startsWith("S")) cleanIn = cleanIn.slice(1);
