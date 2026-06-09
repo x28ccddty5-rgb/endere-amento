@@ -354,7 +354,7 @@ useEffect(() => {
     return (saved as AppMode) || "basico";
   });
 
-  const [activeTab, setActiveTab] = useState<string>("pesquisa");
+  const [activeTab, setActiveTab] = useState<string>("endereçamento");
 
   // Save changes to localStorage on modifier updates
   useEffect(() => {
