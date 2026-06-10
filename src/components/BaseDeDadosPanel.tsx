@@ -7,6 +7,7 @@ interface BaseDeDadosPanelProps {
   slots: WarehouseSlot[];
   onRegisterProduct: (ref: string, desc: string) => Promise<boolean>;
   hasAccess: (level: "Administrador" | "Operador" | "Consulta") => boolean;
+  currentUser: any;
 }
 
 export const BaseDeDadosPanel: React.FC<BaseDeDadosPanelProps> = ({
