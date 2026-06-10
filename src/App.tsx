@@ -131,8 +131,6 @@ const loadHistoryFromSupabase = async (): Promise<HistoricoMov[]> => {
     from += pageSize;
   }
 
-  console.log("HISTÓRICO TOTAL CARREGADO:", allData.length);
-
   return allData as HistoricoMov[];
 };
 
@@ -1132,17 +1130,6 @@ if (
 
   // --- COMPILATING SYSTEM VIEWS ---
   const filteredSlots = slots.filter(s => {
-
-    console.log(
-  "SLOT:",
-  s.estoque,
-  "MOD:",
-  s.modulo,
-  "POS:",
-  s.posicao,
-  "REF:",
-  s.referencia
-);
     
     const matchesRef = searchRef
   ? s.referencia.toLowerCase() === searchRef.toLowerCase()
@@ -1167,9 +1154,6 @@ if (
 
     return matchesRef && matchesDesc && matchesEstoque && matchesModulo && matchesPosicao;
   });
-
-  console.log("TOTAL SLOTS:", slots.length);
-  console.log("TOTAL FILTRADOS:", filteredSlots.length);
   
   const filteredBaseProducts = productsList.filter(p => 
     p.referencia.toLowerCase().includes(baseSearch.toLowerCase()) ||
