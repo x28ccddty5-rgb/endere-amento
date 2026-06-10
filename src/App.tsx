@@ -1145,6 +1145,9 @@ if (
     return matchesRef && matchesDesc && matchesEstoque && matchesModulo && matchesPosicao;
   });
 
+  console.log("TOTAL SLOTS:", slots.length);
+  console.log("TOTAL FILTRADOS:", filteredSlots.length);
+  
   const filteredBaseProducts = productsList.filter(p => 
     p.referencia.toLowerCase().includes(baseSearch.toLowerCase()) ||
     p.descricao.toLowerCase().includes(baseSearch.toLowerCase())
