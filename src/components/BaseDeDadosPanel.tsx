@@ -20,6 +20,9 @@ export const BaseDeDadosPanel: React.FC<BaseDeDadosPanelProps> = ({
   const [newDesc, setNewDesc] = useState("");
 
   const isReadOnly = !hasAccess("Operador");
+  const canEditBase =
+  hasAccess("Administrador") ||
+  currentUser?.role === "Lideranca";
 
   const filteredProducts = productsList.filter((p) => {
     const q = searchQuery.toLowerCase();
@@ -96,7 +99,7 @@ export const BaseDeDadosPanel: React.FC<BaseDeDadosPanelProps> = ({
                 <ShieldAlert className="w-5 h-5 text-amber-600" />
                 <span className="text-xs font-black text-amber-800 uppercase block">Conta Restrita</span>
                 <p className="text-[10px] text-slate-450 leading-relaxed font-semibold">
-                  Apenas operadores dos níveis <strong>Apoio ou Administrador</strong> podem cadastrar novos modelos cerâmicos.
+                  Apenas operadores dos níveis <strong>Lideranca ou Administrador</strong> podem cadastrar novos modelos cerâmicos.
                 </p>
               </div>
             ) : (
