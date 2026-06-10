@@ -27,7 +27,30 @@ export const InteractiveMapa: React.FC<InteractiveMapaProps> = ({ slots, onQuick
   const selectedSlot = slots.find(s => s.id === selectedSlotId);
 
   // Lists definitions (plain numbers!)
-  const e1Ruas = Array.from({ length: 22 }, (_, i) => String(i + 1));
+  const e1Ruas = Array.from({ length: 21 }, (_, i) => String(i + 1));
+  const e1Capacidade: Record<string, number> = {
+  "1": 27,
+  "2": 27,
+  "3": 30,
+  "4": 33,
+  "5": 33,
+  "6": 33,
+  "7": 30,
+  "8": 30,
+  "9": 33,
+  "10": 33,
+  "11": 33,
+  "12": 30,
+  "13": 33,
+  "14": 33,
+  "15": 30,
+  "16": 27,
+  "17": 33,
+  "18": 33,
+  "19": 33,
+  "20": 33,
+  "21": 30
+};
   const e2Positions = ["A1", "B1", "C1", "D1", "E1", "A2", "B2", "C2", "D2", "E2"];
   const e3Positions = ["A1", "B1", "C1", "D1", "E1", "F1", "A2", "B2", "C2", "D2", "E2", "F2"];
 
@@ -213,6 +236,8 @@ export const InteractiveMapa: React.FC<InteractiveMapaProps> = ({ slots, onQuick
                   33,
                   skuCount
                 );
+
+                const capacidadeRua = e1Capacidade[rua] || 33;
               
                   const isOccupied = s.saldo > 0;
                   const isSelected = selectedSlotId === s.id;
@@ -237,7 +262,7 @@ export const InteractiveMapa: React.FC<InteractiveMapaProps> = ({ slots, onQuick
                       <span className="text-[10px] uppercase font-black block tracking-wider opacity-80">RUA</span>
                       <span className="text-xl font-black font-sans leading-none my-1">{rua}</span>
                       <div className="text-[10px] font-bold leading-normal">
-                        {ocupacaoEstimada}/33 paletes
+                        {ocupacaoEstimada}/{capacidadeRua} paletes
                       </div>
                       
                       <div className="truncate text-[10px] font-medium leading-normal">
