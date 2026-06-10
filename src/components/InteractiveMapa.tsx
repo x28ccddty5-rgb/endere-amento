@@ -6,9 +6,19 @@ interface InteractiveMapaProps {
   slots: WarehouseSlot[];
   onQuickUpdateSlot: (updatedSlot: WarehouseSlot) => void;
   productsList: Product[];
+  currentUser: any;
 }
 
-export const InteractiveMapa: React.FC<InteractiveMapaProps> = ({ slots, onQuickUpdateSlot, productsList }) => {
+export const InteractiveMapa: React.FC<InteractiveMapaProps> = ({
+  slots,
+  onQuickUpdateSlot,
+  productsList,
+  currentUser
+}) => {
+
+  const isReadOnly =
+  currentUser?.role !== "Administrador";
+  
   const [selectedEstoque, setSelectedEstoque] = useState<string>("1");
   const [selectedSlotId, setSelectedSlotId] = useState<string | null>(null);
   
