@@ -2801,15 +2801,12 @@ if (
           {/* TAB 8: GÊMEO DIGITAL */}
           {activeTab === "mapa" && (
             <div className="space-y-6">
+              
           <InteractiveMapa
             slots={slots}
             onQuickUpdateSlot={(updated) =>
-              setSlots(slots.map(s => s.id === updated.id ? updated : s))
-            }
-            productsList={productsList}
-            currentUser={currentUser}
-          />
-                  
+              setSlots(slots.map(s => s.id === updated.id ? updated : s));
+              
                   // Keep history
                   const logId = `MOV-${generateId()}`;
                   const updateHistory: HistoricoMov = {
@@ -2829,6 +2826,8 @@ if (
                   };
                   setHistory([updateHistory, ...history]);
                 }}
+              productsList={productsList}
+              currentUser={currentUser}
               />
             </div>
           )}
