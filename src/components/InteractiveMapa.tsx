@@ -107,6 +107,84 @@ export const InteractiveMapa: React.FC<InteractiveMapaProps> = ({
   const e2Positions = ["A1", "B1", "C1", "D1", "E1", "A2", "B2", "C2", "D2", "E2"];
   const e3Positions = ["A1", "B1", "C1", "D1", "E1", "F1", "A2", "B2", "C2", "D2", "E2", "F2"];
 
+  const e2BlockedPositions: Record<number, string[]> = {
+  4: ["E1"],
+
+  7: ["A2", "B2", "C2", "D2", "E2"],
+  8: ["A2", "B2", "C2", "D2", "E2"],
+
+  11: ["A1", "B1", "C1", "A2", "B2", "C2"],
+  18: ["A1", "B1", "C1", "A2", "B2", "C2"],
+
+  21: ["A2", "B2", "C2", "D2", "E2"],
+  22: ["A2", "B2", "C2", "D2", "E2"],
+
+  25: ["A1", "B1", "C1", "A2", "B2", "C2"],
+  32: ["A1", "B1", "C1", "A2", "B2", "C2"],
+
+  35: ["A2", "B2", "C2", "D2", "E2"],
+  36: ["A2", "B2", "C2", "D2", "E2"],
+
+  39: ["A1", "B1", "C1", "A2", "B2", "C2", "D2", "E2"],
+  46: ["A1", "B1", "C1", "A2", "B2", "C2"],
+
+  49: ["A2", "B2", "C2", "D2", "E2"],
+
+  52: ["A1", "B1", "C1", "A2", "B2", "C2"],
+  59: ["A1", "B1", "C1", "A2", "B2", "C2"],
+
+  62: ["A2", "B2", "C2", "D2", "E2"],
+
+  65: ["A1", "B1", "C1", "A2", "B2", "C2"],
+
+  72: ["A1", "B1", "C1", "A2", "B2", "C2", "D1", "E1"],
+
+  75: ["A2", "B2", "C2", "D2", "E2"],
+  76: ["A2", "B2", "C2", "D2", "E2"],
+
+  79: ["A1", "B1", "C1", "A2", "B2", "C2", "D2", "E2"],
+  86: ["A1", "B1", "C1", "A2", "B2", "C2"],
+
+  89: ["A2", "B2", "C2", "D2", "E2"],
+  90: ["A2", "B2", "C2", "D2", "E2"],
+
+  93: ["A1", "B1", "C1", "A2", "B2", "C2"],
+  100: ["A1", "B1", "C1", "A2", "B2", "C2"],
+
+  103: ["A2", "B2", "C2", "D2", "E2"],
+  104: ["A2", "B2", "C2", "D2", "E2"],
+
+  107: ["A1", "B1", "C1", "A2", "B2", "C2"],
+
+  114: ["A1", "B1", "C1", "A2", "B2", "C2", "D1", "E1"],
+
+  117: ["A2", "B2", "C2", "D2", "E2"],
+
+  120: ["A1", "B1", "C1", "A2", "B2", "C2"],
+  125: ["A1", "B1", "C1", "A2", "B2", "C2"],
+
+  128: ["A2", "B2", "C2", "D2", "E2"],
+  129: ["A2", "B2", "C2", "D2", "E2"],
+
+  132: ["A1", "B1", "C1", "A2", "B2", "C2"],
+  139: ["A1", "B1", "C1", "A2", "B2", "C2"],
+
+  142: ["A2", "B2", "C2", "D2", "E2"],
+  143: ["A2", "B2", "C2", "D2", "E2"],
+
+  146: ["A1", "B1", "C1", "A2", "B2", "C2", "D2", "E2"],
+  153: ["A1", "B1", "C1", "A2", "B2", "C2"],
+
+  156: ["A2", "B2", "C2", "D2", "E2"],
+
+  157: ["A1", "B1", "C1", "A2", "B2", "C2"],
+
+  164: ["A1", "B1", "C1", "A2", "B2", "C2", "D2", "E2"],
+
+  167: ["A2", "B2", "C2", "D2", "E2"],
+  168: ["A2", "B2", "C2", "D2", "E2"],
+};
+  
   // Handle slot selection
   const handleSelectSlot = (s: WarehouseSlot) => {
     setSelectedSlotId(s.id);
@@ -439,7 +517,12 @@ export const InteractiveMapa: React.FC<InteractiveMapaProps> = ({
                 
                 <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
                   {selectedEstoque === "2" ? (
-                    e2Positions.map((pos) => {
+                    const blocked =
+                      e2BlockedPositions[selectedE2Module] || [];
+                    
+                    e2Positions
+                      .filter((pos) => !blocked.includes(pos))
+                      .map((pos) => {
                       const modStr = String(selectedE2Module);
                       const s = getOrCreateSlotOnMap("2", modStr, pos);
                       const isOccupied = s.saldo > 0;
