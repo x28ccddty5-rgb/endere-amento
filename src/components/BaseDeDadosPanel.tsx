@@ -22,15 +22,16 @@ export const BaseDeDadosPanel: React.FC<BaseDeDadosPanelProps> = ({
   const [newDesc, setNewDesc] = useState("");
 
   const isReadOnly = !hasAccess("Operador");
-  
-  const role =
+
+const role =
   currentUser?.role
     ?.toLowerCase()
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "");
 
-  const canEditBase =
-  ["administrador", "lideranca"].includes(role);
+const canEditBase =
+  role === "administrador" ||
+  role === "lideranca";
 
   const filteredProducts = productsList.filter((p) => {
     const q = searchQuery.toLowerCase();
