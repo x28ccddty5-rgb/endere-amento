@@ -648,55 +648,77 @@ export const InteractiveMapa: React.FC<InteractiveMapaProps> = ({ slots, onQuick
               ) : (
                 /* EXPANSED SLOT VIEW */
                 <div className="space-y-4">
-                  {selectedSlot.saldo > 0 ? (
+                  {(
+                    selectedEstoque === "1"
+                      ? ruaSelecionada.length > 0
+                      : selectedSlot.saldo > 0
+                  ) ? (
                     <>
                       <div>
-                        <span className="text-[10px] text-slate-400 font-bold uppercase block">Produto Integrado</span>
-                        <div className="flex items-center gap-2 mt-0.5">
-                          <span className="bg-blue-50 text-blue-800 text-xs font-bold px-2 py-0.5 rounded font-mono border border-blue-150">
-                            {selectedSlot.referencia}
-                          </span>
-                        </div>
-                        <span className="text-xs text-slate-600 block mt-1 leading-normal font-medium hover:text-slate-900 transition-colors">
-                          {selectedSlot.descricao}
+
+                        <span className="text-[10px] text-slate-400 font-bold uppercase block mb-2">
+                          SKUs DA RUA
                         </span>
+                      
+                        <div className="space-y-2 max-h-80 overflow-y-auto">
+                      
+                          {ruaSelecionada.map((slot) => {
+                      
+                            const produto = productsList.find(
+                              p => p.referencia === slot.referencia
+                            );
+                      
+                            let paletes = 0;
+                      
+                            if (produto?.paletizacao) {
+                      
+                              const resultado =
+                                slot.saldo / produto.paletizacao;
+                      
+                              if (resultado >= 0.5) {
+                                paletes = Math.ceil(resultado);
+                              }
+                      
+                            }
+                      
+                            return (
+                      
+                              <div
+                                key={slot.id}
+                                className="bg-slate-50 border border-slate-200 rounded-lg p-2"
+                              >
+                      
+                                <div className="flex justify-between items-center">
+                      
+                                  <span className="font-mono text-xs font-bold text-blue-700">
+                                    {slot.referencia}
+                                  </span>
+                      
+                                  <span className="text-xs font-bold text-indigo-700">
+                                    {paletes} paletes
+                                  </span>
+                      
+                                </div>
+                      
+                                <div className="text-[11px] text-slate-600 mt-1">
+                                  {slot.descricao}
+                                </div>
+                      
+                                <div className="text-[10px] text-slate-500 mt-1">
+                                  {slot.saldo.toLocaleString()} peças
+                                </div>
+                      
+                              </div>
+                            );
+                
+                          })}
+                
+                        </div>
+                
                       </div>
-
-                      <div className="grid grid-cols-2 gap-4 pt-1">
-                        <div>
-                          <span className="text-[10px] text-slate-400 block font-bold font-sans">SALDO LÓGICO</span>
-                          <span className="text-xl font-extrabold font-mono text-blue-700 block">
-                            {selectedSlot.saldo.toLocaleString()} <span className="text-[10px] font-normal text-slate-500">pçs</span>
-                          </span>
-                        </div>
-                        <div>
-                          <span className="text-[10px] text-slate-400 block font-bold font-sans">CHACOTE / LOTE</span>
-                          <span className="text-xs font-bold text-slate-700 block pt-1.5 truncate">
-                            {selectedSlot.dataChacote || "NT / Vazio"}
-                          </span>
-                        </div>
-                      </div>
-
-                      <div className="pt-3 border-t border-slate-100 space-y-2 text-[11px]">
-                        <div className="flex items-center gap-2 text-slate-500 font-medium">
-                          <Calendar className="w-3.5 h-3.5 mr-0.5 text-slate-400" />
-                          <span>Muda em: {selectedSlot.ultimaData || "—"} {selectedSlot.ultimaHora}</span>
-                        </div>
-                        <div className="flex items-center gap-2 text-slate-500 font-medium">
-                          <User className="w-3.5 h-3.5 mr-0.5 text-slate-400" />
-                          <span>Responsável: <strong>{selectedSlot.ultimoResponsavel || "Sem Operador"}</strong></span>
-                        </div>
-                      </div>
+                
                     </>
                   ) : (
-                    <div className="bg-slate-50 text-slate-500 text-center py-10 rounded-lg text-xs space-y-2 border border-slate-100">
-                      <Package className="w-8 h-8 mx-auto text-slate-300 stroke-1" />
-                      <div className="font-bold">Vaga Livre</div>
-                      <p className="text-[10px] text-slate-400 max-w-xs mx-auto px-4 leading-normal">
-                        Nenhum saldo logístico registrado neste local. Pronto para receber novas entradas.
-                      </p>
-                    </div>
-                  )}
 
                   <button
                     onClick={() => startEditSlot(selectedSlot)}
