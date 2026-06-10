@@ -2473,7 +2473,18 @@ if (
                 if (cleanH.startsWith("S")) cleanH = cleanH.slice(1);
             
                 if (!cleanH.includes(cleanIn)) return false;
+                }
               }
+
+              console.log(
+                "PASSOU ESTOQUE:",
+                h.estoque,
+                "MODULO:",
+                h.modulo,
+                "POSICAO:",
+                h.posicao
+              );
+              
             
               if (histFilterEstoque) {
 
