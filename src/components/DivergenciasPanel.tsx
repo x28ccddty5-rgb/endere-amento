@@ -34,7 +34,14 @@ export const DivergenciasPanel: React.FC<DivergenciasPanelProps> = ({
   const [resolveSkuVal, setResolveSkuVal] = useState<string>(""); // SKU Novo (obrigatório) - Corrigido manualmente
   const [resolveDataChacoteVal, setResolveDataChacoteVal] = useState<string>(""); // Data Chacote (opcional)
 
-  const isDivergenciasAdmin = currentUser?.role === "Administrador";
+  const role =
+  currentUser?.role
+    ?.toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+
+  const isDivergenciasAdmin =
+  ["administrador", "apoio", "lideranca"].includes(role);
 
   // Filter to show only "Aberta" divergences first, but user asked:
   // "mudar status para corrigido, gravas no historico e analise se compensa retirar a divergencia e deixar somente as abertas"
@@ -333,7 +340,8 @@ export const DivergenciasPanel: React.FC<DivergenciasPanelProps> = ({
                       <td className="py-3 px-2 text-center no-print">
                         {d.status === "Aberta" ? (
                           <button
-                            onClick={() => openCorrectionDialog(d)}
+                           disabled={isReadOnly}
+                            onClick={() => !isReadOnly && openCorrectionDialog(d)}
                             className="bg-slate-900 hover:bg-red-650 hover:bg-black font-extrabold text-[10px] text-white px-2.5 py-1.5 rounded-lg border border-slate-700 transition cursor-pointer"
                           >
                             Corrigir
@@ -486,7 +494,8 @@ export const DivergenciasPanel: React.FC<DivergenciasPanelProps> = ({
               <div className="flex gap-2 pt-3">
                 <button
                   type="button"
-                  onClick={handleResolveDivergencia}
+                  disabled={isReadOnly}
+                  onClick={() => !isReadOnly && handleResolveDivergencia()}
                   className="flex-1 bg-red-600 hover:bg-red-700 text-white rounded-lg py-2.5 text-xs font-bold transition shadow cursor-pointer uppercase text-center"
                 >
                   Corrigir Divergência
