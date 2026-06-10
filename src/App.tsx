@@ -1987,7 +1987,8 @@ if (
               {appMode === "avancado" && (
                 <div className="flex bg-slate-100 p-1.5 rounded-xl max-w-lg border border-slate-200">
                   <button
-                    onClick={() => setSelectedLaunchType("unitario")}
+                    onClick={() => !isReadOnly && setSelectedLaunchType("unitario")}
+                    disabled={isReadOnly}
                     className={`flex-1 py-1.5 px-3 rounded-lg text-xs font-bold transition flex items-center justify-center gap-1.5 cursor-pointer uppercase tracking-wider ${
                       selectedLaunchType === "unitario"
                         ? "bg-white text-indigo-700 shadow-sm border border-slate-200/55"
@@ -1998,7 +1999,8 @@ if (
                     Lançamento Unitário (Igual Corredor)
                   </button>
                   <button
-                    onClick={() => setSelectedLaunchType("lote")}
+                    onClick={() => !isReadOnly && setSelectedLaunchType("lote")}
+                    disabled={isReadOnly}
                     className={`flex-1 py-1.5 px-3 rounded-lg text-xs font-bold transition flex items-center justify-center gap-1.5 cursor-pointer uppercase tracking-wider ${
                       selectedLaunchType === "lote"
                         ? "bg-white text-indigo-700 shadow-sm border border-slate-200/55"
@@ -2118,14 +2120,16 @@ if (
                       <div className="flex gap-2 pt-2">
                         <button
                           type="button"
-                          onClick={() => handleUnitaryLaunch("Entrada")}
+                           disabled={isReadOnly}
+                          onClick={() => !isReadOnly && handleUnitaryLaunch("Entrada")}
                           className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg py-2.5 text-xs font-bold transition shadow-xs cursor-pointer uppercase text-center font-bold"
                         >
                           Entrada
                         </button>
                         <button
                           type="button"
-                          onClick={() => handleUnitaryLaunch("Saída")}
+                          disabled={isReadOnly}
+                          onClick={() => !isReadOnly && handleUnitaryLaunch("Saída")}
                           className="flex-1 bg-red-600 hover:bg-red-700 text-white rounded-lg py-2.5 text-xs font-bold transition shadow-xs cursor-pointer uppercase text-center font-bold"
                         >
                           Saída
@@ -2230,7 +2234,8 @@ if (
                       {showBulkImport ? "Ocultar Colagem Rápida" : "Colar do Excel / CSV"}
                     </button>
                     <button
-                      onClick={handleLancarLote}
+                      onClick={() => !isReadOnly && handleLancarLote()}
+                      disabled={isReadOnly}
                       className="bg-indigo-600 hover:bg-indigo-750 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg px-5 py-2 text-xs font-bold transition shadow-sm uppercase tracking-wider cursor-pointer"
                     >
                       Lançar Lote Completo
@@ -2258,7 +2263,8 @@ if (
 
                     <div className="flex items-center gap-3">
                       <button
-                        onClick={handleImportExcelData}
+                        onClick={() => !isReadOnly && handleImportExcelData()}
+                        disabled={isReadOnly}
                         className="bg-indigo-650 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg px-4 py-2 text-xs font-bold transition shadow-sm"
                       >
                         Carregar Lançamentos
