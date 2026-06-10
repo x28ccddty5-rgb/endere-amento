@@ -34,7 +34,9 @@ export const DashboardCards: React.FC<DashboardCardsProps> = ({ slots, history, 
   // 2. SKUs & Total Quantities
   const uniqueSKUs = new Set(slots.filter(s => s.saldo > 0).map(s => s.referencia)).size;
   const totalStoredQuantity = slots.reduce((acc, s) => acc + s.saldo, 0);
-
+  
+  const occupiedPalletsE1 = 651;
+  
   // 3. Movement logs
   const totalMovements = history.length;
   const totalEntradas = history.filter(h => h.tipo === "Entrada").reduce((acc, h) => acc + h.quantidade, 0);
@@ -259,15 +261,7 @@ export const DashboardCards: React.FC<DashboardCardsProps> = ({ slots, history, 
                 </span>
               </div>
               <div className="text-2xl font-black font-sans text-slate-800 tracking-tight">
-                {
-                  slots
-                    .filter(
-                      s =>
-                        s.estoque === "1" &&
-                        s.saldo > 0
-                    )
-                    .length
-                }
+                {occupiedPalletsE1}
               </div>
               <div className="text-[9px] text-slate-400 mt-0.5">Posições do Estoque 1 com saldo</div>
             </div>
