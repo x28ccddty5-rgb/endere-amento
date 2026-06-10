@@ -219,9 +219,17 @@ useEffect(() => {
   
   useEffect(() => {
   const loadHistory = async () => {
-    const data = await loadHistoryFromSupabase();
-    setHistory(data);
-  };
+  const data = await loadHistoryFromSupabase();
+
+  console.log("HISTORY CARREGADO:", data.length);
+
+  console.log(
+    "ESTOQUES ENCONTRADOS:",
+    [...new Set(data.map(h => h.estoque))]
+  );
+
+  setHistory(data);
+};
   
    loadHistory();
   }, []);
