@@ -225,18 +225,35 @@ export const InteractiveMapa: React.FC<InteractiveMapaProps> = ({ slots, onQuick
                 {e1Ruas.map((rua) => {
                   const s = getOrCreateSlotOnMap("1", rua, "");
 
-                  const skuCount = slots.filter(
-                  x =>
-                    x.estoque === "1" &&
-                    x.modulo === rua &&
-                    x.saldo > 0
-                ).length;
+                 const ocupacaoReal = slots
+                  .filter(
+                    x =>
+                      x.estoque === "1" &&
+                      x.modulo === rua &&
+                      x.saldo > 0
+                  )
+                  .reduce((total, x) => {
                 
-                const ocupacaoEstimada = Math.min(
-                  33,
-                  skuCount
-                );
-
+                    const produto = productsList.find(
+                      p => p.referencia === x.referencia
+                    );
+                
+                    if (!produto?.paletizacao) {
+                      return total;
+                    }
+                
+                    const resultado = x.saldo / produto.paletizacao;
+                
+                    let paletes = 0;
+                
+                    if (resultado >= 0.5) {
+                      paletes = Math.ceil(resultado);
+                    }
+                
+                    return total + paletes;
+                
+                  }, 0);
+                
                 const capacidadeRua = e1Capacidade[rua] || 33;
               
                   const isOccupied = s.saldo > 0;
@@ -262,7 +279,7 @@ export const InteractiveMapa: React.FC<InteractiveMapaProps> = ({ slots, onQuick
                       <span className="text-[10px] uppercase font-black block tracking-wider opacity-80">RUA</span>
                       <span className="text-xl font-black font-sans leading-none my-1">{rua}</span>
                       <div className="text-[10px] font-bold leading-normal">
-                        {ocupacaoEstimada}/{capacidadeRua} paletes
+                        {ocupacaoReal}/{capacidadeRua} paletes
                       </div>
                       
                       <div className="truncate text-[10px] font-medium leading-normal">
