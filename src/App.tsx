@@ -1111,11 +1111,15 @@ if (
   const filteredSlots = slots.filter(s => {
 
     console.log(
-    "SLOT:",
-    s.estoque,
-    s.modulo,
-    s.posicao
-  );
+  "SLOT:",
+  s.estoque,
+  "MOD:",
+  s.modulo,
+  "POS:",
+  s.posicao,
+  "REF:",
+  s.referencia
+);
     
     const matchesRef = searchRef
   ? s.referencia.toLowerCase() === searchRef.toLowerCase()
