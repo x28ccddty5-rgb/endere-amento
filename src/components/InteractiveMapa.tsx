@@ -23,6 +23,30 @@ export const InteractiveMapa: React.FC<InteractiveMapaProps> = ({ slots, onQuick
   const [editChacote, setChacote] = useState("");
   const [editOperator, setEditOperator] = useState("");
 
+  const e1Capacidade: Record<string, number> = {
+  "1": 27,
+  "2": 27,
+  "3": 30,
+  "4": 33,
+  "5": 33,
+  "6": 33,
+  "7": 30,
+  "8": 30,
+  "9": 33,
+  "10": 33,
+  "11": 33,
+  "12": 30,
+  "13": 33,
+  "14": 33,
+  "15": 30,
+  "16": 27,
+  "17": 33,
+  "18": 33,
+  "19": 33,
+  "20": 33,
+  "21": 30
+};
+  
   const activeSlots = slots.filter(s => s.estoque === selectedEstoque);
   const selectedSlot = slots.find(s => s.id === selectedSlotId);
 
@@ -64,29 +88,7 @@ export const InteractiveMapa: React.FC<InteractiveMapaProps> = ({ slots, onQuick
   
   // Lists definitions (plain numbers!)
   const e1Ruas = Array.from({ length: 21 }, (_, i) => String(i + 1));
-  const e1Capacidade: Record<string, number> = {
-  "1": 27,
-  "2": 27,
-  "3": 30,
-  "4": 33,
-  "5": 33,
-  "6": 33,
-  "7": 30,
-  "8": 30,
-  "9": 33,
-  "10": 33,
-  "11": 33,
-  "12": 30,
-  "13": 33,
-  "14": 33,
-  "15": 30,
-  "16": 27,
-  "17": 33,
-  "18": 33,
-  "19": 33,
-  "20": 33,
-  "21": 30
-};
+  
   const e2Positions = ["A1", "B1", "C1", "D1", "E1", "A2", "B2", "C2", "D2", "E2"];
   const e3Positions = ["A1", "B1", "C1", "D1", "E1", "F1", "A2", "B2", "C2", "D2", "E2", "F2"];
 
