@@ -1384,12 +1384,8 @@ if (
         <nav className="flex-1 py-4 space-y-0.5 overflow-y-auto">
           <span className="text-[9px] text-slate-500 font-extrabold block pb-1.5 px-4 uppercase tracking-wider">Módulos Logísticos</span>
           
-          {canAccessTab("dashboard") &&
-           (
-             currentUser?.role === "Administrador" ||
-             currentUser?.role === "Lideranca" ||
-             currentUser?.role === "Visualizador"
-           ) && (
+          {canAccessTab("dashboard") && (
+
               <button
             onClick={() => setActiveTab("dashboard")}
             className={`w-full flex items-center space-x-3 px-4 py-2 text-xs font-bold transition-all ${
