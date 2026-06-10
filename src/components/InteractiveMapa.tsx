@@ -16,6 +16,12 @@ export const InteractiveMapa: React.FC<InteractiveMapaProps> = ({
   currentUser
 }) => {
 
+  const role =
+  currentUser?.role
+    ?.toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+  
   const isReadOnly = role !== "administrador";
   
   const [selectedEstoque, setSelectedEstoque] = useState<string>("1");
