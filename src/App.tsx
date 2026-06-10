@@ -304,7 +304,7 @@ useEffect(() => {
     setProductsList(
       data.map((p: any) => ({
         referencia: p.referencia,
-        descricao: p.descricao
+        descricao: p.descricao,
         paletizacao: Number(p.paletizacao || 0)
       }))
     );
