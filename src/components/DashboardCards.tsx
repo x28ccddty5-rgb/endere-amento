@@ -21,10 +21,18 @@ interface DashboardCardsProps {
   slots: WarehouseSlot[];
   history: HistoricoMov[];
   divergencias: Divergencia[];
+  productsList: any[];
   appMode?: string;
 }
 
-export const DashboardCards: React.FC<DashboardCardsProps> = ({ slots, history, divergencias, appMode }) => {
+export const DashboardCards: React.FC<DashboardCardsProps> = ({
+  slots,
+  history,
+  divergencias,
+  productsList,
+  appMode
+}) => {
+  
   // 1. Calculate slot statuses
   const totalSlots = slots.length;
   const occupiedSlots = slots.filter(s => s.saldo > 0).length;
@@ -35,7 +43,25 @@ export const DashboardCards: React.FC<DashboardCardsProps> = ({ slots, history, 
   const uniqueSKUs = new Set(slots.filter(s => s.saldo > 0).map(s => s.referencia)).size;
   const totalStoredQuantity = slots.reduce((acc, s) => acc + s.saldo, 0);
   
-  const occupiedPalletsE1 = 651;
+  const occupiedPalletsE1 = slots
+  .filter(
+    s =>
+      s.estoque === "1" &&
+      s.saldo > 0
+  )
+  .reduce((total, slot) => {
+
+    const produto = productsList.find(
+      p => p.referencia === slot.referencia
+    );
+
+    if (!produto?.paletizacao) {
+      return total;
+    }
+
+    return total + Math.ceil(slot.saldo / produto.paletizacao);
+
+  }, 0);
   
   // 3. Movement logs
   const totalMovements = history.length;
