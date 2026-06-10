@@ -720,6 +720,13 @@ export const InteractiveMapa: React.FC<InteractiveMapaProps> = ({ slots, onQuick
                     </>
                   ) : (
 
+                  <div className="bg-slate-50 text-slate-500 text-center py-10 rounded-lg text-xs space-y-2 border border-slate-100">
+                    <Package className="w-8 h-8 mx-auto text-slate-300 stroke-1" />
+                    <div className="font-bold">Sem produtos nesta rua</div>
+                  </div>
+                  
+                  )}
+                    
                   <button
                     onClick={() => startEditSlot(selectedSlot)}
                     className="w-full bg-slate-100 text-slate-700 border border-slate-200 rounded-lg py-2 text-xs font-bold hover:bg-slate-200 transition-colors flex items-center justify-center gap-1.5 shadow-2xs cursor-pointer"
