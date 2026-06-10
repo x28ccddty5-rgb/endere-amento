@@ -2798,6 +2798,9 @@ if (
             />
           )}
 
+          {/* TAB 8: GÊMEO DIGITAL */}
+          {activeTab === "mapa" && (
+            <div className="space-y-6">
           <InteractiveMapa
             slots={slots}
             onQuickUpdateSlot={(updated) =>
