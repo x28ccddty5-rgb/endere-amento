@@ -249,17 +249,25 @@ export const DashboardCards: React.FC<DashboardCardsProps> = ({ slots, history, 
         <div>
           <h3 className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-2 flex items-center gap-1.5 pt-2">
             <Layers className="w-3.5 h-3.5 text-indigo-500" />
-            Indicadores de Corredor (Avançado)
+            Indicadores Estoque 1  (Em baixo Transporte)
           </h3>
           <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
             <div className="bg-white border border-slate-200 border-t-2 border-t-indigo-500 rounded p-3 shadow-2xs hover:border-indigo-300 transition-colors">
               <div className="flex items-center justify-between mb-1">
                 <span className="text-[10px] font-bold text-indigo-850 bg-indigo-50 px-1.5 py-0.5 rounded flex items-center gap-1 uppercase">
-                  Corredores Ocupados
+                  Paletes Ocupados E1 (Em baixo Transporte)
                 </span>
               </div>
               <div className="text-2xl font-black font-sans text-slate-800 tracking-tight">
-                {slots.filter(s => s.posicao === "" && s.saldo > 0).length}
+                {
+                  slots
+                    .filter(
+                      s =>
+                        s.estoque === "1" &&
+                        s.saldo > 0
+                    )
+                    .length
+                }
               </div>
               <div className="text-[9px] text-slate-400 mt-0.5">Corredores ativos com saldo de paletes</div>
             </div>
@@ -267,11 +275,11 @@ export const DashboardCards: React.FC<DashboardCardsProps> = ({ slots, history, 
             <div className="bg-white border border-slate-200 border-t-2 border-t-blue-500 rounded p-3 shadow-2xs hover:border-blue-300 transition-colors">
               <div className="flex items-center justify-between mb-1">
                 <span className="text-[10px] font-bold text-blue-800 bg-blue-50 px-1.5 py-0.5 rounded flex items-center gap-1 uppercase font-semibold">
-                  Saldo total em Corredores
+                  Saldo Total E1 (Em baixo Transporte)
                 </span>
               </div>
               <div className="text-2xl font-black font-sans text-slate-800 tracking-tight font-mono">
-                {slots.filter(s => s.posicao === "").reduce((acc, s) => acc + s.saldo, 0).toLocaleString()} <span className="text-xs text-slate-400">pçs</span>
+                {slots.filter(s => s.estoque === "1").reduce((acc, s) => acc + s.saldo, 0).toLocaleString()} <span className="text-xs text-slate-400">pçs</span>
               </div>
               <div className="text-[9px] text-slate-400 mt-0.5">Total de peças estocadas no chão</div>
             </div>
@@ -279,11 +287,11 @@ export const DashboardCards: React.FC<DashboardCardsProps> = ({ slots, history, 
             <div className="bg-white border border-slate-200 border-t-2 border-t-violet-500 rounded p-3 shadow-2xs hover:border-violet-300 transition-colors">
               <div className="flex items-center justify-between mb-1">
                 <span className="text-[10px] font-bold text-violet-850 bg-violet-50 px-1.5 py-0.5 rounded flex items-center gap-1 uppercase">
-                  SKUs nos Corredores
+                  SKUs E1 (Em baixo Transporte)
                 </span>
               </div>
               <div className="text-2xl font-black font-sans text-slate-800 tracking-tight">
-                {new Set(slots.filter(s => s.posicao === "" && s.saldo > 0).map(s => s.referencia)).size}
+                {new Set(slots.filter(s => s.estoque === "1" && s.saldo > 0).map(s => s.referencia)).size}
               </div>
               <div className="text-[9px] text-slate-400 mt-0.5 font-medium">Tipos de SKU diferentes em vão livre</div>
             </div>
@@ -291,12 +299,12 @@ export const DashboardCards: React.FC<DashboardCardsProps> = ({ slots, history, 
             <div className="bg-white border border-slate-200 border-t-2 border-t-pink-500 rounded p-3 shadow-2xs hover:border-pink-300 transition-colors">
               <div className="flex items-center justify-between mb-1">
                 <span className="text-[10px] font-bold text-pink-850 bg-pink-50 px-1.5 py-0.5 rounded flex items-center gap-1 uppercase">
-                  Representatividade Corredor
+                  Representatividade E1 (Em baixo Transporte)
                 </span>
               </div>
               <div className="text-2xl font-black font-sans text-slate-800 tracking-tight">
                 {totalStoredQuantity > 0 
-                  ? ((slots.filter(s => s.posicao === "").reduce((acc, s) => acc + s.saldo, 0) / totalStoredQuantity) * 100).toFixed(1)
+                  ? ((slots.filter(s => s.estoque === "1").reduce((acc, s) => acc + s.saldo, 0) / totalStoredQuantity) * 100).toFixed(1)
                   : "0.0"
                 }%
               </div>
