@@ -2466,13 +2466,13 @@ if (
             const filteredHistory = history.filter((h) => {
 
               console.log(
-                "PASSOU ESTOQUE:",
-                h.estoque,
-                "MODULO:",
-                h.modulo,
-                "POSICAO:",
-                h.posicao
+                "ESTOQUE:",
+                h.estoque
               );
+            
+              return String(h.estoque) === "1";
+            
+            });
             
               if (histSearchSku.trim()) {
                 let cleanIn = histSearchSku.trim().toUpperCase();
