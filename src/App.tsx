@@ -79,20 +79,38 @@ const saveSlotsToSupabase = async (slotsData: WarehouseSlot[]) => {
 
 const loadHistoryFromSupabase = async (): Promise<HistoricoMov[]> => {
 
-  const { data, error, count } = await supabase
-    .from("history")
-    .select("*", { count: "exact" });
+  let allData: any[] = [];
+  let from = 0;
+  const pageSize = 1000;
 
-  console.log("TOTAL NO BANCO:", count);
+  while (true) {
 
-  if (error) {
-    console.error("Erro ao carregar histórico:", error);
-    return [];
+    const { data, error } = await supabase
+      .from("history")
+      .select("*")
+      .range(from, from + pageSize - 1);
+
+    if (error) {
+      console.error("Erro ao carregar histórico:", error);
+      return [];
+    }
+
+    if (!data || data.length === 0) {
+      break;
+    }
+
+    allData = [...allData, ...data];
+
+    if (data.length < pageSize) {
+      break;
+    }
+
+    from += pageSize;
   }
 
-  console.log("TOTAL RECEBIDO:", data?.length);
+  console.log("HISTÓRICO TOTAL CARREGADO:", allData.length);
 
-  return (data as HistoricoMov[]) || [];
+  return allData as HistoricoMov[];
 };
 
 const saveHistoryToSupabase = async (
