@@ -1682,13 +1682,13 @@ if (
                     </p>
 
                     <div className="space-y-4 pt-1 font-mono text-xs">
-                      {["E1", "E2", "E3"].map(est => {
-                        const total = est === "E1" ? 22 : est === "E2" ? 1720 : 1344;
+                      {["1", "2", "3"].map(est => {
+                        const total = est === "1" ? 22 : est === "2" ? 1720 : 1344;
                         const occupied = slots.filter(s => s.estoque === est && s.saldo > 0).length;
                         const pct = total > 0 ? (occupied / total) * 100 : 0;
                         return (
                           <div key={est} className="flex items-center gap-3">
-                            <span className="w-20 text-slate-600 font-bold block shrink-0">Estoque {est.replace("E", "")}</span>
+                            <span className="w-20 text-slate-600 font-bold block shrink-0"> Estoque {est}</span>
                             <div className="w-full bg-slate-100 h-2 rounded-full overflow-hidden border border-slate-200">
                               <div className="bg-blue-600 h-full rounded-full transition-all" style={{ width: `${Math.max(1, pct)}%` }}></div>
                             </div>
