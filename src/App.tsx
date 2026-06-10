@@ -2473,34 +2473,7 @@ if (
               return String(h.estoque) === "1";
             
             });
-            
-              if (histSearchSku.trim()) {
-                let cleanIn = histSearchSku.trim().toUpperCase();
-            
-                if (cleanIn.startsWith("S")) {
-                  cleanIn = cleanIn.slice(1);
-                }
-            
-                let cleanH = h.referencia.toUpperCase();
-            
-                if (cleanH.startsWith("S")) {
-                  cleanH = cleanH.slice(1);
-                }
-            
-                if (!cleanH.includes(cleanIn)) {
-                  return false;
-                }
-              }
-                      
-              if (histFilterEstoque) {
 
-                  console.log(
-                    "REGISTRO:",
-                    h.estoque,
-                    "FILTRO:",
-                    histFilterEstoque
-                  );
-                
                   const cleanH = String(h.estoque).trim();
                   const cleanF = String(histFilterEstoque).trim();
                 
