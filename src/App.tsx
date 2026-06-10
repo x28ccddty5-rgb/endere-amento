@@ -2775,12 +2775,13 @@ if (
 
           {/* TAB 6: BASE DE DADOS (References List and registering new ones) */}
           {activeTab === "base" && (
-            <BaseDeDadosPanel
-              productsList={productsList}
-              slots={slots}
-              onRegisterProduct={registerNewProduct}
-              hasAccess={hasAccess}
-            />
+           <BaseDeDadosPanel
+            productsList={productsList}
+            slots={slots}
+            onRegisterProduct={registerNewProduct}
+            hasAccess={hasAccess}
+            currentUser={currentUser}
+          />
           )}
 
           {/* TAB 7: ENDEREÇO CORREDOR */}
