@@ -263,13 +263,13 @@ export const DashboardCards: React.FC<DashboardCardsProps> = ({ slots, history, 
                   slots
                     .filter(
                       s =>
-                        s.estoque === 1 &&
+                        s.estoque === "1" &&
                         s.saldo > 0
                     )
                     .length
                 }
               </div>
-              <div className="text-[9px] text-slate-400 mt-0.5">Corredores ativos com saldo de paletes</div>
+              <div className="text-[9px] text-slate-400 mt-0.5">Posições do Estoque 1 com saldo</div>
             </div>
 
             <div className="bg-white border border-slate-200 border-t-2 border-t-blue-500 rounded p-3 shadow-2xs hover:border-blue-300 transition-colors">
@@ -281,7 +281,7 @@ export const DashboardCards: React.FC<DashboardCardsProps> = ({ slots, history, 
               <div className="text-2xl font-black font-sans text-slate-800 tracking-tight font-mono">
                 {slots.filter(s => s.estoque === "1").reduce((acc, s) => acc + s.saldo, 0).toLocaleString()} <span className="text-xs text-slate-400">pçs</span>
               </div>
-              <div className="text-[9px] text-slate-400 mt-0.5">Total de peças estocadas no chão</div>
+              <div className="text-[9px] text-slate-400 mt-0.5">Total de peças armazenadas no Estoque 1</div>
             </div>
 
             <div className="bg-white border border-slate-200 border-t-2 border-t-violet-500 rounded p-3 shadow-2xs hover:border-violet-300 transition-colors">
@@ -291,9 +291,9 @@ export const DashboardCards: React.FC<DashboardCardsProps> = ({ slots, history, 
                 </span>
               </div>
               <div className="text-2xl font-black font-sans text-slate-800 tracking-tight">
-                {new Set(slots.filter(s => s.estoque === 1 && s.saldo > 0).map(s => s.referencia)).size}
+                {new Set(slots.filter(s => s.estoque === "1" && s.saldo > 0).map(s => s.referencia)).size}
               </div>
-              <div className="text-[9px] text-slate-400 mt-0.5 font-medium">Tipos de SKU diferentes em vão livre</div>
+              <div className="text-[9px] text-slate-400 mt-0.5 font-medium">Referências armazenadas no Estoque 1</div>
             </div>
 
             <div className="bg-white border border-slate-200 border-t-2 border-t-pink-500 rounded p-3 shadow-2xs hover:border-pink-300 transition-colors">
