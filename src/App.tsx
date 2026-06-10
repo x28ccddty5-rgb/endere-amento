@@ -2804,7 +2804,8 @@ if (
               <InteractiveMapa 
                 slots={slots} 
                 productsList={productsList}
-                onQuickUpdateSlot={(updated) => {
+                onQuickUpdateSlot={(updated) 
+                currentUser={currentUser}=> {
                   setSlots(slots.map(s => s.id === updated.id ? updated : s));
                   
                   // Keep history
