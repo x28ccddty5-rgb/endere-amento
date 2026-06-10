@@ -2483,15 +2483,22 @@ if (
                   }
                 }
               
-                if (histFilterEstoque) {
+               if (histFilterEstoque) {
+
+                const cleanH = String(h.estoque).trim();
+                const cleanF = String(histFilterEstoque).trim();
               
-                  const cleanH = String(h.estoque).trim();
-                  const cleanF = String(histFilterEstoque).trim();
+                console.log(
+                  "REGISTRO:",
+                  cleanH,
+                  "FILTRO:",
+                  cleanF
+                );
               
-                  if (cleanH !== cleanF) {
-                    return false;
-                  }
+                if (cleanH !== cleanF) {
+                  return false;
                 }
+              }
               
                 if (histFilterModulo.trim()) {
               
