@@ -2465,53 +2465,66 @@ if (
           {activeTab === "histórico" && (() => {
             const filteredHistory = history.filter((h) => {
 
-              console.log(
-                "ESTOQUE:",
-                h.estoque
-              );
-            
-              return String(h.estoque) === "1";
-            
-            });
-
+                if (histSearchSku.trim()) {
+                  let cleanIn = histSearchSku.trim().toUpperCase();
+              
+                  if (cleanIn.startsWith("S")) {
+                    cleanIn = cleanIn.slice(1);
+                  }
+              
+                  let cleanH = String(h.referencia || "").toUpperCase();
+              
+                  if (cleanH.startsWith("S")) {
+                    cleanH = cleanH.slice(1);
+                  }
+              
+                  if (!cleanH.includes(cleanIn)) {
+                    return false;
+                  }
+                }
+              
+                if (histFilterEstoque) {
+              
                   const cleanH = String(h.estoque).trim();
                   const cleanF = String(histFilterEstoque).trim();
-                
+              
                   if (cleanH !== cleanF) {
                     return false;
                   }
                 }
-            
-              if (histFilterModulo.trim()) {
-            
-                const cleanH = String(h.modulo || "")
-                  .replace(/^[RM]/i, "");
-            
-                const cleanF = histFilterModulo
-                  .trim()
-                  .replace(/^[RM]/i, "");
-            
-                if (!cleanH.includes(cleanF)) return false;
-              }
-            
-              if (histFilterPosicao.trim()) {
-            
-                const cleanH = String(h.posicao || "")
-                  .replace(/^[RMG]/i, "")
-                  .toUpperCase();
-            
-                const cleanF = histFilterPosicao
-                  .trim()
-                  .replace(/^[RMG]/i, "")
-                  .toUpperCase();
-            
-                if (!cleanH.includes(cleanF)) {
-                  return false;
+              
+                if (histFilterModulo.trim()) {
+              
+                  const cleanH = String(h.modulo || "")
+                    .replace(/^[RM]/i, "");
+              
+                  const cleanF = histFilterModulo
+                    .trim()
+                    .replace(/^[RM]/i, "");
+              
+                  if (!cleanH.includes(cleanF)) {
+                    return false;
+                  }
                 }
-              }
-            
-              return true;
-            });
+              
+                if (histFilterPosicao.trim()) {
+              
+                  const cleanH = String(h.posicao || "")
+                    .replace(/^[RMG]/i, "")
+                    .toUpperCase();
+              
+                  const cleanF = histFilterPosicao
+                    .trim()
+                    .replace(/^[RMG]/i, "")
+                    .toUpperCase();
+              
+                  if (!cleanH.includes(cleanF)) {
+                    return false;
+                  }
+                }
+              
+                return true;
+              });
 
             console.log("TOTAL HISTORY:", history.length);
 
