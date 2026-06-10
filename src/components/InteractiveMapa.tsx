@@ -201,6 +201,19 @@ export const InteractiveMapa: React.FC<InteractiveMapaProps> = ({ slots, onQuick
               <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-6 gap-3">
                 {e1Ruas.map((rua) => {
                   const s = getOrCreateSlotOnMap("1", rua, "");
+
+                  const skuCount = slots.filter(
+                  x =>
+                    x.estoque === "1" &&
+                    x.modulo === rua &&
+                    x.saldo > 0
+                ).length;
+                
+                const ocupacaoEstimada = Math.min(
+                  33,
+                  skuCount
+                );
+              
                   const isOccupied = s.saldo > 0;
                   const isSelected = selectedSlotId === s.id;
                   const isDense = s.saldo >= 1000;
@@ -223,6 +236,10 @@ export const InteractiveMapa: React.FC<InteractiveMapaProps> = ({ slots, onQuick
                     >
                       <span className="text-[10px] uppercase font-black block tracking-wider opacity-80">RUA</span>
                       <span className="text-xl font-black font-sans leading-none my-1">{rua}</span>
+                      <div className="text-[10px] font-bold leading-normal">
+                        {ocupacaoEstimada}/33 paletes
+                      </div>
+                      
                       <div className="truncate text-[10px] font-medium leading-normal">
                         {isOccupied ? `${s.referencia} (${s.saldo} pçs)` : "Rua Livre"}
                       </div>
