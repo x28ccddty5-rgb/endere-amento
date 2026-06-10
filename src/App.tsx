@@ -1645,9 +1645,9 @@ if (
           {/* TAB 1: DASHBOARD VIEW */}
           {activeTab === "dashboard" &&
            (
-             currentUser?.role === "administrador" ||
-             currentUser?.role === "lideranca" ||
-             currentUser?.role === "visualizador"
+             currentUser?.role === "Administrador" ||
+             currentUser?.role === "Lideranca" ||
+             currentUser?.role === "Visualizador"
            ) && (
             <div className="space-y-6">
               
