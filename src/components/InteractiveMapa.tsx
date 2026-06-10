@@ -65,9 +65,6 @@ export const InteractiveMapa: React.FC<InteractiveMapaProps> = ({
   const activeSlots = slots.filter(s => s.estoque === selectedEstoque);
   const selectedSlot = slots.find(s => s.id === selectedSlotId);
 
-const blockedE2Positions =
-  e2BlockedPositions[selectedE2Module] || [];
-  
   const ruaSelecionada = selectedEstoque === "1"
   ? slots.filter(
       s =>
@@ -187,6 +184,9 @@ const blockedE2Positions =
   167: ["A2", "B2", "C2", "D2", "E2"],
   168: ["A2", "B2", "C2", "D2", "E2"],
 };
+
+    const blockedE2Positions =
+  e2BlockedPositions[selectedE2Module] || [];
   
   // Handle slot selection
   const handleSelectSlot = (s: WarehouseSlot) => {
