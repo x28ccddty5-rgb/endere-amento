@@ -26,6 +26,42 @@ export const InteractiveMapa: React.FC<InteractiveMapaProps> = ({ slots, onQuick
   const activeSlots = slots.filter(s => s.estoque === selectedEstoque);
   const selectedSlot = slots.find(s => s.id === selectedSlotId);
 
+  const ruaSelecionada = selectedEstoque === "1"
+  ? slots.filter(
+      s =>
+        s.estoque === "1" &&
+        s.modulo === selectedSlot?.modulo &&
+        s.saldo > 0
+    )
+  : [];
+
+  const paletesRua = ruaSelecionada.reduce((total, slot) => {
+
+  const produto = productsList.find(
+    p => p.referencia === slot.referencia
+  );
+
+  if (!produto?.paletizacao) {
+    return total;
+  }
+
+  const resultado = slot.saldo / produto.paletizacao;
+
+  if (resultado < 0.5) {
+    return total;
+  }
+
+  return total + Math.ceil(resultado);
+
+}, 0);
+
+  const capacidadeRuaSelecionada =
+    selectedSlot?.estoque === "1"
+      ? e1Capacidade[selectedSlot.modulo] || 33
+      : 0;
+  const livresRua =
+  capacidadeRuaSelecionada - paletesRua;
+  
   // Lists definitions (plain numbers!)
   const e1Ruas = Array.from({ length: 21 }, (_, i) => String(i + 1));
   const e1Capacidade: Record<string, number> = {
@@ -255,6 +291,10 @@ export const InteractiveMapa: React.FC<InteractiveMapaProps> = ({ slots, onQuick
                   }, 0);
                 
                 const capacidadeRua = e1Capacidade[rua] || 33;
+
+                const percentualOcupacao = Math.round(
+                (ocupacaoReal / capacidadeRua) * 100
+              );
               
                   const isOccupied = s.saldo > 0;
                   const isSelected = selectedSlotId === s.id;
@@ -281,10 +321,15 @@ export const InteractiveMapa: React.FC<InteractiveMapaProps> = ({ slots, onQuick
                       <div className="text-[10px] font-bold leading-normal">
                         {ocupacaoReal}/{capacidadeRua} paletes
                       </div>
-                      
-                      <div className="truncate text-[10px] font-medium leading-normal">
-                        {isOccupied ? `${s.referencia} (${s.saldo} pçs)` : "Rua Livre"}
+
+                      <div className="text-[9px] opacity-70">
+                        {percentualOcupacao}%
                       </div>
+
+                      <div className="text-[9px] opacity-60">
+                        {capacidadeRua - ocupacaoReal} livres
+                      </div>
+                      
                     </div>
                   );
                 })}
@@ -479,13 +524,60 @@ export const InteractiveMapa: React.FC<InteractiveMapaProps> = ({ slots, onQuick
             <div className="space-y-5">
               
               {/* Core location summary */}
-              <div className="bg-slate-50 border border-slate-100 rounded-lg p-3">
-                <span className="text-[10px] text-slate-400 font-bold uppercase block font-sans">Vaga Coordenada</span>
-                <span className="text-xs font-black text-blue-600 block">Estoque {selectedSlot.estoque}</span>
-                <span className="text-sm font-extrabold text-slate-800">
-                  {selectedSlot.estoque === "1" ? `Rua: ${selectedSlot.modulo}` : `Módulo: ${selectedSlot.modulo} • Posição: ${selectedSlot.posicao}`}
-                </span>
-              </div>
+                <div className="bg-slate-50 border border-slate-100 rounded-lg p-3">
+                
+                  <span className="text-[10px] text-slate-400 font-bold uppercase block font-sans">
+                    Localização
+                  </span>
+                
+                  <span className="text-xs font-black text-blue-600 block">
+                    Estoque {selectedSlot.estoque}
+                  </span>
+                
+                  <span className="text-sm font-extrabold text-slate-800 block">
+                    {selectedSlot.estoque === "1"
+                      ? `Rua ${selectedSlot.modulo}`
+                      : `Módulo ${selectedSlot.modulo} • Posição ${selectedSlot.posicao}`
+                    }
+                  </span>
+                
+                  {selectedSlot.estoque === "1" && (
+                    <div className="mt-3 pt-3 border-t border-slate-200 space-y-1 text-xs">
+                
+                      <div className="flex justify-between">
+                        <span className="text-slate-500">Capacidade:</span>
+                        <span className="font-bold">
+                          {capacidadeRuaSelecionada} paletes
+                        </span>
+                      </div>
+                
+                      <div className="flex justify-between">
+                        <span className="text-slate-500">Ocupados:</span>
+                        <span className="font-bold text-blue-700">
+                          {paletesRua} paletes
+                        </span>
+                      </div>
+                
+                      <div className="flex justify-between">
+                        <span className="text-slate-500">Livres:</span>
+                        <span className="font-bold text-emerald-600">
+                          {livresRua} paletes
+                        </span>
+                      </div>
+                
+                      <div className="flex justify-between">
+                        <span className="text-slate-500">Taxa:</span>
+                        <span className="font-bold">
+                          {Math.round(
+                            (paletesRua / capacidadeRuaSelecionada) * 100
+                          ) || 0}%
+                        </span>
+                      </div>
+                
+                    </div>
+                  )}
+                
+                </div>
 
               {editingSlotId === selectedSlot.id ? (
                 /* QUICK MANUAL CORRECTION */
