@@ -49,16 +49,39 @@ import {
 } from "lucide-react";
 
 const loadSlotsFromSupabase = async (): Promise<WarehouseSlot[]> => {
-  const { data, error } = await supabase
-    .from("slots")
-    .select("*");
 
-  if (error) {
-    console.error("Erro ao carregar slots:", error);
-    return [];
+  let allData: any[] = [];
+  let from = 0;
+  const pageSize = 1000;
+
+  while (true) {
+
+    const { data, error } = await supabase
+      .from("slots")
+      .select("*")
+      .range(from, from + pageSize - 1);
+
+    if (error) {
+      console.error("Erro ao carregar slots:", error);
+      return [];
+    }
+
+    if (!data || data.length === 0) {
+      break;
+    }
+
+    allData = [...allData, ...data];
+
+    if (data.length < pageSize) {
+      break;
+    }
+
+    from += pageSize;
   }
 
-  return (data as WarehouseSlot[]) || [];
+  console.log("SLOTS CARREGADOS:", allData.length);
+
+  return allData as WarehouseSlot[];
 };
 
 const saveSlotsToSupabase = async (slotsData: WarehouseSlot[]) => {
