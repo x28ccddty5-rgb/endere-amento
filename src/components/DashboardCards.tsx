@@ -263,7 +263,7 @@ export const DashboardCards: React.FC<DashboardCardsProps> = ({ slots, history, 
                   slots
                     .filter(
                       s =>
-                        s.estoque === "1" &&
+                        s.estoque === 1 &&
                         s.saldo > 0
                     )
                     .length
@@ -291,7 +291,7 @@ export const DashboardCards: React.FC<DashboardCardsProps> = ({ slots, history, 
                 </span>
               </div>
               <div className="text-2xl font-black font-sans text-slate-800 tracking-tight">
-                {new Set(slots.filter(s => s.estoque === "1" && s.saldo > 0).map(s => s.referencia)).size}
+                {new Set(slots.filter(s => s.estoque === 1 && s.saldo > 0).map(s => s.referencia)).size}
               </div>
               <div className="text-[9px] text-slate-400 mt-0.5 font-medium">Tipos de SKU diferentes em vão livre</div>
             </div>
