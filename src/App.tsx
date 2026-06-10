@@ -1682,7 +1682,13 @@ if (
               </div>
 
               {/* Stat dashboard component */}
-              <DashboardCards slots={slots} history={history} divergencias={divergencias} appMode={appMode} />
+              <DashboardCards
+                slots={slots}
+                history={history}
+                divergencias={divergencias}
+                productsList={productsList}
+                appMode={appMode}
+              />
 
               {/* Graphic indicators */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
