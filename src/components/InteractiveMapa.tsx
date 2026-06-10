@@ -632,7 +632,8 @@ export const InteractiveMapa: React.FC<InteractiveMapaProps> = ({ slots, onQuick
 
                   <div className="flex gap-2 pt-2">
                     <button
-                      onClick={saveQuickCorrection}
+                      onClick={() => !isReadOnly && saveQuickCorrection()}
+                      disabled={isReadOnly}
                       className="flex-1 bg-blue-600 text-white rounded py-1.5 text-xs font-bold hover:bg-blue-700 flex items-center justify-center gap-1 shadow-sm cursor-pointer"
                     >
                       <Check className="w-3.5 h-3.5" /> Confirmar
@@ -730,6 +731,7 @@ export const InteractiveMapa: React.FC<InteractiveMapaProps> = ({ slots, onQuick
                   <button
                     disabled={isReadOnly}
                     onClick={() => !isReadOnly && startEditSlot(selectedSlot)}
+                    disabled={isReadOnly}
                     className={`w-full bg-slate-100 text-slate-700 border border-slate-200 rounded-lg py-2 text-xs font-bold transition-colors flex items-center justify-center gap-1.5 shadow-2xs ${
                     isReadOnly
                       ? "opacity-50 cursor-not-allowed"
