@@ -16,8 +16,7 @@ export const InteractiveMapa: React.FC<InteractiveMapaProps> = ({
   currentUser
 }) => {
 
-  const isReadOnly =
-  currentUser?.role !== "Administrador";
+  const isReadOnly = role !== "administrador";
   
   const [selectedEstoque, setSelectedEstoque] = useState<string>("1");
   const [selectedSlotId, setSelectedSlotId] = useState<string | null>(null);
