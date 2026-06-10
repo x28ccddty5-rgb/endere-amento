@@ -264,10 +264,11 @@ export const InteractiveMapa: React.FC<InteractiveMapaProps> = ({
   // Occupancy summary
   const occupiedCount = activeSlots.filter(s => s.saldo > 0).length;
   // Estimated representative total
-  const totalCount = selectedEstoque === "1" 
-    ? 22 
-    : selectedEstoque === "2" 
-      ? 172 * 10 
+  const totalCount =
+  selectedEstoque === "1"
+    ? 21
+    : selectedEstoque === "2"
+      ? activeSlots.length
       : 112 * 12;
 
   const occRate = totalCount > 0 ? (occupiedCount / totalCount) * 100 : 0;
@@ -325,8 +326,8 @@ export const InteractiveMapa: React.FC<InteractiveMapaProps> = ({
           <div>
             <span className="text-[10px] text-slate-400 block font-bold uppercase">Estrutura de Armazenamento</span>
             <span className="text-xs font-bold text-slate-600 leading-tight">
-              {selectedEstoque === "1" && "22 Ruas Livres (Sem posições verticais)"}
-              {selectedEstoque === "2" && "172 Módulos x 10 Alturas (A1-E2)"}
+              {selectedEstoque === "1" && "21 Ruas (Sem posições definidas)"}
+              {selectedEstoque === "2" && "172 Módulos (Capacidade ajustada para túneis e pilares)"}
               {selectedEstoque === "3" && "112 Módulos x 12 Alturas (A1-F2)"}
             </span>
           </div>
