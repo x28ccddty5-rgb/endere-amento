@@ -2798,16 +2798,14 @@ if (
             />
           )}
 
-          {/* TAB 8: GÊMEO DIGITAL (Interactive visual twin) */}
-          {activeTab === "mapa" && (
-            <div className="space-y-6">
-              <InteractiveMapa
-                slots={slots}
-                onQuickUpdateSlot={onQuickUpdateSlot}
-                productsList={productsList}
-                currentUser={currentUser}
-              />
-                  setSlots(slots.map(s => s.id === updated.id ? updated : s));
+          <InteractiveMapa
+            slots={slots}
+            onQuickUpdateSlot={(updated) =>
+              setSlots(slots.map(s => s.id === updated.id ? updated : s))
+            }
+            productsList={productsList}
+            currentUser={currentUser}
+          />
                   
                   // Keep history
                   const logId = `MOV-${generateId()}`;
