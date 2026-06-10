@@ -1,6 +1,7 @@
 export interface Product {
   referencia: string;
   descricao: string;
+  paletizacao?: number;
 }
 
 export interface WarehouseSlot {
