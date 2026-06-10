@@ -15,6 +15,7 @@ export const BaseDeDadosPanel: React.FC<BaseDeDadosPanelProps> = ({
   slots,
   onRegisterProduct,
   hasAccess,
+  currentUser,
 }) => {
   const [searchQuery, setSearchQuery] = useState("");
   const [newRef, setNewRef] = useState("");
