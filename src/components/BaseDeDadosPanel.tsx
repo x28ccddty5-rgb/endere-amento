@@ -6,7 +6,7 @@ interface BaseDeDadosPanelProps {
   productsList: Product[];
   slots: WarehouseSlot[];
   onRegisterProduct: (ref: string, desc: string) => Promise<boolean>;
-  hasAccess: (level: "Administrador" | "Operador" | "Consulta") => boolean;
+  hasAccess: (level: "administrador" | "operador" | "consulta") => boolean;
   currentUser: any;
 }
 
@@ -24,8 +24,8 @@ export const BaseDeDadosPanel: React.FC<BaseDeDadosPanelProps> = ({
   const isReadOnly = !hasAccess("Operador");
   
   const canEditBase =
-  currentUser?.role === "Administrador" ||
-  currentUser?.role === "Lideranca";
+  currentUser?.role === "administrador" ||
+  currentUser?.role === "lideranca";
 
   const filteredProducts = productsList.filter((p) => {
     const q = searchQuery.toLowerCase();
