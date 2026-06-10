@@ -22,8 +22,9 @@ export const BaseDeDadosPanel: React.FC<BaseDeDadosPanelProps> = ({
   const [newDesc, setNewDesc] = useState("");
 
   const isReadOnly = !hasAccess("Operador");
+  
   const canEditBase =
-  hasAccess("Administrador") ||
+  currentUser?.role === "Administrador" ||
   currentUser?.role === "Lideranca";
 
   const filteredProducts = productsList.filter((p) => {
@@ -34,9 +35,9 @@ export const BaseDeDadosPanel: React.FC<BaseDeDadosPanelProps> = ({
   });
 
   const handleAddProduct = async () => {
-    if (isReadOnly) {
-      alert("Seu nível de permissão (Consulta) não possui privilégios de cadastro.");
-      return;
+     if (!canEditBase) {
+    alert("Seu perfil não possui permissão para cadastrar produtos.");
+    return;
     }
 
     let cleanRef = newRef.trim().toUpperCase();
