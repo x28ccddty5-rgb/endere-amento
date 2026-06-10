@@ -1641,6 +1641,8 @@ if (
 
         {/* COMPONENT TAB CONTAINER WRAPPER */}
         <div className="p-6 flex-1 space-y-6">
+
+          console.log("ROLE DASHBOARD:", currentUser?.role);
           
           {/* TAB 1: DASHBOARD VIEW */}
           {activeTab === "dashboard" &&
