@@ -1288,23 +1288,30 @@ if (
   }
 
   // Helper validation roles and permissions check
-  const hasAccess = (requiredLevel: "Administrador" | "Operador" | "Consulta"): boolean => {
+  const hasAccess = (requiredLevel: "administrador" | "operador" | "consulta"): boolean => {
     if (!currentUser) return false;
-    const role = currentUser.role;
+    const role =
+      currentUser.role
+        ?.toLowerCase()
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "");
 
-    if (role === "Administrador") return true;
+    if (role === "administrador") return true;
 
-    if (requiredLevel === "Administrador") {
+    if (requiredLevel === "administrador") {
       // Only Admin can manage users or perform administrative overrides
       return false;
     }
 
-    if (requiredLevel === "Operador") {
-      // Admin and Apoio have permission to do launches, corridor inputs, and write items
-      return role === "Apoio";
+    if (requiredLevel === "operador") {
+      return [
+        "administrador",
+        "lideranca",
+        "apoio"
+      ].includes(role);
     }
 
-    if (requiredLevel === "Consulta") {
+    if (requiredLevel === "consulta") {
       // Everyone else has at least viewing access
       return true;
     }
@@ -1314,33 +1321,44 @@ if (
 
   const canAccessTab = (tab: string): boolean => {
     if (!currentUser) return false;
-    const role = currentUser.role;
+    
+    const role =
+    currentUser.role
+      ?.toLowerCase()
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "");
 
+    const isReadOnly =
+    currentUser?.role
+    ?.toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "") === "visualizador";
+    
     // Endereço Corredor is restricted to Advanced Mode only
     if (tab === "corredor" && appMode !== "avancado") {
       return false;
     }
 
     // Admin has access to everything
-    if (role === "Administrador") return true;
+    if (role === "administrador") return true;
 
     // Produção only searches items
-    if (role === "Produção") {
+    if (role === "producao") {
       return tab === "endereçamento";
     }
 
-    // Liderança sees all except user administration & advanced twins/AI mode
-    if (role === "Lideranca") {
+    // Lideranca sees all except user administration & advanced twins/AI mode
+    if (role === "lideranca") {
       return !["users", "mapa", "ai"].includes(tab);
     }
 
     // Apoio sees all except user administration & advanced twins/AI mode
-    if (role === "Apoio") {
+    if (role === "apoio") {
       return !["users", "mapa", "ai"].includes(tab);
     }
 
     // Visualizador can see all tabs except user administration, but edit fields are locked or read-only
-    if (role === "Visualizador") {
+    if (role === "visualizador") {
       return tab !== "users";
     }
 
