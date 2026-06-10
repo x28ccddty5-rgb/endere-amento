@@ -1354,7 +1354,12 @@ if (
 
     // Apoio sees all except user administration & advanced twins/AI mode
     if (role === "apoio") {
-      return !["users", "mapa", "ai"].includes(tab);
+      return [
+        "endereçamento",
+        "lançamento",
+        "histórico",
+        "divergências"
+      ].includes(tab);
     }
 
     // Visualizador can see all tabs except user administration, but edit fields are locked or read-only
