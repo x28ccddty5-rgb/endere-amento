@@ -1287,6 +1287,18 @@ if (
     );
   }
 
+  const role =
+      currentUser.role
+        ?.toLowerCase()
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "");
+  
+      const isReadOnly =
+      currentUser?.role
+      ?.toLowerCase()
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "") === "visualizador";
+  
   // Helper validation roles and permissions check
   const hasAccess = (requiredLevel: "administrador" | "operador" | "consulta"): boolean => {
     if (!currentUser) return false;
@@ -1321,19 +1333,7 @@ if (
 
   const canAccessTab = (tab: string): boolean => {
     if (!currentUser) return false;
-    
-    const role =
-    currentUser.role
-      ?.toLowerCase()
-      .normalize("NFD")
-      .replace(/[\u0300-\u036f]/g, "");
 
-    const isReadOnly =
-    currentUser?.role
-    ?.toLowerCase()
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "") === "visualizador";
-    
     // Endereço Corredor is restricted to Advanced Mode only
     if (tab === "corredor" && appMode !== "avancado") {
       return false;
