@@ -728,8 +728,13 @@ export const InteractiveMapa: React.FC<InteractiveMapaProps> = ({ slots, onQuick
                   )}
                     
                   <button
-                    onClick={() => startEditSlot(selectedSlot)}
-                    className="w-full bg-slate-100 text-slate-700 border border-slate-200 rounded-lg py-2 text-xs font-bold hover:bg-slate-200 transition-colors flex items-center justify-center gap-1.5 shadow-2xs cursor-pointer"
+                    disabled={isReadOnly}
+                    onClick={() => !isReadOnly && startEditSlot(selectedSlot)}
+                    className={`w-full bg-slate-100 text-slate-700 border border-slate-200 rounded-lg py-2 text-xs font-bold transition-colors flex items-center justify-center gap-1.5 shadow-2xs ${
+                    isReadOnly
+                      ? "opacity-50 cursor-not-allowed"
+                      : "hover:bg-slate-200 cursor-pointer"
+                  }`}
                   >
                     <Hammer className="w-3.5 h-3.5 text-slate-500" />
                     Corrigir / Inventariar Vaga
