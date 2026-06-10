@@ -61,6 +61,9 @@ export const InteractiveMapa: React.FC<InteractiveMapaProps> = ({
   "20": 33,
   "21": 30
 };
+
+  const capacidadeTotalE1 = Object.values(e1Capacidade)
+  .reduce((total, capacidade) => total + capacidade, 0);
   
   const activeSlots = slots.filter(s => s.estoque === selectedEstoque);
   const selectedSlot = slots.find(s => s.id === selectedSlotId);
@@ -261,8 +264,43 @@ export const InteractiveMapa: React.FC<InteractiveMapaProps> = ({
     };
   };
 
+  const occupiedPalletsE1 = slots
+  .filter(
+    s =>
+      s.estoque === "1" &&
+      s.referencia &&
+      s.saldo > 0
+  )
+  .reduce((total, slot) => {
+
+    const produto = productsList.find(
+      p => p.referencia === slot.referencia
+    );
+
+    if (!produto?.paletizacao) {
+      return total;
+    }
+
+    const resultado = slot.saldo / produto.paletizacao;
+
+    if (resultado < 0.5) {
+      return total;
+    }
+
+    return total + Math.ceil(resultado);
+
+  }, 0);
+  
   // Occupancy summary
-  const occupiedCount = activeSlots.filter(s => s.saldo > 0).length;
+  const occupiedCount =
+  selectedEstoque === "1"
+    ? occupiedPalletsE1
+    : activeSlots.filter(
+        s =>
+          s.referencia &&
+          s.referencia.trim() !== "" &&
+          s.saldo > 0
+      ).length;
   
   console.log("Total slots E2:", activeSlots.length);
   console.log("Ocupados:", occupiedCount);
@@ -270,9 +308,9 @@ export const InteractiveMapa: React.FC<InteractiveMapaProps> = ({
   // Estimated representative total
   const totalCount =
   selectedEstoque === "1"
-    ? 21
+    ? capacidadeTotalE1
     : selectedEstoque === "2"
-      ? activeSlots.length
+      ? 1373
       : 112 * 12;
 
   const occRate = totalCount > 0 ? (occupiedCount / totalCount) * 100 : 0;
