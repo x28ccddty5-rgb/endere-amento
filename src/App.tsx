@@ -1109,6 +1109,14 @@ if (
 
   // --- COMPILATING SYSTEM VIEWS ---
   const filteredSlots = slots.filter(s => {
+
+    console.log(
+    "SLOT:",
+    s.estoque,
+    s.modulo,
+    s.posicao
+  );
+    
     const matchesRef = searchRef
   ? s.referencia.toLowerCase() === searchRef.toLowerCase()
   : true;
