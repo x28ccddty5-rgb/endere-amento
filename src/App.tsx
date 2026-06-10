@@ -2529,8 +2529,15 @@ if (
             console.log("TOTAL HISTORY:", history.length);
 
             console.log("FILTRADOS:", filteredHistory.length);
+
+            console.log(
+            "RENDERIZA TABELA?",
+            filteredHistory.length > 0
+          );
             
             console.log("PRIMEIRO REGISTRO:", history[0]);
+
+            console.log("ANTES DO MAP:", filteredHistory.length);
       
             return (
               <div className="space-y-6">
@@ -2619,6 +2626,7 @@ if (
                           )}
                         </tr>
                       </thead>
+
                       <tbody className="divide-y divide-slate-100 font-medium text-slate-700">
                         {filteredHistory.length > 0 ? (
                           filteredHistory.map((h) => (
