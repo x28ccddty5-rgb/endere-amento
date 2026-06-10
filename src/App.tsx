@@ -1645,9 +1645,9 @@ if (
           {/* TAB 1: DASHBOARD VIEW */}
           {activeTab === "dashboard" &&
            (
-             currentUser?.role === "Administrador" ||
-             currentUser?.role === "Lideranca" ||
-             currentUser?.role === "Visualizador"
+             currentUser?.role === "administrador" ||
+             currentUser?.role === "lideranca" ||
+             currentUser?.role === "visualizador"
            ) && (
             <div className="space-y-6">
               
@@ -1779,8 +1779,8 @@ if (
                       </button>
                     )}
                     {(
-                      currentUser?.role === "Administrador" ||
-                      currentUser?.role === "Lideranca"
+                      currentUser?.role === "administrador" ||
+                      currentUser?.role === "lideranca"
                     ) && (
                     <button 
                       onClick={handleExportarEnderecamento}
