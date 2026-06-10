@@ -65,6 +65,9 @@ export const InteractiveMapa: React.FC<InteractiveMapaProps> = ({
   const activeSlots = slots.filter(s => s.estoque === selectedEstoque);
   const selectedSlot = slots.find(s => s.id === selectedSlotId);
 
+const blockedE2Positions =
+  e2BlockedPositions[selectedE2Module] || [];
+  
   const ruaSelecionada = selectedEstoque === "1"
   ? slots.filter(
       s =>
@@ -517,11 +520,9 @@ export const InteractiveMapa: React.FC<InteractiveMapaProps> = ({
                 
                 <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
                   {selectedEstoque === "2" ? (
-                    const blocked =
-                      e2BlockedPositions[selectedE2Module] || [];
                     
                     e2Positions
-                      .filter((pos) => !blocked.includes(pos))
+                      .filter((pos) => !blockedE2Positions.includes(pos))
                       .map((pos) => {
                       const modStr = String(selectedE2Module);
                       const s = getOrCreateSlotOnMap("2", modStr, pos);
@@ -829,7 +830,6 @@ export const InteractiveMapa: React.FC<InteractiveMapaProps> = ({
                   <button
                     disabled={isReadOnly}
                     onClick={() => !isReadOnly && startEditSlot(selectedSlot)}
-                    disabled={isReadOnly}
                     className={`w-full bg-slate-100 text-slate-700 border border-slate-200 rounded-lg py-2 text-xs font-bold transition-colors flex items-center justify-center gap-1.5 shadow-2xs ${
                     isReadOnly
                       ? "opacity-50 cursor-not-allowed"
