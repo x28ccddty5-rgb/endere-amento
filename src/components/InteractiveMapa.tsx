@@ -263,6 +263,10 @@ export const InteractiveMapa: React.FC<InteractiveMapaProps> = ({
 
   // Occupancy summary
   const occupiedCount = activeSlots.filter(s => s.saldo > 0).length;
+  
+  console.log("Total slots E2:", activeSlots.length);
+  console.log("Ocupados:", occupiedCount);
+  
   // Estimated representative total
   const totalCount =
   selectedEstoque === "1"
