@@ -2801,11 +2801,12 @@ if (
           {/* TAB 8: GÊMEO DIGITAL (Interactive visual twin) */}
           {activeTab === "mapa" && (
             <div className="space-y-6">
-              <InteractiveMapa 
-                slots={slots} 
+              <InteractiveMapa
+                slots={slots}
+                onQuickUpdateSlot={onQuickUpdateSlot}
                 productsList={productsList}
-                onQuickUpdateSlot={(updated) 
-                currentUser={currentUser}=> {
+                currentUser={currentUser}
+              />
                   setSlots(slots.map(s => s.id === updated.id ? updated : s));
                   
                   // Keep history
