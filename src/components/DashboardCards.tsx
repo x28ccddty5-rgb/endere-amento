@@ -245,7 +245,7 @@ export const DashboardCards: React.FC<DashboardCardsProps> = ({ slots, history, 
         </div>
       </div>
 
-      {appMode === "avancado" && (
+      {true && (
         <div>
           <h3 className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-2 flex items-center gap-1.5 pt-2">
             <Layers className="w-3.5 h-3.5 text-indigo-500" />
