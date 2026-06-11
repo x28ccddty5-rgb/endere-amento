@@ -353,7 +353,7 @@ alert(
             </thead>
             <tbody className="divide-y divide-slate-150 relative text-[11.5px] font-medium text-slate-700">
               {groupedDivergencias.length > 0 ? (
-                groupedDivergencias.map(...)
+                groupedDivergencias.map((d: any) => (
                   <tr key={d.id} className={`hover:bg-slate-50 transition border-b border-slate-150 ${
                     d.status === "Aberta" ? "bg-red-50/15" : "bg-emerald-50/5 opacity-80"
                   }`}>
