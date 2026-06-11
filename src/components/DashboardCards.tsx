@@ -68,10 +68,10 @@ const occupationRate =
   const totalStoredQuantity = slots.reduce((acc, s) => acc + s.saldo, 0);
   
   // Movimentações de hoje
-const hoje = new Date().toISOString().split("T")[0];
+const hojeString = new Date().toISOString().split("T")[0];
 
 const movementsToday = history.filter(
-  h => h.data === hoje
+  h => h.data === hojeString
 ).length;
 
 // Última sincronização
@@ -96,6 +96,55 @@ const topOperator =
   Object.entries(operatorCounter)
     .sort((a, b) => b[1] - a[1])[0] || ["Sem Registro", 0];
 
+const hojeData = new Date();
+
+const skusMov7Dias = new Set(
+  history
+    .filter(h => {
+      const dataMov = new Date(h.data);
+      const diffDias =
+  (hojeData.getTime() - dataMov.getTime()) /
+  (1000 * 60 * 60 * 24);
+
+      return diffDias <= 7;
+    })
+    .map(h => h.referencia)
+);
+
+const skusMov30Dias = new Set(
+  history
+    .filter(h => {
+      const dataMov = new Date(h.data);
+      const diffDias =
+  (hojeData.getTime() - dataMov.getTime()) /
+  (1000 * 60 * 60 * 24);
+
+      return diffDias <= 30;
+    })
+    .map(h => h.referencia)
+);
+
+const skusAtivos = new Set(
+  slots
+    .filter(
+      s =>
+        s.saldo > 0 &&
+        s.referencia &&
+        s.referencia.trim() !== ""
+    )
+    .map(s => s.referencia.trim())
+);
+
+const skusParados7Dias =
+  [...skusAtivos].filter(
+    sku => !skusMov7Dias.has(sku)
+  ).length;
+
+const skusParados30Dias =
+  [...skusAtivos].filter(
+    sku => !skusMov30Dias.has(sku)
+  ).length;
+  
   // 4. Divergencias
   const divAbertas = divergencias.filter(d => d.status === "Aberta").length;
   const divCorrigidas = divergencias.filter(d => d.status === "Corrigida").length;
@@ -186,25 +235,25 @@ const topOperator =
           <div className="bg-white border border-slate-200 border-t-2 border-t-slate-500 rounded p-3 shadow-2xs hover:border-slate-300 transition-colors">
             <div className="flex items-center justify-between mb-1">
               <span className="text-[10px] font-bold text-slate-600 bg-slate-100 px-1.5 py-0.5 rounded flex items-center gap-1 uppercase">
-                <RefreshCw className="w-3 h-3 text-blue-500" /> MÓDULOS LOTADOS
+                <RefreshCw className="w-3 h-3 text-blue-500" /> SKUs PARADOS 7 DIAS
               </span>
             </div>
             <div className="text-2xl font-black font-sans text-slate-800 tracking-tight">
-              {fullModules}
+              {skusParados7Dias}
             </div>
-            <div className="text-[9px] text-slate-400 mt-0.5">Módulos com 100% da capacidade ocupada</div>
+            <div className="text-[9px] text-slate-400 mt-0.5">SKUs sem movimentos nos ultimos 7 dias</div>
           </div>
 
           <div className="bg-white border border-slate-200 border-t-2 border-t-emerald-400 rounded p-3 shadow-2xs hover:border-slate-350 transition-colors">
             <div className="flex items-center justify-between mb-1">
               <span className="text-[10px] font-bold text-emerald-805 bg-emerald-50 px-1.5 py-0.5 rounded flex items-center gap-1 uppercase">
-                <ArrowUpRight className="w-3 h-3 text-emerald-555" /> MÓDULOS DISPONÍVEIS
+                <ArrowUpRight className="w-3 h-3 text-emerald-555" /> SKUs PARADOS 30 DIAS
               </span>
             </div>
             <div className="text-2xl font-black font-sans text-emerald-600 tracking-tight">
-              {availableModules}
+              {skusParados30Dias}
             </div>
-            <div className="text-[9px] text-slate-400 mt-0.5">Módulos com ao menos uma posição livre</div>
+            <div className="text-[9px] text-slate-400 mt-0.5">SKUs sem movimentos nos ultimos 30 dias</div>
           </div>
 
           <div className="bg-white border border-slate-200 border-t-2 border-t-red-400 rounded p-3 shadow-2xs hover:border-slate-350 transition-colors">
@@ -226,7 +275,7 @@ const topOperator =
               </span>
             </div>
             <div className="text-sm font-black font-mono text-slate-800 tracking-tight pt-1 leading-none">
-              {lastSync?.data || "--"}
+              {lastSync ? `${lastSync.data} ${lastSync.hora}` : "--"}
             </div>
             <div className="text-[9px] text-slate-400 mt-1">Última atualização registrada</div>
           </div>
