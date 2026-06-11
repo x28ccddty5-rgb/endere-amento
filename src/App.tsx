@@ -1687,6 +1687,7 @@ if (
                 history={history}
                 divergencias={divergencias}
                 productsList={productsList}
+                occupiedPalletsE1={occupiedPalletsE1}
                 appMode={appMode}
               />
 
