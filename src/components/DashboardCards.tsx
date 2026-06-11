@@ -68,14 +68,12 @@ const occupationRate =
   const totalStoredQuantity = slots.reduce((acc, s) => acc + s.saldo, 0);
   
   // Movimentações de hoje
-const hoje = new Date();
+const dataUltimaSincronia =
+dashboardStats.lastSync?.split(" ")[0] || "";
 
-const hojeString =
-`${hoje.getFullYear()}-${
-String(hoje.getMonth() + 1).padStart(2,"0")
-}-${
-String(hoje.getDate()).padStart(2,"0")
-}`;
+const movementsToday = history.filter(
+  h => h.data === dataUltimaSincronia
+).length;
 
 console.log("Hoje:", hojeString);
 
