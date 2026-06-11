@@ -1732,9 +1732,31 @@ if (
 
                     <div className="space-y-4 pt-1 font-mono text-xs">
                       {["1", "2", "3"].map(est => {
-                        const total = est === "1" ? 22 : est === "2" ? 1720 : 1344;
-                        const occupied = slots.filter(s => s.estoque === est && s.saldo > 0).length;
+                
+                        let total = 0;
+                        let occupied = 0;
+                        
+                        if (est === "1") {
+                          total = 657;
+                          occupied = occupiedPalletsE1;
+                        }
+                        
+                        if (est === "2") {
+                          total = 1373;
+                          occupied = slots.filter(
+                            s => s.estoque === "2" && s.saldo > 0
+                          ).length;
+                        }
+                        
+                        if (est === "3") {
+                          total = 1344;
+                          occupied = slots.filter(
+                            s => s.estoque === "3" && s.saldo > 0
+                          ).length;
+                        }
+                        
                         const pct = total > 0 ? (occupied / total) * 100 : 0;
+                
                         return (
                           <div key={est} className="flex items-center gap-3">
                             <span className="w-20 text-slate-600 font-bold block shrink-0"> Estoque {est}</span>
