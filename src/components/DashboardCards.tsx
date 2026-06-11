@@ -66,22 +66,16 @@ const occupationRate =
     .map(s => s.referencia.trim())
 ).size;
   const totalStoredQuantity = slots.reduce((acc, s) => acc + s.saldo, 0);
-  
-  // Movimentações de hoje
-const dataUltimaSincronia =
-dashboardStats.lastSync?.split(" ")[0] || "";
+
+// Movimentações da data da última sincronização
+const dataUltimaSincronia = lastSync?.data || "";
 
 const movementsToday = history.filter(
   h => h.data === dataUltimaSincronia
 ).length;
 
-console.log("Hoje:", hojeString);
-
-const movementsToday = history.filter(h => {
-  return String(h.data).trim() === hojeString;
-}).length;
-
-console.log("Movimentações Hoje:", movementsToday);
+console.log("Data última sincronização:", dataUltimaSincronia);
+console.log("Movimentações:", movementsToday);
   
 // Última sincronização
 const lastSync = history.length > 0
