@@ -404,6 +404,33 @@ useEffect(() => {
 
   const [activeTab, setActiveTab] = useState<string>("endereçamento");
 
+  const occupiedPalletsE1 = slots
+  .filter(
+    s =>
+      s.estoque === "1" &&
+      s.referencia &&
+      s.saldo > 0
+  )
+  .reduce((total, slot) => {
+
+    const produto = productsList.find(
+      p => p.referencia === slot.referencia
+    );
+
+    if (!produto?.paletizacao) {
+      return total;
+    }
+
+    const resultado = slot.saldo / produto.paletizacao;
+
+    if (resultado < 0.5) {
+      return total;
+    }
+
+    return total + Math.ceil(resultado);
+
+  }, 0);
+  
   // Save changes to localStorage on modifier updates
   useEffect(() => {
   saveSlotsToSupabase(slots);
