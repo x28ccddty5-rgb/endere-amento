@@ -399,7 +399,7 @@ export const InteractiveMapa: React.FC<InteractiveMapaProps> = ({
             <span className="text-xs font-bold text-slate-600 leading-tight">
               {selectedEstoque === "1" && "21 Ruas (Sem posições definidas)"}
               {selectedEstoque === "2" && "172 Módulos (Capacidade ajustada para túneis e pilares)"}
-              {selectedEstoque === "3" && "112 Módulos x 12 Alturas (A1-F2)"}
+              {selectedEstoque === "3" && "112 Módulos (Capacidade ajustada para túneis, pilares e módulos especiais)"}
             </span>
           </div>
           <div>
