@@ -22,6 +22,7 @@ interface DashboardCardsProps {
   history: HistoricoMov[];
   divergencias: Divergencia[];
   productsList: any[];
+  occupiedPalletsE1: number;
   appMode?: string;
 }
 
@@ -30,6 +31,7 @@ export const DashboardCards: React.FC<DashboardCardsProps> = ({
   history,
   divergencias,
   productsList,
+  occupiedPalletsE1,
   appMode
 }) => {
   
