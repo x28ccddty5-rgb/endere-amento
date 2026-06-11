@@ -96,54 +96,6 @@ const topOperator =
   Object.entries(operatorCounter)
     .sort((a, b) => b[1] - a[1])[0] || ["Sem Registro", 0];
 
-// Módulos E2 lotados
-const totalModulesE2 = 172;
-let fullModulesE2 = 0;
-
-for (let mod = 1; mod <= totalModulesE2; mod++) {
-  const capacidade =
-    e2Positions.length -
-    (e2BlockedPositions[mod]?.length || 0);
-
-  const ocupados = slots.filter(
-    s =>
-      s.estoque === "2" &&
-      Number(s.modulo) === mod &&
-      s.saldo > 0
-  ).length;
-
-  if (ocupados >= capacidade) {
-    fullModulesE2++;
-  }
-}
-
-// Módulos E3 lotados
-const totalModulesE3 = 112;
-let fullModulesE3 = 0;
-
-for (let mod = 1; mod <= totalModulesE3; mod++) {
-
-  const capacidade =
-    e3Positions.length +
-    (e3ExtraPositions[mod]?.length || 0) -
-    (e3BlockedPositions[mod]?.length || 0);
-
-  const ocupados = slots.filter(
-    s =>
-      s.estoque === "3" &&
-      Number(s.modulo) === mod &&
-      s.saldo > 0
-  ).length;
-
-  if (ocupados >= capacidade) {
-    fullModulesE3++;
-  }
-}
-
-const fullModules = fullModulesE2 + fullModulesE3;
-
-const availableModules =
-  (172 + 112) - fullModules;
   // 4. Divergencias
   const divAbertas = divergencias.filter(d => d.status === "Aberta").length;
   const divCorrigidas = divergencias.filter(d => d.status === "Corrigida").length;
