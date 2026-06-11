@@ -56,6 +56,35 @@ export const DivergenciasPanel: React.FC<DivergenciasPanelProps> = ({
     ? divergencias.filter(d => d.status === "Aberta")
     : divergencias;
 
+  const groupedDivergencias = Object.values(
+  displayedDivergencias.reduce((acc, d) => {
+    const key = `${d.estoque}-${d.modulo}-${d.posicao}`;
+
+    if (!acc[key]) {
+      acc[key] = {
+        ...d,
+        qtdDivergencias: 1,
+      };
+    } else {
+      acc[key].qtdDivergencias += 1;
+    }
+
+    return acc;
+  }, {} as Record<string, any>)
+).sort((a, b) => {
+  const estoqueA = Number(String(a.estoque).replace(/\D/g, ""));
+  const estoqueB = Number(String(b.estoque).replace(/\D/g, ""));
+
+  if (estoqueA !== estoqueB) {
+    return estoqueA - estoqueB;
+  }
+
+  const moduloA = Number(String(a.modulo).replace(/\D/g, ""));
+  const moduloB = Number(String(b.modulo).replace(/\D/g, ""));
+
+  return moduloA - moduloB;
+});
+  
   const openCorrectionDialog = (d: Divergencia) => {
     setSelectedDivergenciaId(d.id);
     setResolveAction("sobrescrever");
@@ -160,7 +189,14 @@ export const DivergenciasPanel: React.FC<DivergenciasPanelProps> = ({
 
     // Update divergence item to status Corrigida
     updatedDivergencias = updatedDivergencias.map(d => {
-      if (d.id === div.id) {
+
+  const mesmaPosicao =
+    d.estoque === div.estoque &&
+    d.modulo === div.modulo &&
+    d.posicao === div.posicao &&
+    d.status === "Aberta";
+
+  if (mesmaPosicao) {
         return {
           ...d,
           status: "Corrigida",
@@ -198,7 +234,17 @@ export const DivergenciasPanel: React.FC<DivergenciasPanelProps> = ({
 
     // Cleanup and alerts
     setSelectedDivergenciaId(null);
-    alert(`Divergência [${div.id}] corrigida manualmente e sincronizada ao Gêmeo Digital!`);
+    const qtdCorrigidas = divergencias.filter(
+  d =>
+    d.status === "Aberta" &&
+    d.estoque === div.estoque &&
+    d.modulo === div.modulo &&
+    d.posicao === div.posicao
+).length;
+
+alert(
+  `${qtdCorrigidas} divergência(s) da posição ${div.posicao} corrigida(s) com sucesso.`
+);
   };
 
   const handleExportCSV = () => {
@@ -296,6 +342,7 @@ export const DivergenciasPanel: React.FC<DivergenciasPanelProps> = ({
                 <th className="py-3 px-3 font-mono">Estoque</th>
                 <th className="py-3 px-3">Módulo / Rua</th>
                 <th className="py-3 px-3">Posição</th>
+                <th className="py-3 px-3 text-center">Qtd. Div.</th>
                 <th className="py-3 px-3 font-mono text-center">SKU Conflitante</th>
                 <th className="py-3 px-3 font-mono text-center">SKU Corrigido</th>
                 <th className="py-3 px-3 text-right">Saldo Retido</th>
@@ -305,8 +352,8 @@ export const DivergenciasPanel: React.FC<DivergenciasPanelProps> = ({
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-150 relative text-[11.5px] font-medium text-slate-700">
-              {displayedDivergencias.length > 0 ? (
-                displayedDivergencias.map((d) => (
+              {groupedDivergencias.length > 0 ? (
+                groupedDivergencias.map(...)
                   <tr key={d.id} className={`hover:bg-slate-50 transition border-b border-slate-150 ${
                     d.status === "Aberta" ? "bg-red-50/15" : "bg-emerald-50/5 opacity-80"
                   }`}>
@@ -316,6 +363,15 @@ export const DivergenciasPanel: React.FC<DivergenciasPanelProps> = ({
                     <td className="py-3 px-3 font-black text-slate-800">{d.estoque.replace("E", "")}</td>
                     <td className="py-3 px-3 font-bold font-mono text-slate-800">{d.modulo.replace(/^[RM]/i, "")}</td>
                     <td className="py-3 px-3 text-slate-700 font-bold font-mono">{d.posicao || "—"}</td>
+                    <td className="py-3 px-3 text-center">
+                      <span className={`px-2 py-1 rounded-full text-[10px] font-black ${
+                        d.qtdDivergencias > 1
+                          ? "bg-red-100 text-red-700"
+                          : "bg-slate-100 text-slate-600"
+                      }`}>
+                        {d.qtdDivergencias}
+                      </span>
+                    </td>
                     <td className="py-3 px-3 text-center font-mono">
                       {d.refAtual ? (
                         <span className="bg-slate-105 border border-slate-200 text-slate-700 px-1.5 py-0.5 rounded font-black text-[10px]">
@@ -392,12 +448,32 @@ export const DivergenciasPanel: React.FC<DivergenciasPanelProps> = ({
               {(() => {
                 const div = divergencias.find(d => d.id === selectedDivergenciaId);
                 if (!div) return null;
+            
+            const qtdCorrigidas = divergencias.filter(
+              x =>
+                x.status === "Aberta" &&
+                x.estoque === div.estoque &&
+                x.modulo === div.modulo &&
+                x.posicao === div.posicao
+            ).length;
+            
                 return (
                   <div className="bg-slate-50 border border-slate-200 rounded-lg p-3 text-xs space-y-2 leading-relaxed font-sans text-slate-650">
                     <div>
                       <span className="text-[9px] text-slate-400 block font-bold uppercase">Endereço de Conflito:</span>
                       <strong className="text-slate-800">Estoque {div.estoque.replace("E", "")} • Módulo/Rua: {div.modulo.replace(/^[RM]/i, "")} {div.posicao ? `• Posição: ${div.posicao}` : ""}</strong>
                     </div>
+
+                    <div className="bg-red-50 border border-red-200 rounded-lg p-2">
+                        <span className="text-red-700 font-black text-[11px]">
+                          {qtdCorrigidas} divergência(s) aberta(s) nesta posição
+                        </span>
+                      
+                        <div className="text-[10px] text-red-600 mt-1">
+                          Ao corrigir este endereço, todas as divergências desta posição serão encerradas automaticamente.
+                        </div>
+                      </div>
+                    
                     <div>
                       <span className="text-[9px] text-slate-400 block font-bold uppercase">Motivo registrado pelo robô:</span>
                       <strong className="text-red-700 font-bold">{div.tipoDivergencia}</strong>
