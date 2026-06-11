@@ -109,7 +109,7 @@ export const InteractiveMapa: React.FC<InteractiveMapaProps> = ({
   
   const e2Positions = ["A1", "B1", "C1", "D1", "E1", "A2", "B2", "C2", "D2", "E2"];
   const e3Positions = ["A1", "B1", "C1", "D1", "E1", "F1", "A2", "B2", "C2", "D2", "E2", "F2"];
-
+  
   const e2BlockedPositions: Record<number, string[]> = {
   4: ["E1"],
 
@@ -189,18 +189,26 @@ export const InteractiveMapa: React.FC<InteractiveMapaProps> = ({
 };
 
   const e3BlockedPositions: Record<number, string[]> = {
-  11: ["A1", "B1", "C1", "A2", "B2", "C2"],
-  22: ["A1", "B1", "C1", "A2", "B2", "C2"],
-  41: ["A1", "B1", "C1", "A2", "B2", "C2"],
-  49: ["A1", "B1", "C1", "A2", "B2", "C2"],
-  60: ["A1", "B1", "C1", "A2", "B2", "C2"],
-  68: ["A1", "B1", "C1", "A2", "B2", "C2"],
-  81: ["A1", "B1", "C1", "A2", "B2", "C2"],
+  11: ["A1", "B1", "C1", "A2", "B2", "C2", "F1", "F2"],
+  22: ["A1", "B1", "C1", "A2", "B2", "C2", "F1", "F2"]],
+  41: ["A1", "B1", "C1", "A2", "B2", "C2", "F1", "F2"],
+  49: ["A1", "B1", "C1", "A2", "B2", "C2", "F1", "F2"],
+  60: ["A1", "B1", "C1", "A2", "B2", "C2", "F1", "F2"],
+  68: ["A1", "B1", "C1", "A2", "B2", "C2", "F1", "F2"],
+  81: ["A1", "B1", "C1", "A2", "B2", "C2", "F1", "F2"],
   87: ["F2"],
-  89: ["A1", "B1", "C1", "A2", "B2", "C2"],
+  89: ["A1", "B1", "C1", "A2", "B2", "C2", "F1", "F2"],
   95: ["A2", "B2", "C2", "D2", "E2", "F2"],
   101: ["F1"],
   62: ["F1"]
+};
+
+  const e3ExtraPositions: Record<number, string[]> = {
+  7: ["G1", "H1", "I1", "G2", "H2", "I2"],
+  8: ["G1", "H1", "I1", "G2", "H2"],
+  9: ["G1", "G2"],
+  124: ["G1", "G2"],
+  125: ["G1", "G2"]
 };
   
     const blockedE2Positions =
@@ -208,6 +216,9 @@ export const InteractiveMapa: React.FC<InteractiveMapaProps> = ({
 
   const blockedE3Positions =
   e3BlockedPositions[selectedE3Module] || [];
+
+  const extraE3Positions =
+  e3ExtraPositions[selectedE3Module] || [];
   
   // Handle slot selection
   const handleSelectSlot = (s: WarehouseSlot) => {
@@ -621,9 +632,9 @@ export const InteractiveMapa: React.FC<InteractiveMapaProps> = ({
                       );
                     })
                   ) : (
-                    e3Positions
-                      .filter((pos) => !blockedE3Positions.includes(pos))
-                      .map((pos) => {
+                    [...e3Positions, ...extraE3Positions]
+                    .filter((pos) => !blockedE3Positions.includes(pos))
+                    .map((pos) => {
                         
                       const modStr = String(selectedE3Module);
                       const s = getOrCreateSlotOnMap("3", modStr, pos);
