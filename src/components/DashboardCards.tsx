@@ -77,10 +77,14 @@ String(hoje.getMonth() + 1).padStart(2,"0")
 String(hoje.getDate()).padStart(2,"0")
 }`;
 
+console.log("Hoje:", hojeString);
+
 const movementsToday = history.filter(h => {
   return String(h.data).trim() === hojeString;
 }).length;
 
+console.log("Movimentações Hoje:", movementsToday);
+  
 // Última sincronização
 const lastSync = history.length > 0
   ? [...history].sort((a, b) =>
