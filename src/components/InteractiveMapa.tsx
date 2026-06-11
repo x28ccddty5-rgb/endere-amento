@@ -190,7 +190,7 @@ export const InteractiveMapa: React.FC<InteractiveMapaProps> = ({
 
   const e3BlockedPositions: Record<number, string[]> = {
   11: ["A1", "B1", "C1", "A2", "B2", "C2", "F1", "F2"],
-  22: ["A1", "B1", "C1", "A2", "B2", "C2", "F1", "F2"]],
+  22: ["A1", "B1", "C1", "A2", "B2", "C2", "F1", "F2"],
   41: ["A1", "B1", "C1", "A2", "B2", "C2", "F1", "F2"],
   49: ["A1", "B1", "C1", "A2", "B2", "C2", "F1", "F2"],
   60: ["A1", "B1", "C1", "A2", "B2", "C2", "F1", "F2"],
