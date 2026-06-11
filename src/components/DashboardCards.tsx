@@ -156,7 +156,26 @@ const skusParados30Dias =
   const divCorrigidas = divergencias.filter(d => d.status === "Corrigida").length;
   const totalDivs = divergencias.length;
   const correctionRate = totalDivs > 0 ? (divCorrigidas / totalDivs) * 100 : 100;
+  
+  const divergenciasCorrigidas = divergencias.filter(
+  d =>
+    d.status === "Corrigida" &&
+    d.dataCorrecao &&
+    d.dataDivergencia
+);
 
+const tempoMedio =
+  divergenciasCorrigidas.length > 0
+    ? (
+        divergenciasCorrigidas.reduce((acc, d) => {
+          const inicio = new Date(d.dataDivergencia || "").getTime();
+          const fim = new Date(d.dataCorrecao || "").getTime();
+
+          return acc + ((fim - inicio) / (1000 * 60 * 60 * 24));
+        }, 0) / divergenciasCorrigidas.length
+      ).toFixed(1)
+    : "0.0";
+  
   return (
     <div className="space-y-5" id="dashboard-container">
       {/* SECTION 1: ENDEREÇAMENTO */}
@@ -307,7 +326,7 @@ const skusParados30Dias =
       <div>
         <h3 className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-2 flex items-center gap-1.5">
           <AlertTriangle className="w-3.5 h-3.5 text-slate-400" />
-          Acurácia & Divergências de Estoque
+          Gestão de Divergências
         </h3>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
 
@@ -338,13 +357,13 @@ const skusParados30Dias =
           <div className="bg-white border border-slate-200 border-t-2 border-t-blue-500 rounded p-3 shadow-2xs hover:border-slate-300 transition-colors">
             <div className="flex items-center justify-between mb-1">
               <span className="text-[10px] font-bold text-blue-700 bg-blue-50 px-1.5 py-0.5 rounded flex items-center gap-1 uppercase">
-                <Percent className="w-3 h-3 text-blue-500" /> Acurácia Física
+                <Percent className="w-3 h-3 text-blue-500" /> Tempo Médio
               </span>
             </div>
             <div className="text-2xl font-black font-sans text-blue-600 tracking-tight">
-              {correctionRate.toFixed(1)}%
+               {tempoMedio} dias
             </div>
-            <div className="text-[9px] text-slate-400 mt-0.5">Conformidade do estoque físico</div>
+            <div className="text-[9px] text-slate-400 mt-0.5">Resolução de divergências</div>
           </div>
 
         </div>
