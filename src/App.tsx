@@ -211,7 +211,6 @@ export default function App() {
     if (matched) {
       const sessUser = { username: matched.username, name: matched.name, role: matched.role };
       setCurrentUser(sessUser);
-      setOperator(matched.name); // Set global log responsibility identifier
       sessionStorage.setItem("eb_current_user", JSON.stringify(sessUser));
       setLoginUsername("");
       setLoginPassword("");
@@ -449,11 +448,9 @@ useEffect(() => {
   }, [appMode]);
 
   // --- SYSTEM LOG OPERATOR RESPONSIBLES ---
-  const [operator, setOperator] = useState(() => {
-    if (currentUser) return currentUser.name;
-    return "Administrador Geral";
+  const operator = currentUser?.name || "Administrador Geral";
   });
-  const [launchDate, setLaunchDate] = useState("2026-06-09");
+  const launchDate = new Date().toISOString().split("T")[0];
 
   // --- FILTERED VIEWS ---
   // Product Search Coordinates (Pesquisa Produtos) Filters
@@ -1657,14 +1654,14 @@ if (
               <input 
                 type="date"
                 value={launchDate}
-                onChange={(e) => setLaunchDate(e.target.value)}
+                disabled
                 className="bg-white border border-slate-300 rounded px-1.5 py-0.5 font-bold text-slate-755 text-slate-800 text-xs focus:outline-none"
               />
               <span className="text-slate-455 font-bold uppercase text-[9px] ml-1">Responsável:</span>
               <input 
                 type="text"
                 value={operator}
-                onChange={(e) => setOperator(e.target.value)}
+                disabled
                 className="bg-white border border-slate-300 rounded px-1.5 py-0.5 max-w-[120px] font-bold text-slate-800 text-xs focus:outline-none"
               />
             </div>
