@@ -68,7 +68,14 @@ const occupationRate =
   const totalStoredQuantity = slots.reduce((acc, s) => acc + s.saldo, 0);
   
   // Movimentações de hoje
-const hojeString = new Date().toISOString().split("T")[0];
+const hoje = new Date();
+
+const hojeString =
+`${hoje.getFullYear()}-${
+String(hoje.getMonth() + 1).padStart(2,"0")
+}-${
+String(hoje.getDate()).padStart(2,"0")
+}`;
 
 const movementsToday = history.filter(
   h => h.data === hojeString
