@@ -183,7 +183,7 @@ export default function App() {
     const saved = localStorage.getItem("eb_users");
     if (saved) return JSON.parse(saved);
     const initial: AppUser[] = [
-      { username: "adm", password: "math2308", name: "Administrador Geral", role: "Administrador" }
+      { username: "adm", password: "math2308", name: "Administrador Geral", role: "administrador" }
     ];
     localStorage.setItem("eb_users", JSON.stringify(initial));
     return initial;
@@ -1529,7 +1529,7 @@ if (
               <span className="text-[9px] text-slate-500 font-extrabold block pt-4 pb-1.5 px-4 uppercase tracking-wider">Avançado & Controle</span>
 
               {canAccessTab("mapa") &&
-             currentUser?.role === "Administrador" && (
+             currentUser?.role === "administrador" && (
                  <button
                   onClick={() => {
                     setAppMode("avancado");
