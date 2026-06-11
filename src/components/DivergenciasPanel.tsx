@@ -313,7 +313,24 @@ alert(
     printWindow.print();
   }, 500);
 };
+  const divergenciasCorrigidas = divergencias.filter(
+  d => d.status === "Corrigida" &&
+       d.dataCorrecao &&
+       d.dataDivergencia
+);
 
+const tempoMedio =
+  divergenciasCorrigidas.length > 0
+    ? (
+        divergenciasCorrigidas.reduce((acc, d) => {
+          const inicio = new Date(d.dataDivergencia).getTime();
+          const fim = new Date(d.dataCorrecao).getTime();
+
+          return acc + ((fim - inicio) / (1000 * 60 * 60 * 24));
+        }, 0) / divergenciasCorrigidas.length
+      ).toFixed(1)
+    : "0";
+  
   return (
     <div className="space-y-6 animate-fade-in">
       
@@ -371,8 +388,18 @@ alert(
             </span>
           </div>
           <div className="bg-slate-50 border border-slate-200 p-4 rounded-xl text-center">
-            <span className="text-[10px] uppercase font-black tracking-wider text-slate-450 block">Média de Reconciliação</span>
-            <span className="text-2xl font-black text-slate-700 mt-1 block">100% Digital</span>
+            <div className="bg-slate-50 border border-slate-200 p-4 rounded-xl text-center">
+            <span className="text-[10px] uppercase font-black tracking-wider text-slate-450 block">
+              Tempo Médio
+            </span>
+          
+            <span className="text-2xl font-black text-slate-700 mt-1 block">
+              {tempoMedio} dias
+            </span>
+          
+            <span className="text-[11px] text-slate-400 block mt-1">
+              Resolução de divergências
+            </span>
           </div>
         </div>
 
