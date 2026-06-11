@@ -2101,7 +2101,7 @@ if (
 
                       <div>
                         <label className="text-[10px] text-slate-450 block font-bold mb-1 uppercase">
-                          Posição {unit ? "(Inativa E1)" : "(Opcional Corredor)"}
+                          Posição {unitEstoque === "1" ? "(Inativa E1)" : "(Opcional Corredor)"}
                         </label>
                         <input
                           type="text"
