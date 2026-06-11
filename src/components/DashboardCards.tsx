@@ -36,13 +36,35 @@ export const DashboardCards: React.FC<DashboardCardsProps> = ({
 }) => {
   
   // 1. Calculate slot statuses
-  const totalSlots = slots.length;
-  const occupiedSlots = slots.filter(s => s.saldo > 0).length;
-  const freeSlots = totalSlots - occupiedSlots;
-  const occupationRate = totalSlots > 0 ? (occupiedSlots / totalSlots) * 100 : 0;
+  const totalSlots = 657 + 1373 + 1288;
+
+const occupiedSlots =
+  occupiedPalletsE1 +
+  slots.filter(
+    s => s.estoque === "2" && s.saldo > 0
+  ).length +
+  slots.filter(
+    s => s.estoque === "3" && s.saldo > 0
+  ).length;
+
+const freeSlots = totalSlots - occupiedSlots;
+
+const occupationRate =
+  totalSlots > 0
+    ? (occupiedSlots / totalSlots) * 100
+    : 0;
 
   // 2. SKUs & Total Quantities
-  const uniqueSKUs = new Set(slots.filter(s => s.saldo > 0).map(s => s.referencia)).size;
+ const uniqueSKUs = new Set(
+  slots
+    .filter(
+      s =>
+        s.referencia &&
+        s.referencia.trim() !== "" &&
+        s.saldo > 0
+    )
+    .map(s => s.referencia.trim())
+).size;
   const totalStoredQuantity = slots.reduce((acc, s) => acc + s.saldo, 0);
   
   // 3. Movement logs
@@ -119,7 +141,7 @@ export const DashboardCards: React.FC<DashboardCardsProps> = ({
             <div className="text-2xl font-black font-sans text-slate-800 tracking-tight">
               {uniqueSKUs}
             </div>
-            <div className="text-[9px] text-slate-400 mt-0.5">Referências cadastradas</div>
+            <div className="text-[9px] text-slate-400 mt-0.5"> SKUs com saldo físico armazenado</div>
           </div>
 
           <div className="bg-white border border-slate-200 border-t-2 border-t-blue-650 rounded p-3 shadow-2xs hover:border-slate-350 transition-colors">
