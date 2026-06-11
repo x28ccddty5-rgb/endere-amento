@@ -85,7 +85,7 @@ const lastSync = history.length > 0
 const operatorCounter: Record<string, number> = {};
 
 history
-  .filter(h => h.data === hoje)
+  .filter(h => h.data === hojeString)
   .forEach(h => {
     const operador = h.responsavel || "Sem Registro";
     operatorCounter[operador] =
