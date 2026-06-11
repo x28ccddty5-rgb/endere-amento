@@ -67,6 +67,13 @@ const occupationRate =
 ).size;
   const totalStoredQuantity = slots.reduce((acc, s) => acc + s.saldo, 0);
 
+// Última sincronização
+const lastSync = history.length > 0
+  ? [...history].sort((a, b) =>
+      `${b.data}T${b.hora}`.localeCompare(`${a.data}T${a.hora}`)
+    )[0]
+  : null;
+  
 // Movimentações da data da última sincronização
 const dataUltimaSincronia = lastSync?.data || "";
 
@@ -76,21 +83,15 @@ const movementsToday = history.filter(
 
 console.log("Data última sincronização:", dataUltimaSincronia);
 console.log("Movimentações:", movementsToday);
-  
-// Última sincronização
-const lastSync = history.length > 0
-  ? [...history].sort((a, b) =>
-      `${b.data}T${b.hora}`.localeCompare(`${a.data}T${a.hora}`)
-    )[0]
-  : null;
 
-// Operador mais ativo
+// Operador mais ativo da última sincronização
 const operatorCounter: Record<string, number> = {};
 
 history
-  .filter(h => h.data === hojeString)
+  .filter(h => h.data === lastSync?.data)
   .forEach(h => {
-    const operador = h.responsavel || "Sem Registro";
+    const operador = h.responsavel?.trim() || "Sem Registro";
+
     operatorCounter[operador] =
       (operatorCounter[operador] || 0) + 1;
   });
@@ -98,6 +99,8 @@ history
 const topOperator =
   Object.entries(operatorCounter)
     .sort((a, b) => b[1] - a[1])[0] || ["Sem Registro", 0];
+
+console.log("Top Operator:", topOperator);
 
 const hojeData = new Date();
 
