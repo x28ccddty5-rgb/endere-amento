@@ -1749,7 +1749,7 @@ if (
                         }
                         
                         if (est === "3") {
-                          total = 1344;
+                          total = 1288;
                           occupied = slots.filter(
                             s => s.estoque === "3" && s.saldo > 0
                           ).length;
