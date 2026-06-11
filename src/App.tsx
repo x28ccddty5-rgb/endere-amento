@@ -397,13 +397,6 @@ useEffect(() => {
 
   const [divergencias, setDivergencias] = useState<Divergencia[]>([]);
 
-  const [appMode, setAppMode] = useState<AppMode>(() => {
-    const saved = localStorage.getItem("eb_mode");
-    return (saved as AppMode) || "basico";
-  });
-
-  const [activeTab, setActiveTab] = useState<string>("endereçamento");
-
   const occupiedPalletsE1 = slots
   .filter(
     s =>
@@ -430,6 +423,13 @@ useEffect(() => {
     return total + Math.ceil(resultado);
 
   }, 0);
+  
+  const [appMode, setAppMode] = useState<AppMode>(() => {
+    const saved = localStorage.getItem("eb_mode");
+    return (saved as AppMode) || "basico";
+  });
+
+  const [activeTab, setActiveTab] = useState<string>("endereçamento");
   
   // Save changes to localStorage on modifier updates
   useEffect(() => {
