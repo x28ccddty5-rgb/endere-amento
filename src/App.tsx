@@ -449,7 +449,6 @@ useEffect(() => {
 
   // --- SYSTEM LOG OPERATOR RESPONSIBLES ---
   const operator = currentUser?.name || "Administrador Geral";
-  });
   const launchDate = new Date().toISOString().split("T")[0];
 
   // --- FILTERED VIEWS ---
