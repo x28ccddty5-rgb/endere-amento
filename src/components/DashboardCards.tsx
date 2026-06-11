@@ -78,8 +78,7 @@ String(hoje.getDate()).padStart(2,"0")
 }`;
 
 const movementsToday = history.filter(h => {
-  console.log(h.data);
-  return true;
+  return String(h.data).trim() === hojeString;
 }).length;
 
 // Última sincronização
