@@ -1523,7 +1523,7 @@ if (
           )}
 
           {/* Render advanced sections if any advanced tab is accessible */}
-          {currentUser?.role === "Administrador" &&
+          {currentUser?.role === "administrador" &&
            (canAccessTab("mapa") || canAccessTab("ai")) && (
             <>
               <span className="text-[9px] text-slate-500 font-extrabold block pt-4 pb-1.5 px-4 uppercase tracking-wider">Avançado & Controle</span>
@@ -1824,7 +1824,7 @@ if (
                 <div className="flex items-center justify-between pb-3 border-b border-slate-100">
                   <h3 className="text-xs font-bold text-slate-700 uppercase tracking-wider block">Filtro de Logística e Endereçamento</h3>
                   <div className="flex items-center gap-4">
-                    {currentUser?.role === "Administrador" && (
+                    {currentUser?.role === "administrador" && (
                       <button 
                         onClick={handleLimparPlanilhasZerarEnderecamento}
                         className="text-xs text-red-650 text-red-700 hover:text-red-850 bg-red-50 hover:bg-red-100 border border-red-200 transition font-black cursor-pointer flex items-center gap-1.5 px-3 py-1.5 rounded-lg uppercase tracking-wider font-sans whitespace-nowrap"
@@ -2751,7 +2751,7 @@ if (
                           <th className="py-3.5 px-4 font-mono">Data Chacote</th>
                           <th className="py-3.5 px-4">Responsável Físico</th>
                           <th className="py-3.5 px-4">Hora</th>
-                          {currentUser?.role === "Administrador" && (
+                          {currentUser?.role === "administrador" && (
                             <th className="py-3.5 px-4 text-center text-red-605 font-bold font-sans">Ações</th>
                           )}
                         </tr>
@@ -2785,7 +2785,7 @@ if (
                               <td className="py-3 px-4 font-mono text-slate-500">{h.dataChacote || "—"}</td>
                               <td className="py-3 px-4 font-bold text-slate-650">{h.responsavel}</td>
                               <td className="py-3 px-4 font-mono text-slate-500">{h.hora}</td>
-                              {currentUser?.role === "Administrador" && (
+                              {currentUser?.role === "administrador" && (
                                 <td className="py-3 px-4 text-center">
                                   <button
                                     onClick={() => handleDeleteHistoryItem(h.id)}
@@ -2800,7 +2800,7 @@ if (
                           ))
                         ) : (
                           <tr>
-                            <td colSpan={currentUser?.role === "Administrador" ? 13 : 12} className="py-20 text-center text-slate-400 font-semibold bg-slate-50">
+                            <td colSpan={currentUser?.role === "administrador" ? 13 : 12} className="py-20 text-center text-slate-400 font-semibold bg-slate-50">
                               Nenhuma movimentação registrada no histórico local correspondendo aos filtros.
                             </td>
                           </tr>
@@ -2984,7 +2984,7 @@ if (
                 onDeleteUser={handleDeleteUser}
               />
 
-              {currentUser?.role === "Administrador" && (
+              {currentUser?.role === "administrador" && (
                 <div className="bg-red-50 border border-red-250 rounded-xl p-5 shadow-xs flex flex-col md:flex-row justify-between items-start md:items-center gap-4 font-sans">
                   <div className="space-y-1">
                     <h4 className="text-sm font-bold text-red-800 flex items-center gap-1.5 uppercase tracking-wider">
