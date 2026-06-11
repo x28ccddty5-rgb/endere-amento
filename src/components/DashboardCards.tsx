@@ -288,7 +288,9 @@ const availableModules =
             <div className="text-xs font-black text-slate-800 tracking-tight pt-1 leading-none truncate font-sans">
               {topOperator[0]}
             </div>
-            <div className="text-[9px] text-slate-400 mt-1">{topOperator[1]} movimentações hoje/div>
+            <div className="text-[9px] text-slate-400 mt-1">
+              {topOperator[1]} movimentações hoje
+            </div>
           </div>
 
         </div>
