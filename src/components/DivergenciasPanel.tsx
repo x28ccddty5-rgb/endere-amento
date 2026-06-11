@@ -266,8 +266,53 @@ alert(
   };
 
   const handlePrint = () => {
-    window.print();
-  };
+
+  const printContent = document.getElementById("divergencias-print");
+
+  if (!printContent) return;
+
+  const printWindow = window.open("", "_blank");
+
+  if (!printWindow) return;
+
+  printWindow.document.write(`
+    <html>
+      <head>
+        <title>Relatório de Divergências</title>
+        <style>
+          body {
+            font-family: Arial, sans-serif;
+            padding: 20px;
+          }
+
+          table {
+            width: 100%;
+            border-collapse: collapse;
+          }
+
+          th, td {
+            border: 1px solid #ccc;
+            padding: 8px;
+            text-align: left;
+          }
+
+          th {
+            background: #f5f5f5;
+          }
+        </style>
+      </head>
+      <body>
+        ${printContent.innerHTML}
+      </body>
+    </html>
+  `);
+
+  printWindow.document.close();
+
+  setTimeout(() => {
+    printWindow.print();
+  }, 500);
+};
 
   return (
     <div className="space-y-6 animate-fade-in">
@@ -332,7 +377,10 @@ alert(
         </div>
 
         {/* GRID OF DISCREPANCIES */}
-        <div className="overflow-x-auto text-[11px] font-sans">
+        <div
+            id="divergencias-print"
+            className="overflow-x-auto text-[11px] font-sans"
+          >
           <table className="w-full text-left border-collapse">
             <thead>
               <tr className="bg-slate-100 text-slate-600 border-b border-slate-200 uppercase font-black text-[9px] tracking-wider">
