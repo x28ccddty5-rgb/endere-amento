@@ -28,6 +28,10 @@ export const DivergenciasPanel: React.FC<DivergenciasPanelProps> = ({
   onAddHistory,
   hasAccess,
 }) => {
+
+   const isReadOnly =
+    currentUser?.role?.toLowerCase() === "visualizador";
+  
   const [selectedDivergenciaId, setSelectedDivergenciaId] = useState<string | null>(null);
   const [resolveAction, setResolveAction] = useState<"sobrescrever" | "descartar">("sobrescrever");
   const [resolveQty, setResolveQty] = useState<number>(0);
