@@ -188,8 +188,26 @@ export const InteractiveMapa: React.FC<InteractiveMapaProps> = ({
   168: ["A2", "B2", "C2", "D2", "E2"],
 };
 
+  const e3BlockedPositions: Record<number, string[]> = {
+  11: ["A1", "B1", "C1", "A2", "B2", "C2"],
+  22: ["A1", "B1", "C1", "A2", "B2", "C2"],
+  41: ["A1", "B1", "C1", "A2", "B2", "C2"],
+  49: ["A1", "B1", "C1", "A2", "B2", "C2"],
+  60: ["A1", "B1", "C1", "A2", "B2", "C2"],
+  68: ["A1", "B1", "C1", "A2", "B2", "C2"],
+  81: ["A1", "B1", "C1", "A2", "B2", "C2"],
+  87: ["F2"],
+  89: ["A1", "B1", "C1", "A2", "B2", "C2"],
+  95: ["A2", "B2", "C2", "D2", "E2", "F2"],
+  101: ["F1"],
+  62: ["F1"]
+};
+  
     const blockedE2Positions =
   e2BlockedPositions[selectedE2Module] || [];
+
+  const blockedE3Positions =
+  e3BlockedPositions[selectedE3Module] || [];
   
   // Handle slot selection
   const handleSelectSlot = (s: WarehouseSlot) => {
@@ -603,7 +621,10 @@ export const InteractiveMapa: React.FC<InteractiveMapaProps> = ({
                       );
                     })
                   ) : (
-                    e3Positions.map((pos) => {
+                    e3Positions
+                      .filter((pos) => !blockedE3Positions.includes(pos))
+                      .map((pos) => {
+                        
                       const modStr = String(selectedE3Module);
                       const s = getOrCreateSlotOnMap("3", modStr, pos);
                       const isOccupied = s.saldo > 0;
