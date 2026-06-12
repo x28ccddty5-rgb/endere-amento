@@ -1961,7 +1961,7 @@ if (
 
               {/* Data Table */}
               <div className="bg-white border border-slate-200 rounded-xl overflow-hidden shadow-xs">
-                <div className="overflow-x-auto">
+                <div className="overflow-x-auto overflow-y-auto max-h-[650px]">
                   <table className="w-full text-left text-xs border-collapse">
                     <thead>
                       <tr className="bg-slate-100 text-slate-600 uppercase text-[10px] tracking-wider border-b border-slate-200">
@@ -2200,7 +2200,7 @@ if (
                       </div>
                     </div>
 
-                    <div className="overflow-x-auto">
+                    <div className="overflow-x-auto overflow-y-auto max-h-[650px]">
                       <table className="w-full text-left text-xs border-collapse">
                         <thead>
                           <tr className="bg-slate-100 border-b border-slate-200 text-slate-500 uppercase text-[9px] tracking-wider font-bold">
@@ -2731,7 +2731,7 @@ if (
                     </div>
                   </div>
 
-                  <div className="overflow-x-auto">
+                  <div className="overflow-x-auto overflow-y-auto max-h-[650px]">
                     <table className="w-full text-left text-xs border-collapse">
                       <thead>
                         <tr className="bg-slate-100 border-b border-slate-200 text-slate-605 uppercase text-[10px] tracking-wider font-bold">
