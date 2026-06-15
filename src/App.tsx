@@ -1204,6 +1204,96 @@ if (
       let responseText = "";
       const lower = userMessage.toLowerCase();
 
+      if (
+      lower.includes("atenção") ||
+      lower.includes("merece atenção")
+    ) {
+    
+      const abertas =
+        divergencias.filter(
+          d => d.status === "Aberta"
+        ).length;
+    
+      const occupied =
+        slots.filter(s => s.saldo > 0).length;
+    
+      const free =
+        slots.filter(s => s.saldo === 0).length;
+    
+      responseText =
+        `Foram identificados alguns pontos de atenção:\n\n` +
+    
+        `• Divergências em aberto: ${abertas}\n` +
+    
+        `• Posições ocupadas: ${occupied}\n` +
+    
+        `• Posições livres: ${free}\n\n` +
+    
+        `Recomendo avaliar divergências pendentes e oportunidades de consolidação.`;
+    
+    }
+
+      else if (
+      lower.includes("prioridade") ||
+      lower.includes("dia")
+    ) {
+    
+      const abertas =
+        divergencias.filter(
+          d => d.status === "Aberta"
+        ).length;
+    
+      if (abertas > 0) {
+    
+        responseText =
+          `Prioridade recomendada:\n\n` +
+    
+          `Resolver ${abertas} divergências pendentes antes de novas movimentações.\n\n` +
+    
+          `Isso reduzirá inconsistências entre estoque físico e sistêmico.`;
+    
+      } else {
+    
+        responseText =
+          `Nenhuma divergência pendente foi identificada.\n\n` +
+    
+          `A prioridade atual é consolidar posições e aumentar disponibilidade de armazenagem.`;
+    
+      }
+    
+    }
+
+      else if (
+      lower.includes("diagnóstico geral") ||
+      lower.includes("diagnostico geral")
+    ) {
+    
+      const occupied =
+        slots.filter(s => s.saldo > 0).length;
+    
+      const free =
+        slots.filter(s => s.saldo === 0).length;
+    
+      const abertas =
+        divergencias.filter(
+          d => d.status === "Aberta"
+        ).length;
+    
+      responseText =
+        `Diagnóstico Operacional\n\n` +
+    
+        `• Posições ocupadas: ${occupied}\n` +
+    
+        `• Posições livres: ${free}\n` +
+    
+        `• Divergências abertas: ${abertas}\n\n` +
+    
+        `Situação geral controlada.\n\n` +
+    
+        `Continue monitorando ocupação e oportunidades de consolidação.`;
+    
+    }
+      
       if (lower.includes("item") || lower.includes("produto") || lower.includes("mais estocado") || lower.includes("maior saldo")) {
         const activeItemMap: Record<string, { qty: number, desc: string }> = {};
         slots.forEach(s => {
@@ -2940,27 +3030,27 @@ if (
                 <div className="w-full md:w-64 border border-slate-200 rounded-xl p-5 bg-slate-50 space-y-4">
                   <span className="text-[10px] text-indigo-605 text-indigo-600 font-extrabold block uppercase tracking-wider font-sans">Sugestão de Diálogos</span>
                   <p className="text-xs text-slate-400 leading-normal font-medium">
-                    Atalhos de dúvidas recorrentes que nossa inteligência lê do estoque de louças:
+                    Perguntas estratégicas para análise operacional e tomada de decisão:
                   </p>
 
                   <div className="space-y-2 text-[11px] font-sans">
                     <button
-                      onClick={() => setChatInput("Qual é o produto mais estocado no endereçamento?")}
+                      onClick={() => setChatInput("Existe algo que merece atenção hoje?")}
                       className="w-full text-left bg-white hover:bg-slate-100 p-2 border border-slate-200 rounded-lg transition font-bold text-slate-700"
                     >
-                      📦 Qual item mais estocado?
+                      🚨 Existe algo que merece atenção?
                     </button>
                     <button
-                      onClick={() => setChatInput("Quais são as divergências em aberto nesse momento?")}
+                      onClick={() => setChatInput("Qual a principal prioridade operacional do dia?")}
                       className="w-full text-left bg-white hover:bg-slate-100 p-2 border border-slate-200 rounded-lg transition font-bold text-slate-700"
                     >
-                      ⚠️ Divergências em aberto?
+                      🎯 Qual a prioridade do dia?
                     </button>
                     <button
-                      onClick={() => setChatInput("Indique uma vaga para colocar 111")}
+                      onClick={() => setChatInput("Faça um diagnóstico geral do armazém")}
                       className="w-full text-left bg-white hover:bg-slate-100 p-2 border border-slate-200 rounded-lg transition font-bold text-slate-700"
                     >
-                      💡 Vaga recomendada para 111?
+                      📊 Diagnóstico geral
                     </button>
                   </div>
                 </div>
