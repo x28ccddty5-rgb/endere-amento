@@ -1,22 +1,18 @@
 import React from "react";
 
 interface VerticalModuleMapProps {
-  selectedEstoque: string;
+  rows: {
+    rua: string;
+    andar1: string;
+    andar2: string;
+  }[];
   selectedModule: number;
 }
 
 export const VerticalModuleMap: React.FC<VerticalModuleMapProps> = ({
-  selectedEstoque,
+  rows,
   selectedModule,
 }) => {
-
-  const rows = [
-    { rua: "E", andar1: "E1", andar2: "E2" },
-    { rua: "D", andar1: "D1", andar2: "D2" },
-    { rua: "C", andar1: "C1", andar2: "C2" },
-    { rua: "B", andar1: "B1", andar2: "B2" },
-    { rua: "A", andar1: "A1", andar2: "A2" },
-  ];
 
   return (
     <div className="border border-slate-200 rounded-xl overflow-hidden bg-white">
