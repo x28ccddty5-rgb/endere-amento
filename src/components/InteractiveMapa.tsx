@@ -228,6 +228,17 @@ export const InteractiveMapa: React.FC<InteractiveMapaProps> = ({
 
   const buildVerticalRows = (positions: string[]) => {
 
+    const ruas = [...new Set(
+    positions.map(pos => pos[0])
+  )].sort().reverse();
+
+  return ruas.map((rua) => ({
+    rua,
+    andar1: `${rua}1`,
+    andar2: `${rua}2`,
+  }));
+};
+    
   const verticalRows =
   selectedEstoque === "2"
     ? buildVerticalRows(
@@ -241,17 +252,6 @@ export const InteractiveMapa: React.FC<InteractiveMapaProps> = ({
             pos => !blockedE3Positions.includes(pos)
           )
       );
-    
-  const ruas = [...new Set(
-    positions.map(pos => pos[0])
-  )].sort().reverse();
-
-  return ruas.map((rua) => ({
-    rua,
-    andar1: `${rua}1`,
-    andar2: `${rua}2`,
-  }));
-};
   
   // Handle slot selection
   const handleSelectSlot = (s: WarehouseSlot) => {
