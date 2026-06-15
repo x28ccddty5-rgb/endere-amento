@@ -3320,6 +3320,13 @@ if (
                 >
                   📄 Gerar plano de consolidação
                 </button>
+
+                    <button
+                  onClick={handleExportConsolidationPDF}
+                  className="w-full text-left bg-white hover:bg-slate-100 p-2 border border-slate-200 rounded-lg transition font-bold text-slate-700"
+                >
+                  🖨️ Exportar plano PDF
+                </button>
                   </div>
                 </div>
 
