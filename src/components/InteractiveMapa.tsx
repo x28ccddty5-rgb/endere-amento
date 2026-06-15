@@ -225,6 +225,33 @@ export const InteractiveMapa: React.FC<InteractiveMapaProps> = ({
 
   const extraE3Positions =
   e3ExtraPositions[selectedE3Module] || [];
+
+  const buildVerticalRows = (positions: string[]) => {
+
+  const verticalRows =
+  selectedEstoque === "2"
+    ? buildVerticalRows(
+        e2Positions.filter(
+          pos => !blockedE2Positions.includes(pos)
+        )
+      )
+    : buildVerticalRows(
+        [...e3Positions, ...extraE3Positions]
+          .filter(
+            pos => !blockedE3Positions.includes(pos)
+          )
+      );
+    
+  const ruas = [...new Set(
+    positions.map(pos => pos[0])
+  )].sort().reverse();
+
+  return ruas.map((rua) => ({
+    rua,
+    andar1: `${rua}1`,
+    andar2: `${rua}2`,
+  }));
+};
   
   // Handle slot selection
   const handleSelectSlot = (s: WarehouseSlot) => {
@@ -626,14 +653,13 @@ export const InteractiveMapa: React.FC<InteractiveMapaProps> = ({
 
                 {viewMode === "vertical" && (
                 <VerticalModuleMap
-                  selectedEstoque={selectedEstoque}
-                  selectedModule={
-                    selectedEstoque === "2"
-                      ? selectedE2Module
-                      : selectedE3Module
-                  }
-                />
-              )}
+                rows={verticalRows}
+                selectedModule={
+                  selectedEstoque === "2"
+                    ? selectedE2Module
+                    : selectedE3Module
+                }
+              />
               
               {viewMode === "operacional" && (
                 
