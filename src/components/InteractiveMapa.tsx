@@ -25,6 +25,11 @@ export const InteractiveMapa: React.FC<InteractiveMapaProps> = ({
   const isReadOnly = role !== "administrador";
   
   const [selectedEstoque, setSelectedEstoque] = useState<string>("1");
+
+  const [viewMode, setViewMode] = useState<
+    "operacional" | "vertical"
+  >("operacional");
+    
   const [selectedSlotId, setSelectedSlotId] = useState<string | null>(null);
   
   // Modules and Ruas helpers
@@ -382,6 +387,34 @@ export const InteractiveMapa: React.FC<InteractiveMapaProps> = ({
           </div>
         </div>
 
+              {selectedEstoque !== "1" && (
+        <div className="flex bg-slate-100 p-1 rounded-lg gap-1 border border-slate-200 mt-2">
+          
+          <button
+            onClick={() => setViewMode("operacional")}
+            className={`px-3 py-1.5 rounded-md text-xs font-bold transition-all cursor-pointer ${
+              viewMode === "operacional"
+                ? "bg-slate-800 text-white shadow-xs"
+                : "text-slate-500 hover:text-slate-800"
+            }`}
+          >
+            Operacional
+          </button>
+      
+          <button
+            onClick={() => setViewMode("vertical")}
+            className={`px-3 py-1.5 rounded-md text-xs font-bold transition-all cursor-pointer ${
+              viewMode === "vertical"
+                ? "bg-slate-800 text-white shadow-xs"
+                : "text-slate-500 hover:text-slate-800"
+            }`}
+          >
+            Vista Física
+          </button>
+      
+        </div>
+      )}
+
         {/* Dynamic Warehouse Status Bar */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4 bg-slate-50 border border-slate-200 rounded-lg p-4">
           <div>
@@ -589,6 +622,20 @@ export const InteractiveMapa: React.FC<InteractiveMapaProps> = ({
                 <span className="text-xs font-bold text-slate-500 block mb-3 uppercase tracking-wider">
                   Layout Físico das Vagas • Módulo {selectedEstoque === "2" ? selectedE2Module : selectedE3Module}:
                 </span>
+
+                {viewMode === "vertical" && (
+                <div className="bg-blue-50 border border-blue-200 rounded-lg p-8 text-center">
+                  <h3 className="font-black text-blue-700">
+                    Vista Física em Desenvolvimento
+                  </h3>
+              
+                  <p className="text-sm text-slate-600 mt-2">
+                    Aqui será exibido o novo mapa vertical do módulo.
+                  </p>
+                </div>
+              )}
+              
+              {viewMode === "operacional" && (
                 
                 <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
                   {selectedEstoque === "2" ? (
@@ -673,6 +720,7 @@ export const InteractiveMapa: React.FC<InteractiveMapaProps> = ({
                     })
                   )}
                 </div>
+               )}
               </div>
             </div>
           )}
