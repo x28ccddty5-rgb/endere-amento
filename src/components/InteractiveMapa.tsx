@@ -251,7 +251,18 @@ export const InteractiveMapa: React.FC<InteractiveMapaProps> = ({
   slot: WarehouseSlot,
   estoque: string
 ) => {
-
+  
+  if (estoque === "1") {
+  return {
+    percentage: 0,
+    status: slot.saldo >= 1000
+      ? "warning"
+      : slot.saldo > 0
+        ? "normal"
+        : "empty"
+  };
+}
+  
   const produto = productsList.find(
     p => p.referencia === slot.referencia
   );
