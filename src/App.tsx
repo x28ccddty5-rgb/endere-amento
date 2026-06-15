@@ -1328,6 +1328,210 @@ if (
     
     }
       
+      else if (
+  lower.includes("pulverizado")
+) {
+
+  const skuMap: Record<
+    string,
+    {
+      posicoes: number;
+      saldo: number;
+      descricao: string;
+      locais: string[];
+    }
+  > = {};
+
+  slots.forEach(slot => {
+
+    if (!slot.referencia || slot.saldo <= 0)
+      return;
+
+    if (!skuMap[slot.referencia]) {
+
+      skuMap[slot.referencia] = {
+        posicoes: 0,
+        saldo: 0,
+        descricao: slot.descricao,
+        locais: []
+      };
+
+    }
+    
+    skuMap[slot.referencia].posicoes += 1;
+
+    skuMap[slot.referencia].saldo +=
+      slot.saldo;
+
+    skuMap[slot.referencia].locais.push(
+      `E${slot.estoque} • M${slot.modulo} • ${slot.posicao}`
+    );
+
+  });
+    
+    const maisPulverizado =
+      Object.entries(skuMap)
+        .sort(
+          (a, b) =>
+            b[1].posicoes -
+            a[1].posicoes
+        )[0];
+  
+    if (maisPulverizado) {
+  
+      const [
+        sku,
+        dados
+      ] = maisPulverizado;
+  
+      responseText =
+  
+        `SKU mais pulverizado:\n\n` +
+  
+        `${sku}\n` +
+  
+        `${dados.descricao}\n\n` +
+  
+        `Posições: ${dados.posicoes}\n` +
+  
+        `Saldo total: ${dados.saldo.toLocaleString()} peças\n\n` +
+  
+        `Localizações:\n` +
+  
+        dados.locais
+          .slice(0, 5)
+          .join("\n");
+  
+    } else {
+  
+      responseText =
+        "Nenhum SKU encontrado.";
+  
+    }
+  
+  }
+        else if (
+  lower.includes("liberar espaço")
+) {
+
+  const opportunities: any[] = [];
+
+  const skuMap: Record<
+    string,
+    {
+      saldo: number;
+      descricao: string;
+      posicoes: WarehouseSlot[];
+    }
+  > = {};
+
+  slots.forEach(slot => {
+
+    if (!slot.referencia || slot.saldo <= 0)
+      return;
+
+    if (!skuMap[slot.referencia]) {
+
+      skuMap[slot.referencia] = {
+        saldo: 0,
+        descricao: slot.descricao,
+        posicoes: []
+      };
+
+    }
+
+    skuMap[slot.referencia].saldo +=
+      slot.saldo;
+
+    skuMap[slot.referencia].posicoes.push(
+      slot
+    );
+
+  });
+
+  Object.entries(skuMap).forEach(
+    ([sku, data]) => {
+
+      if (data.posicoes.length < 2)
+        return;
+
+      const produto =
+        productsList.find(
+          p => p.referencia === sku
+        );
+
+      if (!produto?.paletizacao)
+        return;
+
+      if (
+        data.saldo <=
+        produto.paletizacao
+      ) {
+
+        opportunities.push({
+          sku,
+          descricao: data.descricao,
+          posicoes:
+            data.posicoes.length,
+          saldo: data.saldo,
+          capacidade:
+            produto.paletizacao,
+          locais:
+            data.posicoes
+        });
+
+      }
+
+    }
+  );
+
+  opportunities.sort(
+    (a, b) =>
+      b.posicoes - a.posicoes
+  );
+
+  if (opportunities.length === 0) {
+
+    responseText =
+      "Nenhuma oportunidade de consolidação foi encontrada.";
+
+  } else {
+
+    const top =
+      opportunities[0];
+
+    responseText =
+
+      `Oportunidade de Consolidação\n\n` +
+
+      `SKU: ${top.sku}\n` +
+
+      `${top.descricao}\n\n` +
+
+      `Posições atuais: ${top.posicoes}\n` +
+
+      `Saldo total: ${top.saldo}\n` +
+
+      `Capacidade: ${top.capacidade}\n\n` +
+
+      `Localizações:\n` +
+
+      top.locais
+        .slice(0, 5)
+        .map(
+          l =>
+            `• E${l.estoque} M${l.modulo} ${l.posicao}`
+        )
+        .join("\n") +
+
+      `\n\nPotencial estimado: liberar ${
+        top.posicoes - 1
+      } posição(ões).`;
+
+  }
+
+}
+       
       else if (lower.includes("item") || lower.includes("produto") || lower.includes("mais estocado") || lower.includes("maior saldo")) {
         const activeItemMap: Record<string, { qty: number, desc: string }> = {};
         slots.forEach(s => {
@@ -3069,23 +3273,25 @@ if (
 
                   <div className="space-y-2 text-[11px] font-sans">
                     <button
-                      onClick={() => setChatInput("Existe algo que merece atenção hoje?")}
-                      className="w-full text-left bg-white hover:bg-slate-100 p-2 border border-slate-200 rounded-lg transition font-bold text-slate-700"
-                    >
-                      🚨 Existe algo que merece atenção?
-                    </button>
-                    <button
-                      onClick={() => setChatInput("Qual a principal prioridade operacional do dia?")}
-                      className="w-full text-left bg-white hover:bg-slate-100 p-2 border border-slate-200 rounded-lg transition font-bold text-slate-700"
-                    >
-                      🎯 Qual a prioridade do dia?
-                    </button>
-                    <button
-                      onClick={() => setChatInput("Faça um diagnóstico geral do armazém")}
-                      className="w-full text-left bg-white hover:bg-slate-100 p-2 border border-slate-200 rounded-lg transition font-bold text-slate-700"
-                    >
-                      📊 Diagnóstico geral
-                    </button>
+                    onClick={() => setChatInput("Qual SKU está mais pulverizado?")}
+                    className="w-full text-left bg-white hover:bg-slate-100 p-2 border border-slate-200 rounded-lg transition font-bold text-slate-700"
+                  >
+                    📦 SKU mais pulverizado
+                  </button>
+                  
+                  <button
+                    onClick={() => setChatInput("Onde posso liberar espaço?")}
+                    className="w-full text-left bg-white hover:bg-slate-100 p-2 border border-slate-200 rounded-lg transition font-bold text-slate-700"
+                  >
+                    📊 Onde posso liberar espaço?
+                  </button>
+                  
+                  <button
+                    onClick={() => setChatInput("Gerar plano de consolidação")}
+                    className="w-full text-left bg-white hover:bg-slate-100 p-2 border border-slate-200 rounded-lg transition font-bold text-slate-700"
+                  >
+                    📄 Gerar plano de consolidação
+                  </button>
                   </div>
                 </div>
 
