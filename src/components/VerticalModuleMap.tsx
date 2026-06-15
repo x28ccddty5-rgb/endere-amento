@@ -40,7 +40,12 @@ export const VerticalModuleMap: React.FC<VerticalModuleMapProps> = ({
         </h3>
       </div>
 
-      <div className="grid grid-cols-3 text-center">
+      <div
+        className="grid text-center"
+        style={{
+          gridTemplateColumns: "70px 1fr 1fr"
+        }}
+      >
 
         <div className="bg-slate-100 p-3 font-bold text-slate-500">
           Rua
@@ -70,7 +75,10 @@ export const VerticalModuleMap: React.FC<VerticalModuleMapProps> = ({
       
         const dense1 = slot1.saldo >= 1000;
         const dense2 = slot2.saldo >= 1000;
-      
+
+        const selected1 = selectedSlotId === slot1.id;
+        const selected2 = selectedSlotId === slot2.id;
+        
         return (
           <React.Fragment key={row.rua}>
             <div className="border p-4 font-black text-slate-700">
@@ -86,6 +94,11 @@ export const VerticalModuleMap: React.FC<VerticalModuleMapProps> = ({
                   : dense1
                     ? "bg-blue-600 text-white"
                     : "bg-blue-100 text-blue-900"
+              }
+              ${
+                selected1
+                  ? "ring-2 ring-blue-500 ring-offset-2"
+                  : ""
               }
             `}
           >
@@ -116,6 +129,11 @@ export const VerticalModuleMap: React.FC<VerticalModuleMapProps> = ({
                     ? "bg-blue-600 text-white"
                     : "bg-blue-100 text-blue-900"
               }
+              ${
+              selected2
+                ? "ring-2 ring-blue-500 ring-offset-2"
+                : ""
+            }
             `}
           >
           
