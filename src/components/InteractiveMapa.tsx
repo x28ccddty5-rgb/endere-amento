@@ -278,11 +278,78 @@ export const InteractiveMapa: React.FC<InteractiveMapaProps> = ({
 
   const rua = slot.posicao[0];
 
-  // Estoque 3 - ruas sem tolerância
-  if (
-    estoque === "3" &&
-    ["A", "C", "E"].includes(rua)
-  ) {
+  const modulo = Number(slot.modulo);
+  
+
+  // ======================================
+  // EXCEÇÕES ESTOQUE 3
+  // ======================================
+
+if (estoque === "3") {
+
+  const specialLimits: Record<number, Record<string, number>> = {
+
+    7: {
+      A: 40,
+      B: 40,
+      C: 40,
+      D: 40,
+      E: 100,
+      F: 120,
+      G: 100,
+      H: 120,
+    },
+
+    8: {
+      A: 40,
+      B: 40,
+      C: 40,
+      D: 100,
+      E: 120,
+      F: 100,
+      G: 120,
+    },
+
+    9: {
+      A: 40,
+      B: 100,
+      C: 120,
+      D: 100,
+      E: 120,
+      F: 100,
+      G: 120,
+    },
+
+    24: {
+      A: 40,
+      B: 100,
+      C: 120,
+      D: 100,
+      E: 120,
+      F: 100,
+      G: 120,
+    },
+
+  };
+
+  if (specialLimits[modulo]) {
+
+    const limit =
+      specialLimits[modulo][rua];
+
+    return {
+      percentage: occupancy,
+      status:
+        occupancy > limit
+          ? "over"
+          : "normal"
+    };
+  }
+
+  // Regra padrão E3
+
+  if (["A", "C", "E"].includes(rua)) {
+
     return {
       percentage: occupancy,
       status:
@@ -291,6 +358,7 @@ export const InteractiveMapa: React.FC<InteractiveMapaProps> = ({
           : "normal"
     };
   }
+}
 
   // Estoque 2 e ruas B/D/F
 
