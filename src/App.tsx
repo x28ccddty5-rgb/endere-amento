@@ -1287,7 +1287,7 @@ if (
       }
     
     }
-      else if (
+      if (
       lower.includes("prioridade") ||
       lower.includes("dia")
     ) {
@@ -1317,7 +1317,7 @@ if (
     
     }
 
-      else if (
+      if (
       lower.includes("diagnóstico geral") ||
       lower.includes("diagnostico geral")
     ) {
