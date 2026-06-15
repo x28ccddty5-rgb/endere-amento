@@ -1218,11 +1218,19 @@ if (
     
       const topOverCapacity = [];
     
+    const totalSlots = 657 + 1373 + 1288;
+
     const occupied =
-    occupiedSlots;
+      occupiedPalletsE1 +
+      slots.filter(
+        s => s.estoque === "2" && s.saldo > 0
+      ).length +
+      slots.filter(
+        s => s.estoque === "3" && s.saldo > 0
+      ).length;
     
     const free =
-    freeSlots;
+      totalSlots - occupied;
     
       responseText =
         `Foram identificados alguns pontos de atenção:\n\n` +
@@ -1254,7 +1262,6 @@ if (
     }
       else if (
       lower.includes("prioridade") ||
-      lower.includes("dia")
     ) {
     
       const abertas =
@@ -1287,11 +1294,19 @@ if (
       lower.includes("diagnostico")
     ) {
     
+    const totalSlots = 657 + 1373 + 1288;
+
     const occupied =
-     occupiedSlots;
+      occupiedPalletsE1 +
+      slots.filter(
+        s => s.estoque === "2" && s.saldo > 0
+      ).length +
+      slots.filter(
+        s => s.estoque === "3" && s.saldo > 0
+      ).length;
     
     const free =
-    freeSlots;
+      totalSlots - occupied;
     
       const abertas =
         divergencias.filter(
