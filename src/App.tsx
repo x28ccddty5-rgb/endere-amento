@@ -1261,7 +1261,7 @@ if (
     
     }
       else if (
-      lower.includes("prioridade") ||
+      lower.includes("prioridade")
     ) {
     
       const abertas =
