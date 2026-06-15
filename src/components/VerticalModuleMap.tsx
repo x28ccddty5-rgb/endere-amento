@@ -54,21 +54,89 @@ export const VerticalModuleMap: React.FC<VerticalModuleMapProps> = ({
           2º Andar
         </div>
 
-        {rows.map((row) => (
+        {rows.map((row) => {
+
+        const slot1 = getSlot(
+          selectedEstoque,
+          String(selectedModule),
+          row.andar1
+        );
+      
+        const slot2 = getSlot(
+          selectedEstoque,
+          String(selectedModule),
+          row.andar2
+        );
+      
+        const dense1 = slot1.saldo >= 1000;
+        const dense2 = slot2.saldo >= 1000;
+      
+        return (
           <React.Fragment key={row.rua}>
             <div className="border p-4 font-black text-slate-700">
               {row.rua}
             </div>
-
-            <div className="border p-4 bg-blue-50">
+            
+            <div
+            onClick={() => onSelectSlot(slot1)}
+            className={`border p-3 cursor-pointer transition
+              ${
+                slot1.saldo === 0
+                  ? "bg-slate-50 text-slate-400"
+                  : dense1
+                    ? "bg-blue-600 text-white"
+                    : "bg-blue-100 text-blue-900"
+              }
+            `}
+          >
+          
+            <div className="text-[10px] opacity-75">
               {row.andar1}
             </div>
+          
+            <div className="font-black text-sm">
+              {slot1.referencia || "—"}
+            </div>
+          
+            <div className="text-[10px] opacity-75">
+              {slot1.saldo > 0
+                ? `${slot1.saldo} pçs`
+                : "Vazio"}
+            </div>
+          
+          </div>
 
-            <div className="border p-4 bg-blue-50">
+            <div
+            onClick={() => onSelectSlot(slot2)}
+            className={`border p-3 cursor-pointer transition
+              ${
+                slot2.saldo === 0
+                  ? "bg-slate-50 text-slate-400"
+                  : dense2
+                    ? "bg-blue-600 text-white"
+                    : "bg-blue-100 text-blue-900"
+              }
+            `}
+          >
+          
+            <div className="text-[10px] opacity-75">
               {row.andar2}
             </div>
+          
+            <div className="font-black text-sm">
+              {slot2.referencia || "—"}
+            </div>
+          
+            <div className="text-[10px] opacity-75">
+              {slot2.saldo > 0
+                ? `${slot2.saldo} pçs`
+                : "Vazio"}
+            </div>
+          
+          </div>
           </React.Fragment>
-        ))}
+          );
+        })}
 
       </div>
 
