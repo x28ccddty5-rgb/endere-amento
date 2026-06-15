@@ -1184,6 +1184,174 @@ if (
     p.descricao.toLowerCase().includes(baseSearch.toLowerCase())
   );
 
+    const handleExportConsolidationPDF = () => {
+
+  const doc = new jsPDF();
+
+  let y = 20;
+
+  doc.setFontSize(16);
+  doc.text("PORTO BRASIL", 10, y);
+
+  y += 10;
+
+  doc.setFontSize(14);
+  doc.text("PLANO DE CONSOLIDACAO", 10, y);
+
+  y += 10;
+
+  doc.setFontSize(10);
+  doc.text(
+    `Gerado em: ${new Date().toLocaleString("pt-BR")}`,
+    10,
+    y
+  );
+
+  y += 15;
+
+  const opportunities: any[] = [];
+
+  const skuMap: Record<
+    string,
+    {
+      saldo: number;
+      descricao: string;
+      posicoes: WarehouseSlot[];
+    }
+  > = {};
+
+  slots.forEach(slot => {
+
+    if (!slot.referencia || slot.saldo <= 0)
+      return;
+
+    if (!skuMap[slot.referencia]) {
+
+      skuMap[slot.referencia] = {
+        saldo: 0,
+        descricao: slot.descricao,
+        posicoes: []
+      };
+
+    }
+
+    skuMap[slot.referencia].saldo += slot.saldo;
+
+    skuMap[slot.referencia].posicoes.push(slot);
+
+  });
+
+  Object.entries(skuMap).forEach(
+    ([sku, data]) => {
+
+      if (data.posicoes.length < 2)
+        return;
+
+      const produto =
+        productsList.find(
+          p => p.referencia === sku
+        );
+
+      if (!produto?.paletizacao)
+        return;
+
+      if (
+        data.saldo <= produto.paletizacao
+      ) {
+
+        opportunities.push({
+          sku,
+          descricao: data.descricao,
+          saldo: data.saldo,
+          capacidade: produto.paletizacao,
+          posicoes: data.posicoes
+        });
+
+      }
+
+    }
+  );
+
+  opportunities.forEach(
+    (item, index) => {
+
+      const destino =
+        item.posicoes[0];
+
+      const origens =
+        item.posicoes.slice(1);
+
+      if (y > 260) {
+
+        doc.addPage();
+
+        y = 20;
+
+      }
+
+      doc.setFontSize(11);
+
+      doc.text(
+        `${index + 1}) SKU ${item.sku}`,
+        10,
+        y
+      );
+
+      y += 6;
+
+      doc.text(
+        item.descricao,
+        10,
+        y
+      );
+
+      y += 6;
+
+      doc.text(
+        `Destino: E${destino.estoque} M${destino.modulo} ${destino.posicao}`,
+        10,
+        y
+      );
+
+      y += 6;
+
+      doc.text(
+        `Ganho estimado: +${origens.length} posicoes`,
+        10,
+        y
+      );
+
+      y += 6;
+
+      origens.forEach(
+        (origem: WarehouseSlot) => {
+
+          doc.text(
+            `Mover de: E${origem.estoque} M${origem.modulo} ${origem.posicao}`,
+            15,
+            y
+          );
+
+          y += 6;
+
+        }
+      );
+
+      y += 6;
+
+    }
+  );
+
+  doc.save(
+    `Plano_Consolidacao_${
+      new Date()
+        .toISOString()
+        .slice(0,10)
+    }.pdf`
+  );
+
+};
+    
   // --- CONVERSATIONAL AI MODEL CO-PILOT ---
   const [chatMessages, setChatMessages] = useState([
     { 
