@@ -401,6 +401,7 @@ if (estoque === "2") {
       percentage: occupancy,
       status: "over"
     };
+  };
   
   // Handle slot selection
   const handleSelectSlot = (s: WarehouseSlot) => {
