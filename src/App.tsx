@@ -1218,15 +1218,11 @@ if (
     
       const topOverCapacity = [];
     
-      const occupied =
-        slots.filter(
-          s => s.saldo > 0
-        ).length;
+    const occupied =
+    occupiedSlots;
     
-      const free =
-        slots.filter(
-          s => s.saldo === 0
-        ).length;
+    const free =
+    freeSlots;
     
       responseText =
         `Foram identificados alguns pontos de atenção:\n\n` +
@@ -1287,15 +1283,15 @@ if (
     }
 
      else if (
-      lower.includes("diagnóstico geral") ||
-      lower.includes("diagnostico geral")
+      lower.includes("diagnóstico") ||
+      lower.includes("diagnostico")
     ) {
     
-      const occupied =
-        slots.filter(s => s.saldo > 0).length;
+    const occupied =
+     occupiedSlots;
     
-      const free =
-        slots.filter(s => s.saldo === 0).length;
+    const free =
+    freeSlots;
     
       const abertas =
         divergencias.filter(
