@@ -654,7 +654,13 @@ export const InteractiveMapa: React.FC<InteractiveMapaProps> = ({
                 {viewMode === "vertical" && (
                 <VerticalModuleMap
                   rows={verticalRows}
-                
+
+                  blockedPositions={
+                  selectedEstoque === "2"
+                    ? blockedE2Positions
+                    : blockedE3Positions
+                }
+                  
                   selectedEstoque={selectedEstoque}
                 
                   getSlot={getOrCreateSlotOnMap}
