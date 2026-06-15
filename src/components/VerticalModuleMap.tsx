@@ -19,17 +19,28 @@ interface VerticalModuleMapProps {
     posicao: string
   ) => any;
 
+  getOccupancyStatus: (
+    slot: any,
+    estoque: string
+  ) => {
+    percentage: number;
+    status: string;
+  };
+
+onSelectSlot: (slot: any) => void;
+  
   onSelectSlot: (slot: any) => void;
 
   selectedSlotId: string | null;
 }
 
-export const VerticalModuleMap = ({
+export const VerticalModuleMap: React.FC<VerticalModuleMapProps> = ({
   rows,
   selectedModule,
   selectedEstoque,
   blockedPositions,
   getSlot,
+  getOccupancyStatus,
   onSelectSlot,
   selectedSlotId,
 }) => {
