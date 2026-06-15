@@ -1213,6 +1213,40 @@ if (
         divergencias.filter(
           d => d.status === "Aberta"
         ).length;
+
+    const overCapacity = slots.filter(slot => {
+
+    const topOverCapacity =
+  overCapacity
+    .map(slot => {
+
+      const result =
+        getOccupancyStatus(
+          slot,
+          slot.estoque
+        );
+
+      return {
+        slot,
+        percentage: result.percentage
+      };
+
+    })
+    .sort(
+      (a, b) =>
+        b.percentage - a.percentage
+    )
+    .slice(0, 3);
+        
+    const result =
+      getOccupancyStatus(
+        slot,
+        slot.estoque
+      );
+  
+    return result.status === "over";
+  
+  });
     
       const occupied =
         slots.filter(s => s.saldo > 0).length;
@@ -1223,14 +1257,29 @@ if (
       responseText =
         `Foram identificados alguns pontos de atenção:\n\n` +
     
-        `• Divergências em aberto: ${abertas}\n` +
+        `• Divergências em aberto: ${abertas}\n`
+        +
+        `• Posições acima da capacidade: ${overCapacity.length}\n`
     
         `• Posições ocupadas: ${occupied}\n` +
     
         `• Posições livres: ${free}\n\n` +
     
         `Recomendo avaliar divergências pendentes e oportunidades de consolidação.`;
-    
+
+        if (topOverCapacity.length > 0) {
+
+          responseText +=
+        
+            `\n\nMaiores excessos:\n\n` +
+        
+            topOverCapacity
+              .map(item =>
+                `• E${item.slot.estoque} • M${item.slot.modulo} • ${item.slot.posicao} (${Math.round(item.percentage)}%)`
+              )
+              .join("\n");
+        
+        }
     }
 
       else if (
