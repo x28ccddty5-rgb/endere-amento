@@ -142,7 +142,7 @@ export const VerticalModuleMap: React.FC<VerticalModuleMapProps> = ({
                 }
                 ${
                   selected1
-                    ? "ring-2 ring-blue-500 ring-offset-2"
+                    ? "ring-4 ring-yellow-400 ring-offset-2 shadow-xl scale-[1.02] z-10 relative"
                     : ""
                 }
               `}
@@ -197,7 +197,7 @@ export const VerticalModuleMap: React.FC<VerticalModuleMapProps> = ({
                 }
                 ${
                   selected2
-                    ? "ring-2 ring-blue-500 ring-offset-2"
+                    ? "ring-4 ring-yellow-400 ring-offset-2 shadow-xl scale-[1.02] z-10 relative"
                     : ""
                 }
               `}
