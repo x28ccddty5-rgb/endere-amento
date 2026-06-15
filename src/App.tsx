@@ -1383,24 +1383,60 @@ if (
         sku,
         dados
       ] = maisPulverizado;
-  
-      responseText =
-  
-        `SKU mais pulverizado:\n\n` +
-  
+
+      const estoques = new Set<string>();
+
+      const modulos = new Set<string>();
+      
+      let e2Count = 0;
+      let e3Count = 0;
+      
+      slots.forEach(slot => {
+      
+        if (
+          slot.referencia === sku &&
+          slot.saldo > 0
+        ) {
+      
+          estoques.add(slot.estoque);
+      
+          modulos.add(
+            `${slot.estoque}-${slot.modulo}`
+          );
+      
+          if (slot.estoque === "2")
+            e2Count++;
+      
+          if (slot.estoque === "3")
+            e3Count++;
+      
+        }
+      
+      });
+      
+     responseText =
+
+        `SKU mais pulverizado\n\n` +
+      
         `${sku}\n` +
-  
+      
         `${dados.descricao}\n\n` +
-  
+      
         `Posições: ${dados.posicoes}\n` +
-  
+      
+        `Módulos envolvidos: ${modulos.size}\n` +
+      
         `Saldo total: ${dados.saldo.toLocaleString()} peças\n\n` +
-  
-        `Localizações:\n` +
-  
-        dados.locais
-          .slice(0, 5)
-          .join("\n");
+      
+        `Distribuição:\n` +
+      
+        `E2 → ${e2Count} posições\n` +
+      
+        `E3 → ${e3Count} posições\n\n` +
+      
+        `Impacto:\n` +
+      
+        `Alta dispersão operacional para inventários e movimentações.`;
   
     } else {
   
@@ -1497,37 +1533,42 @@ if (
 
   } else {
 
-    const top =
-      opportunities[0];
+    const totalLiberacoes =
+  opportunities.reduce(
+    (acc, item) =>
+      acc + (item.posicoes - 1),
+    0
+  );
 
-    responseText =
+responseText =
 
-      `Oportunidade de Consolidação\n\n` +
+  `Oportunidades encontradas: ${opportunities.length}\n\n` +
 
-      `SKU: ${top.sku}\n` +
+  `Potencial estimado: liberar ${totalLiberacoes} posição(ões)\n\n` +
 
-      `${top.descricao}\n\n` +
+  opportunities
+    .map((item, index) =>
 
-      `Posições atuais: ${top.posicoes}\n` +
+      `${index + 1})\n` +
 
-      `Saldo total: ${top.saldo}\n` +
+      `SKU: ${item.sku}\n` +
 
-      `Capacidade: ${top.capacidade}\n\n` +
+      `${item.descricao}\n\n` +
 
-      `Localizações:\n` +
+      `Posições: ${item.posicoes}\n` +
 
-      top.locais
-        .slice(0, 5)
-        .map(
-          l =>
-            `• E${l.estoque} M${l.modulo} ${l.posicao}`
-        )
-        .join("\n") +
+      `Saldo: ${item.saldo}\n` +
 
-      `\n\nPotencial estimado: liberar ${
-        top.posicoes - 1
-      } posição(ões).`;
+      `Capacidade: ${item.capacidade}\n` +
+      
+      `Ocupação: ${Math.round(
+        (item.saldo / item.capacidade) * 100
+      )}%\n\n` +
 
+      `Potencial: +${item.posicoes - 1} posição(ões)\n`
+
+    )
+    .join("\n------------------------\n\n");
   }
 
 }
