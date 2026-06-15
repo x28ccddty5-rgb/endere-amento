@@ -540,6 +540,8 @@ export const InteractiveMapa: React.FC<InteractiveMapaProps> = ({
             <span className="w-3.5 h-3.5 bg-blue-100 border border-blue-200 rounded block"></span> Até 100% da capacidade </span>
           <span className="flex items-center gap-1.5">
             <span className="w-3.5 h-3.5 bg-blue-600 border border-blue-700 rounded block"></span> Faixa de tolerância (100%-120%) </span>
+          <span className="flex items-center gap-1.5">
+            <span className="w-3.5 h-3.5 bg-red-500 border border-red-700 rounded block"></span>Acima da capacidade</span>
         </div>
 
         {/* LAYOUT MAP VIEWER */}
@@ -892,7 +894,7 @@ export const InteractiveMapa: React.FC<InteractiveMapaProps> = ({
         <div className="bg-slate-50 border border-slate-200 rounded-lg p-3 text-xs text-slate-500 flex items-center gap-2">
           <Info className="w-4 h-4 text-blue-600 shrink-0" />
           <span>
-            <strong>Dica de Operação:</strong> Na estrutura de porta-paletes do 1º andar (A1/F1, etc) ou 2º andar (A2/F2, etc), as cores indicam a densidade de saldo. Clique para inventariar de forma ágil ou conferir dados.
+            <strong>Dica de Operação:</strong> Na estrutura de porta-paletes do 1º andar (A1/F1, etc) ou 2º andar (A2/F2, etc), as cores indicam o nível de ocupação da posição em relação à capacidade de armazenagem. Clique para inventariar de forma ágil ou conferir dados.
           </span>
         </div>
 
