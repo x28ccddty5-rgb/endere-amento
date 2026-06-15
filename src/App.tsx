@@ -1202,135 +1202,12 @@ if (
 
     setTimeout(() => {
       let responseText = "";
-      const lower = userMessage.toLowerCase();
-
-      if (
-      lower.includes("atenção") ||
-      lower.includes("merece atenção")
-    ) {
-    
-      const abertas =
-        divergencias.filter(
-          d => d.status === "Aberta"
-        ).length;
-    
-      const overCapacity = [];
-    
-      const topOverCapacity = [];
-    
-    const totalSlots = 657 + 1373 + 1288;
-
-    const occupied =
-      occupiedPalletsE1 +
-      slots.filter(
-        s => s.estoque === "2" && s.saldo > 0
-      ).length +
-      slots.filter(
-        s => s.estoque === "3" && s.saldo > 0
-      ).length;
-    
-    const free =
-      totalSlots - occupied;
-    
-      responseText =
-        `Foram identificados alguns pontos de atenção:\n\n` +
-    
-        `• Divergências em aberto: ${abertas}\n` +
-    
-        `• Posições acima da capacidade: ${overCapacity.length}\n` +
-    
-        `• Posições ocupadas: ${occupied}\n` +
-    
-        `• Posições livres: ${free}\n\n` +
-    
-        `Recomendo avaliar divergências pendentes e oportunidades de consolidação.`;
-    
-      if (topOverCapacity.length > 0) {
-    
-        responseText +=
-    
-          `\n\nMaiores excessos:\n\n` +
-    
-          topOverCapacity
-            .map(item =>
-              `• E${item.slot.estoque} • M${item.slot.modulo} • ${item.slot.posicao} (${Math.round(item.percentage)}%)`
-            )
-            .join("\n");
-    
-      }
-    
-    }
-      else if (
-      lower.includes("prioridade")
-    ) {
-    
-      const abertas =
-        divergencias.filter(
-          d => d.status === "Aberta"
-        ).length;
-    
-      if (abertas > 0) {
-    
-        responseText =
-          `Prioridade recomendada:\n\n` +
-    
-          `Resolver ${abertas} divergências pendentes antes de novas movimentações.\n\n` +
-    
-          `Isso reduzirá inconsistências entre estoque físico e sistêmico.`;
-    
-      } else {
-    
-        responseText =
-          `Nenhuma divergência pendente foi identificada.\n\n` +
-    
-          `A prioridade atual é consolidar posições e aumentar disponibilidade de armazenagem.`;
-    
-      }
-    
-    }
-
-     else if (
-      lower.includes("diagnóstico") ||
-      lower.includes("diagnostico")
-    ) {
-    
-    const totalSlots = 657 + 1373 + 1288;
-
-    const occupied =
-      occupiedPalletsE1 +
-      slots.filter(
-        s => s.estoque === "2" && s.saldo > 0
-      ).length +
-      slots.filter(
-        s => s.estoque === "3" && s.saldo > 0
-      ).length;
-    
-    const free =
-      totalSlots - occupied;
-    
-      const abertas =
-        divergencias.filter(
-          d => d.status === "Aberta"
-        ).length;
-    
-      responseText =
-        `Diagnóstico Operacional\n\n` +
-    
-        `• Posições ocupadas: ${occupied}\n` +
-    
-        `• Posições livres: ${free}\n` +
-    
-        `• Divergências abertas: ${abertas}\n\n` +
-    
-        `Situação geral controlada.\n\n` +
-    
-        `Continue monitorando ocupação e oportunidades de consolidação.`;
-    
-    }
       
-      else if (
-  lower.includes("pulverizado")
-) {
+      const lower = userMessage.toLowerCase();
+    
+      if (
+      lower.includes("pulverizado")
+    ) {
 
   const skuMap: Record<
     string,
@@ -1475,36 +1352,6 @@ if (
       };
 
     }
-
-      else if (
-      lower.includes("plano de consolidação")
-    ) {
-    
-      const opportunities: any[] = [];
-    
-      const skuMap: Record<
-        string,
-        {
-          saldo: number;
-          descricao: string;
-          posicoes: WarehouseSlot[];
-        }
-      > = {};
-    
-      slots.forEach(slot => {
-    
-        if (!slot.referencia || slot.saldo <= 0)
-          return;
-    
-        if (!skuMap[slot.referencia]) {
-    
-          skuMap[slot.referencia] = {
-            saldo: 0,
-            descricao: slot.descricao,
-            posicoes: []
-          };
-    
-        }
     
         skuMap[slot.referencia].saldo +=
           slot.saldo;
@@ -1548,154 +1395,55 @@ if (
     
         }
       );
-    
-      if (opportunities.length === 0) {
-    
+  
+        if (opportunities.length === 0) {
+
         responseText =
-          "Nenhuma oportunidade de consolidação encontrada.";
-    
-      } else {
-    
-        responseText =
-    
-          `PLANO DE CONSOLIDAÇÃO\n\n`;
-    
-        opportunities.forEach(
-          (item, index) => {
-    
-            const destino =
-              item.posicoes[0];
-    
-            const origens =
-              item.posicoes.slice(1);
-    
-            responseText +=
-    
-              `${index + 1}) SKU ${item.sku}\n` +
-    
-              `${item.descricao}\n\n` +
-    
-              `Destino sugerido:\n` +
-    
-              `E${destino.estoque} • M${destino.modulo} • ${destino.posicao}\n\n` +
-    
-              `Mover de:\n` +
-    
-              origens
-                .map(
-                  o =>
-                    `• E${o.estoque} • M${o.modulo} • ${o.posicao}`
-                )
-                .join("\n") +
-    
-              `\n\nGanho estimado: +${origens.length} posição(ões)\n\n` +
-    
-              `----------------------------\n\n`;
-    
-          }
-        );
-    
-      }
-    
-    }
-    
-    skuMap[slot.referencia].saldo +=
-      slot.saldo;
-
-    skuMap[slot.referencia].posicoes.push(
-      slot
-    );
-
-  });
-
-  Object.entries(skuMap).forEach(
-    ([sku, data]) => {
-
-      if (data.posicoes.length < 2)
-        return;
-
-      const produto =
-        productsList.find(
-          p => p.referencia === sku
-        );
-
-      if (!produto?.paletizacao)
-        return;
-
-      if (
-        data.saldo <=
-        produto.paletizacao
-      ) {
-
-        opportunities.push({
-          sku,
-          descricao: data.descricao,
-          posicoes:
-            data.posicoes.length,
-          saldo: data.saldo,
-          capacidade:
-            produto.paletizacao,
-          locais:
-            data.posicoes
-        });
-
-      }
-
-    }
-  );
-
-  opportunities.sort(
-    (a, b) =>
-      b.posicoes - a.posicoes
-  );
-
-  if (opportunities.length === 0) {
-
-    responseText =
-      "Nenhuma oportunidade de consolidação foi encontrada.";
-
-  } else {
-
-    const totalLiberacoes =
-  opportunities.reduce(
-    (acc, item) =>
-      acc + (item.posicoes - 1),
-    0
-  );
-
-responseText =
-
-  `Oportunidades encontradas: ${opportunities.length}\n\n` +
-
-  `Potencial estimado: liberar ${totalLiberacoes} posição(ões)\n\n` +
-
-  opportunities
-    .map((item, index) =>
-
-      `${index + 1})\n` +
-
-      `SKU: ${item.sku}\n` +
-
-      `${item.descricao}\n\n` +
-
-      `Posições: ${item.posicoes}\n` +
-
-      `Saldo: ${item.saldo}\n` +
-
-      `Capacidade: ${item.capacidade}\n` +
+          "Nenhuma oportunidade de consolidação foi encontrada.";
       
-      `Ocupação: ${Math.round(
-        (item.saldo / item.capacidade) * 100
-      )}%\n\n` +
-
-      `Potencial: +${item.posicoes - 1} posição(ões)\n`
-
-    )
-    .join("\n------------------------\n\n");
-  }
-
-}
-       
+      } else {
+      
+        const totalLiberacoes =
+          opportunities.reduce(
+            (acc, item) =>
+              acc + (item.posicoes.length - 1),
+            0
+          );
+      
+        responseText =
+      
+          `Oportunidades encontradas: ${opportunities.length}\n\n` +
+      
+          `Potencial estimado: liberar ${totalLiberacoes} posição(ões)\n\n` +
+      
+          opportunities
+            .map((item, index) =>
+      
+              `${index + 1})\n` +
+      
+              `SKU: ${item.sku}\n` +
+      
+              `${item.descricao}\n\n` +
+      
+              `Posições: ${item.posicoes.length}\n` +
+      
+              `Saldo: ${item.saldo}\n` +
+      
+              `Capacidade: ${item.capacidade}\n` +
+      
+              `Ocupação: ${Math.round(
+                (item.saldo / item.capacidade) * 100
+              )}%\n\n` +
+      
+              `Potencial: +${item.posicoes.length - 1} posição(ões)\n`
+      
+            )
+            .join("\n------------------------\n\n");
+      
+      }
+      
+      }
+          
       else if (lower.includes("item") || lower.includes("produto") || lower.includes("mais estocado") || lower.includes("maior saldo")) {
         const activeItemMap: Record<string, { qty: number, desc: string }> = {};
         slots.forEach(s => {
