@@ -888,6 +888,11 @@ if (estoque === "3") {
                           <span className="text-[10px] text-right block opacity-75">
                             {isOccupied ? `${s.saldo} pçs` : "Vazio"}
                           </span>
+                          {isOccupied && (
+                        <span className="text-[10px] text-right block font-bold">
+                          {Math.round(occupancy.percentage)}%
+                        </span>
+                      )}
                         </div>
                       );
                     })
