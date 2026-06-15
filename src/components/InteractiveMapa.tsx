@@ -360,7 +360,11 @@ if (estoque === "3") {
   }
 }
 
-  // Estoque 2 e ruas B/D/F
+  // ======================================
+// ESTOQUE 2
+// ======================================
+
+if (estoque === "2") {
 
   if (occupancy <= 100) {
     return {
@@ -369,18 +373,34 @@ if (estoque === "3") {
     };
   }
 
-  if (occupancy <= 120) {
-    return {
-      percentage: occupancy,
-      status: "warning"
-    };
-  }
-
   return {
     percentage: occupancy,
-    status: "over"
+    status: "warning"
   };
-};
+}
+
+    // ======================================
+    // ESTOQUE 3 (B/D/F padrão)
+    // ======================================
+    
+    if (occupancy <= 100) {
+      return {
+        percentage: occupancy,
+        status: "normal"
+      };
+    }
+    
+    if (occupancy <= 120) {
+      return {
+        percentage: occupancy,
+        status: "warning"
+      };
+    }
+    
+    return {
+      percentage: occupancy,
+      status: "over"
+    };
   
   // Handle slot selection
   const handleSelectSlot = (s: WarehouseSlot) => {
