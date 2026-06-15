@@ -537,11 +537,9 @@ export const InteractiveMapa: React.FC<InteractiveMapaProps> = ({
             <span className="w-3.5 h-3.5 bg-slate-100 border border-slate-300 rounded block"></span> Vazio
           </span>
           <span className="flex items-center gap-1.5">
-            <span className="w-3.5 h-3.5 bg-blue-100 border border-blue-200 rounded block"></span> Parcial ({"<"} 1.000 pçs)
-          </span>
+            <span className="w-3.5 h-3.5 bg-blue-100 border border-blue-200 rounded block"></span> Até 100% da capacidade </span>
           <span className="flex items-center gap-1.5">
-            <span className="w-3.5 h-3.5 bg-blue-600 border border-blue-700 rounded block"></span> Cheio (≥ 1.000 pçs)
-          </span>
+            <span className="w-3.5 h-3.5 bg-blue-600 border border-blue-700 rounded block"></span> Faixa de tolerância (100%-120%) </span>
         </div>
 
         {/* LAYOUT MAP VIEWER */}
@@ -619,7 +617,7 @@ export const InteractiveMapa: React.FC<InteractiveMapaProps> = ({
               
               }
                   if (isSelected) {
-                    cardColor += " ring-2 ring-blue-500 ring-offset-2";
+                    cardColor += " ring-4 ring-yellow-400 ring-offset-2 shadow-xl scale-[1.02] z-10 relative";
                   }
 
                   return (
@@ -802,7 +800,7 @@ export const InteractiveMapa: React.FC<InteractiveMapaProps> = ({
                     
                     }
                       if (isSelected) {
-                        cellBg += " ring-2 ring-blue-500 ring-offset-2";
+                        cellBg += " ring-4 ring-yellow-400 ring-offset-2 shadow-xl scale-[1.02] z-10 relative";
                       }
 
                       return (
@@ -861,7 +859,7 @@ export const InteractiveMapa: React.FC<InteractiveMapaProps> = ({
                     
                     }
                       if (isSelected) {
-                        cellBg += " ring-2 ring-blue-500 ring-offset-2";
+                        cellBg += " ring-4 ring-yellow-400 ring-offset-2 shadow-xl scale-[1.02] z-10 relative";
                       }
 
                       return (
