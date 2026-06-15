@@ -210,11 +210,10 @@ export const InteractiveMapa: React.FC<InteractiveMapaProps> = ({
 };
 
   const e3ExtraPositions: Record<number, string[]> = {
-  7: ["G1", "H1", "I1", "G2", "H2", "I2"],
-  8: ["G1", "H1", "I1", "G2", "H2"],
+  7: ["G1", "H1", "G2", "H2"],
+  8: ["G1", "G2"],
   9: ["G1", "G2"],
-  124: ["G1", "G2"],
-  125: ["G1", "G2"]
+  24: ["G1", "G2"],
 };
   
     const blockedE2Positions =
