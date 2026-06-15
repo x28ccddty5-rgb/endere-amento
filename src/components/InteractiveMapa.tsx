@@ -580,7 +580,11 @@ export const InteractiveMapa: React.FC<InteractiveMapaProps> = ({
               
                   const isOccupied = s.saldo > 0;
                   const isSelected = selectedSlotId === s.id;
-                  const isDense = s.saldo >= 1000;
+              
+                  const occupancy = getOccupancyStatus(
+                  s,
+                  selectedEstoque
+                );
 
                   let cardColor = "bg-slate-50 hover:bg-slate-100 border-slate-200 text-slate-500";
                   if (isOccupied) {
@@ -742,12 +746,29 @@ export const InteractiveMapa: React.FC<InteractiveMapaProps> = ({
                       const isSelected = selectedSlotId === s.id;
                       const isDense = s.saldo >= 1000;
 
-                      let cellBg = "bg-slate-50 hover:bg-slate-100 text-slate-400 border-dashed border-slate-300";
-                      if (isOccupied) {
-                        cellBg = isDense
-                          ? "bg-blue-600 hover:opacity-90 text-white border-blue-700 font-bold"
-                          : "bg-blue-100 hover:bg-blue-200 text-blue-900 border-blue-200 font-medium";
+                      let cellBg =
+                      "bg-slate-50 hover:bg-slate-100 text-slate-400 border-dashed border-slate-300";
+                    
+                    if (isOccupied) {
+                    
+                      if (occupancy.status === "normal") {
+                    
+                        cellBg =
+                          "bg-blue-100 hover:bg-blue-200 text-blue-900 border-blue-200 font-medium";
+                    
+                      } else if (occupancy.status === "warning") {
+                    
+                        cellBg =
+                          "bg-blue-600 hover:opacity-90 text-white border-blue-700 font-bold";
+                    
+                      } else if (occupancy.status === "over") {
+                    
+                        cellBg =
+                          "bg-red-500 hover:bg-red-600 text-white border-red-700 font-bold";
+                    
                       }
+                    
+                    }
                       if (isSelected) {
                         cellBg += " ring-2 ring-blue-500 ring-offset-2";
                       }
@@ -780,7 +801,11 @@ export const InteractiveMapa: React.FC<InteractiveMapaProps> = ({
                       const s = getOrCreateSlotOnMap("3", modStr, pos);
                       const isOccupied = s.saldo > 0;
                       const isSelected = selectedSlotId === s.id;
-                      const isDense = s.saldo >= 1000;
+                      
+                      const occupancy = getOccupancyStatus(
+                      s,
+                      selectedEstoque
+                    );
 
                       let cellBg = "bg-slate-50 hover:bg-slate-100 text-slate-400 border-dashed border-slate-300";
                       if (isOccupied) {
