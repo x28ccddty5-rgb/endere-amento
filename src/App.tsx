@@ -1287,7 +1287,7 @@ if (
       }
     
     }
-      if (
+      else if (
       lower.includes("prioridade") ||
       lower.includes("dia")
     ) {
@@ -1317,7 +1317,7 @@ if (
     
     }
 
-      if (
+     else if (
       lower.includes("diagnóstico geral") ||
       lower.includes("diagnostico geral")
     ) {
@@ -1348,7 +1348,7 @@ if (
     
     }
       
-      if (lower.includes("item") || lower.includes("produto") || lower.includes("mais estocado") || lower.includes("maior saldo")) {
+      else if (lower.includes("item") || lower.includes("produto") || lower.includes("mais estocado") || lower.includes("maior saldo")) {
         const activeItemMap: Record<string, { qty: number, desc: string }> = {};
         slots.forEach(s => {
           if (s.saldo > 0) {
