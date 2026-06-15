@@ -241,11 +241,11 @@ export const InteractiveMapa: React.FC<InteractiveMapaProps> = ({
     
   const verticalRows =
   selectedEstoque === "2"
-    ? buildVerticalRows(
-        e2Positions.filter(
-          pos => !blockedE2Positions.includes(pos)
-        )
-      )
+    ? buildVerticalRows(e2Positions)
+    : buildVerticalRows([
+        ...e3Positions,
+        ...extraE3Positions
+      ]);
     : buildVerticalRows(
         [...e3Positions, ...extraE3Positions]
           .filter(
