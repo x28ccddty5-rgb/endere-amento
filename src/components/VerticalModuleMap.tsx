@@ -157,10 +157,16 @@ export const VerticalModuleMap: React.FC<VerticalModuleMapProps> = ({
               </div>
           
               <div className="text-[10px] opacity-75">
-                {slot1.saldo > 0
-                  ? `${slot1.saldo} pçs`
-                  : "Vazio"}
+              {slot1.saldo > 0
+                ? `${slot1.saldo} pçs`
+                : "Vazio"}
+            </div>
+            
+            {slot1.saldo > 0 && (
+              <div className="text-[10px] font-bold opacity-80">
+                {Math.round(occupancy1.percentage)}%
               </div>
+            )}
           
             </div>
           
@@ -212,10 +218,16 @@ export const VerticalModuleMap: React.FC<VerticalModuleMapProps> = ({
               </div>
           
               <div className="text-[10px] opacity-75">
-                {slot2.saldo > 0
-                  ? `${slot2.saldo} pçs`
-                  : "Vazio"}
+              {slot2.saldo > 0
+                ? `${slot2.saldo} pçs`
+                : "Vazio"}
+            </div>
+            
+            {slot2.saldo > 0 && (
+              <div className="text-[10px] font-bold opacity-80">
+                {Math.round(occupancy2.percentage)}%
               </div>
+            )}
           
             </div>
           
