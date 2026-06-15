@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 import { WarehouseSlot, Product } from "../types";
 import { Map, Info, User, Calendar, Sliders, Check, Hammer, Package } from "lucide-react";
+import { VerticalModuleMap } from "./VerticalModuleMap";
 
 interface InteractiveMapaProps {
   slots: WarehouseSlot[];
