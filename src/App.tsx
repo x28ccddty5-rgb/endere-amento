@@ -1185,7 +1185,8 @@ if (
   );
 
     const handleExportConsolidationPDF = () => {
-
+  console.log("jsPDF teste:", jsPDF);
+      
   const doc = new jsPDF();
 
   let y = 20;
