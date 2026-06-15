@@ -1476,6 +1476,129 @@ if (
 
     }
 
+      else if (
+      lower.includes("plano de consolidação")
+    ) {
+    
+      const opportunities: any[] = [];
+    
+      const skuMap: Record<
+        string,
+        {
+          saldo: number;
+          descricao: string;
+          posicoes: WarehouseSlot[];
+        }
+      > = {};
+    
+      slots.forEach(slot => {
+    
+        if (!slot.referencia || slot.saldo <= 0)
+          return;
+    
+        if (!skuMap[slot.referencia]) {
+    
+          skuMap[slot.referencia] = {
+            saldo: 0,
+            descricao: slot.descricao,
+            posicoes: []
+          };
+    
+        }
+    
+        skuMap[slot.referencia].saldo +=
+          slot.saldo;
+    
+        skuMap[slot.referencia].posicoes.push(
+          slot
+        );
+    
+      });
+    
+      Object.entries(skuMap).forEach(
+        ([sku, data]) => {
+    
+          if (data.posicoes.length < 2)
+            return;
+    
+          const produto =
+            productsList.find(
+              p => p.referencia === sku
+            );
+    
+          if (!produto?.paletizacao)
+            return;
+    
+          if (
+            data.saldo <=
+            produto.paletizacao
+          ) {
+    
+            opportunities.push({
+              sku,
+              descricao: data.descricao,
+              saldo: data.saldo,
+              capacidade:
+                produto.paletizacao,
+              posicoes:
+                data.posicoes
+            });
+    
+          }
+    
+        }
+      );
+    
+      if (opportunities.length === 0) {
+    
+        responseText =
+          "Nenhuma oportunidade de consolidação encontrada.";
+    
+      } else {
+    
+        responseText =
+    
+          `PLANO DE CONSOLIDAÇÃO\n\n`;
+    
+        opportunities.forEach(
+          (item, index) => {
+    
+            const destino =
+              item.posicoes[0];
+    
+            const origens =
+              item.posicoes.slice(1);
+    
+            responseText +=
+    
+              `${index + 1}) SKU ${item.sku}\n` +
+    
+              `${item.descricao}\n\n` +
+    
+              `Destino sugerido:\n` +
+    
+              `E${destino.estoque} • M${destino.modulo} • ${destino.posicao}\n\n` +
+    
+              `Mover de:\n` +
+    
+              origens
+                .map(
+                  o =>
+                    `• E${o.estoque} • M${o.modulo} • ${o.posicao}`
+                )
+                .join("\n") +
+    
+              `\n\nGanho estimado: +${origens.length} posição(ões)\n\n` +
+    
+              `----------------------------\n\n`;
+    
+          }
+        );
+    
+      }
+    
+    }
+    
     skuMap[slot.referencia].saldo +=
       slot.saldo;
 
@@ -3328,11 +3451,11 @@ responseText =
                   </button>
                   
                   <button
-                    onClick={() => setChatInput("Gerar plano de consolidação")}
-                    className="w-full text-left bg-white hover:bg-slate-100 p-2 border border-slate-200 rounded-lg transition font-bold text-slate-700"
-                  >
-                    📄 Gerar plano de consolidação
-                  </button>
+                  onClick={() => setChatInput("Gerar plano de consolidação")}
+                  className="w-full text-left bg-white hover:bg-slate-100 p-2 border border-slate-200 rounded-lg transition font-bold text-slate-700"
+                >
+                  📄 Gerar plano de consolidação
+                </button>
                   </div>
                 </div>
 
