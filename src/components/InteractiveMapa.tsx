@@ -246,6 +246,63 @@ export const InteractiveMapa: React.FC<InteractiveMapaProps> = ({
         ...e3Positions,
         ...extraE3Positions
       ]);
+
+  const getOccupancyStatus = (
+  slot: WarehouseSlot,
+  estoque: string
+) => {
+
+  const produto = productsList.find(
+    p => p.referencia === slot.referencia
+  );
+
+  if (!produto?.paletizacao || slot.saldo <= 0) {
+    return {
+      percentage: 0,
+      status: "empty"
+    };
+  }
+
+  const occupancy =
+    (slot.saldo / produto.paletizacao) * 100;
+
+  const rua = slot.posicao[0];
+
+  // Estoque 3 - ruas sem tolerância
+  if (
+    estoque === "3" &&
+    ["A", "C", "E"].includes(rua)
+  ) {
+    return {
+      percentage: occupancy,
+      status:
+        occupancy > 100
+          ? "over"
+          : "normal"
+    };
+  }
+
+  // Estoque 2 e ruas B/D/F
+
+  if (occupancy <= 100) {
+    return {
+      percentage: occupancy,
+      status: "normal"
+    };
+  }
+
+  if (occupancy <= 120) {
+    return {
+      percentage: occupancy,
+      status: "warning"
+    };
+  }
+
+  return {
+    percentage: occupancy,
+    status: "over"
+  };
+};
   
   // Handle slot selection
   const handleSelectSlot = (s: WarehouseSlot) => {
