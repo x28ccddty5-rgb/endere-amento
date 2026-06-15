@@ -246,12 +246,6 @@ export const InteractiveMapa: React.FC<InteractiveMapaProps> = ({
         ...e3Positions,
         ...extraE3Positions
       ]);
-    : buildVerticalRows(
-        [...e3Positions, ...extraE3Positions]
-          .filter(
-            pos => !blockedE3Positions.includes(pos)
-          )
-      );
   
   // Handle slot selection
   const handleSelectSlot = (s: WarehouseSlot) => {
