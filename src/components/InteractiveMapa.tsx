@@ -625,15 +625,14 @@ export const InteractiveMapa: React.FC<InteractiveMapaProps> = ({
                 </span>
 
                 {viewMode === "vertical" && (
-                <div className="bg-blue-50 border border-blue-200 rounded-lg p-8 text-center">
-                  <h3 className="font-black text-blue-700">
-                    Vista Física em Desenvolvimento
-                  </h3>
-              
-                  <p className="text-sm text-slate-600 mt-2">
-                    Aqui será exibido o novo mapa vertical do módulo.
-                  </p>
-                </div>
+                <VerticalModuleMap
+                  selectedEstoque={selectedEstoque}
+                  selectedModule={
+                    selectedEstoque === "2"
+                      ? selectedE2Module
+                      : selectedE3Module
+                  }
+                />
               )}
               
               {viewMode === "operacional" && (
