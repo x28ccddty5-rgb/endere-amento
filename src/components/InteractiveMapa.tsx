@@ -653,13 +653,22 @@ export const InteractiveMapa: React.FC<InteractiveMapaProps> = ({
 
                 {viewMode === "vertical" && (
                 <VerticalModuleMap
-                rows={verticalRows}
-                selectedModule={
-                  selectedEstoque === "2"
-                    ? selectedE2Module
-                    : selectedE3Module
-                }
-              />
+                  rows={verticalRows}
+                
+                  selectedEstoque={selectedEstoque}
+                
+                  getSlot={getOrCreateSlotOnMap}
+                
+                  onSelectSlot={handleSelectSlot}
+                
+                  selectedSlotId={selectedSlotId}
+                
+                  selectedModule={
+                    selectedEstoque === "2"
+                      ? selectedE2Module
+                      : selectedE3Module
+                  }
+                />
               )}
               
               {viewMode === "operacional" && (
