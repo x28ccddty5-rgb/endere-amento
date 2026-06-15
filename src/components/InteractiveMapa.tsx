@@ -745,7 +745,9 @@ export const InteractiveMapa: React.FC<InteractiveMapaProps> = ({
                   selectedEstoque={selectedEstoque}
                 
                   getSlot={getOrCreateSlotOnMap}
-                
+
+                  getOccupancyStatus={getOccupancyStatus}
+                  
                   onSelectSlot={handleSelectSlot}
                 
                   selectedSlotId={selectedSlotId}
