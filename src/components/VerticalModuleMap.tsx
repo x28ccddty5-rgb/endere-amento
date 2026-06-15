@@ -6,12 +6,29 @@ interface VerticalModuleMapProps {
     andar1: string;
     andar2: string;
   }[];
+
   selectedModule: number;
+
+  selectedEstoque: string;
+
+  getSlot: (
+    est: string,
+    modulo: string,
+    posicao: string
+  ) => any;
+
+  onSelectSlot: (slot: any) => void;
+
+  selectedSlotId: string | null;
 }
 
 export const VerticalModuleMap: React.FC<VerticalModuleMapProps> = ({
   rows,
   selectedModule,
+  selectedEstoque,
+  getSlot,
+  onSelectSlot,
+  selectedSlotId,
 }) => {
 
   return (
