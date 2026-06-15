@@ -660,6 +660,7 @@ export const InteractiveMapa: React.FC<InteractiveMapaProps> = ({
                     : selectedE3Module
                 }
               />
+              )}
               
               {viewMode === "operacional" && (
                 
