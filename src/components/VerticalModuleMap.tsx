@@ -81,10 +81,17 @@ export const VerticalModuleMap = ({
       
       const blocked2 =
       blockedPositions.includes(row.andar2);
-        
-        const dense1 = slot1.saldo >= 1000;
-        const dense2 = slot2.saldo >= 1000;
 
+    const occupancy1 = getOccupancyStatus(
+      slot1,
+      selectedEstoque
+    );
+    
+    const occupancy2 = getOccupancyStatus(
+      slot2,
+      selectedEstoque
+    );
+        
         const selected1 = selectedSlotId === slot1.id;
         const selected2 = selectedSlotId === slot2.id;
         
@@ -115,10 +122,12 @@ export const VerticalModuleMap = ({
               className={`border p-2 md:p-3 cursor-pointer transition
                 ${
                   slot1.saldo === 0
-                    ? "bg-slate-50 text-slate-400"
-                    : dense1
-                      ? "bg-blue-600 text-white"
-                      : "bg-blue-100 text-blue-900"
+                ? "bg-slate-50 text-slate-400"
+                : occupancy1.status === "over"
+                  ? "bg-red-500 text-white"
+                  : occupancy1.status === "warning"
+                    ? "bg-blue-600 text-white"
+                    : "bg-blue-100 text-blue-900"
                 }
                 ${
                   selected1
@@ -168,13 +177,15 @@ export const VerticalModuleMap = ({
               className={`border p-2 md:p-3 cursor-pointer transition
                 ${
                   slot2.saldo === 0
-                    ? "bg-slate-50 text-slate-400"
-                    : dense1
-                      ? "bg-blue-600 text-white"
-                      : "bg-blue-100 text-blue-900"
+              ? "bg-slate-50 text-slate-400"
+              : occupancy2.status === "over"
+                ? "bg-red-500 text-white"
+                : occupancy2.status === "warning"
+                  ? "bg-blue-600 text-white"
+                  : "bg-blue-100 text-blue-900"
                 }
                 ${
-                  selected1
+                  selected2
                     ? "ring-2 ring-blue-500 ring-offset-2"
                     : ""
                 }
@@ -182,7 +193,7 @@ export const VerticalModuleMap = ({
             >
           
               <div className="text-[10px] opacity-75">
-                {row.andar1}
+                {row.andar2}
               </div>
           
               <div className="font-black text-xs md:text-sm leading-tight">
