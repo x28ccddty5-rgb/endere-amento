@@ -1214,40 +1214,9 @@ if (
           d => d.status === "Aberta"
         ).length;
     
-      const overCapacity =
-        slots.filter(slot => {
+      const overCapacity = [];
     
-          const result =
-            getOccupancyStatus(
-              slot,
-              slot.estoque
-            );
-    
-          return result.status === "over";
-    
-        });
-    
-      const topOverCapacity =
-        overCapacity
-          .map(slot => {
-    
-            const result =
-              getOccupancyStatus(
-                slot,
-                slot.estoque
-              );
-    
-            return {
-              slot,
-              percentage: result.percentage
-            };
-    
-          })
-          .sort(
-            (a, b) =>
-              b.percentage - a.percentage
-          )
-          .slice(0, 3);
+      const topOverCapacity = [];
     
       const occupied =
         slots.filter(
