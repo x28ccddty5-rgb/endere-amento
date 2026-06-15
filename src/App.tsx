@@ -1440,9 +1440,125 @@ if (
             )
             .join("\n------------------------\n\n");
       
-      }
+        }
       
       }
+
+        else if (
+      lower.includes("plano")
+    ) {
+    
+      const opportunities: any[] = [];
+    
+      const skuMap: Record<
+        string,
+        {
+          saldo: number;
+          descricao: string;
+          posicoes: WarehouseSlot[];
+        }
+      > = {};
+    
+      slots.forEach(slot => {
+    
+        if (!slot.referencia || slot.saldo <= 0)
+          return;
+    
+        if (!skuMap[slot.referencia]) {
+    
+          skuMap[slot.referencia] = {
+            saldo: 0,
+            descricao: slot.descricao,
+            posicoes: []
+          };
+    
+        }
+    
+        skuMap[slot.referencia].saldo += slot.saldo;
+    
+        skuMap[slot.referencia].posicoes.push(slot);
+    
+      });
+    
+      Object.entries(skuMap).forEach(
+        ([sku, data]) => {
+    
+          if (data.posicoes.length < 2)
+            return;
+    
+          const produto =
+            productsList.find(
+              p => p.referencia === sku
+            );
+    
+          if (!produto?.paletizacao)
+            return;
+    
+          if (
+            data.saldo <= produto.paletizacao
+          ) {
+    
+            opportunities.push({
+              sku,
+              descricao: data.descricao,
+              saldo: data.saldo,
+              capacidade: produto.paletizacao,
+              posicoes: data.posicoes
+            });
+    
+          }
+    
+        }
+      );
+    
+      if (opportunities.length === 0) {
+    
+        responseText =
+          "Nenhuma oportunidade de consolidação encontrada.";
+    
+      } else {
+    
+        responseText =
+          `PLANO DE CONSOLIDAÇÃO\n\n`;
+    
+        opportunities.forEach(
+          (item, index) => {
+    
+            const destino =
+              item.posicoes[0];
+    
+            const origens =
+              item.posicoes.slice(1);
+    
+            responseText +=
+    
+              `${index + 1}) SKU ${item.sku}\n` +
+    
+              `${item.descricao}\n\n` +
+    
+              `Destino sugerido:\n` +
+    
+              `E${destino.estoque} • M${destino.modulo} • ${destino.posicao}\n\n` +
+    
+              `Mover de:\n` +
+    
+              origens
+                .map(
+                  (o: WarehouseSlot) =>
+                    `• E${o.estoque} • M${o.modulo} • ${o.posicao}`
+                )
+                .join("\n") +
+    
+              `\n\nGanho estimado: +${origens.length} posição(ões)\n\n` +
+    
+              `----------------------------\n\n`;
+    
+          }
+        );
+    
+      }
+    
+    }
           
       else if (lower.includes("item") || lower.includes("produto") || lower.includes("mais estocado") || lower.includes("maior saldo")) {
         const activeItemMap: Record<string, { qty: number, desc: string }> = {};
