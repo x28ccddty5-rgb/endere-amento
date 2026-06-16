@@ -21,7 +21,7 @@ export const BaseDeDadosPanel: React.FC<BaseDeDadosPanelProps> = ({
   const [newRef, setNewRef] = useState("");
   const [newDesc, setNewDesc] = useState("");
 
-  const isReadOnly = !hasAccess("Operador");
+  const isReadOnly = !canEditBase;
 
 const role =
   currentUser?.role
