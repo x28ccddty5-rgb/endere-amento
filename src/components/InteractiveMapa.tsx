@@ -355,7 +355,8 @@ if (estoque === "3") {
     };
   
   }
-  
+
+   // POSIÇÕES COM CAPACIDA <40% OU 2 PLACAS
   const specialLimits: Record<number, Record<string, number>> = {
 
     7: {
@@ -447,7 +448,7 @@ if (estoque === "2") {
 }
   
     // ======================================
-    // ESTOQUE 3 (B/D/F padrão)
+    // ESTOQUE 3 (B/D/F padrão 100% OU PALETIZAÇÃO)
     // ======================================
     
     if (occupancy <= 100) {
