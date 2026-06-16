@@ -343,7 +343,7 @@ if (estoque === "3") {
       percentage: occupancy,
       status:
         occupancy > limit
-          ? "over"
+          ? "warning"
           : "normal"
     };
   }
@@ -356,7 +356,7 @@ if (estoque === "3") {
       percentage: occupancy,
       status:
         occupancy > 100
-          ? "over"
+          ? "warning"
           : "normal"
     };
   }
@@ -386,24 +386,16 @@ if (estoque === "2") {
     // ======================================
     
     if (occupancy <= 100) {
-      return {
-        percentage: occupancy,
-        status: "normal"
-      };
-    }
-    
-    if (occupancy <= 120) {
-      return {
-        percentage: occupancy,
-        status: "warning"
-      };
-    }
-    
     return {
       percentage: occupancy,
-      status: "over"
+      status: "normal"
     };
-  };
+  }
+  
+    return {
+      percentage: occupancy,
+      status: "warning"
+    };
   
   // Handle slot selection
   const handleSelectSlot = (s: WarehouseSlot) => {
@@ -700,11 +692,6 @@ if (estoque === "2") {
                   cardColor =
                     "bg-blue-600 text-white border-blue-700 shadow-sm";
               
-                } else if (occupancy.status === "over") {
-              
-                  cardColor =
-                    "bg-red-500 text-white border-red-700 shadow-sm";
-              
                 }
               
               }
@@ -883,11 +870,6 @@ if (estoque === "2") {
                         cellBg =
                           "bg-blue-600 hover:opacity-90 text-white border-blue-700 font-bold";
                     
-                      } else if (occupancy.status === "over") {
-                    
-                        cellBg =
-                          "bg-red-500 hover:bg-red-600 text-white border-red-700 font-bold";
-                    
                       }
                     
                     }
@@ -947,12 +929,7 @@ if (estoque === "2") {
                         cellBg =
                           "bg-blue-600 hover:opacity-90 text-white border-blue-700 font-bold";
                     
-                      } else if (occupancy.status === "over") {
-                    
-                        cellBg =
-                          "bg-red-500 hover:bg-red-600 text-white border-red-700 font-bold";
-                    
-                      }
+                      } 
                     
                     }
                       if (isSelected) {
