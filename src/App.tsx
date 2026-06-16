@@ -2592,19 +2592,21 @@ const isReadOnly = normalizedRole !== "administrador";
                               <td className="py-3 px-4 truncate max-w-[200px]">
                                 {isOccupied ? s.descricao : <span className="text-slate-300 italic font-normal">Vaga desocupada</span>}
                               </td>
-                              <td className="py-3 px-4 text-right font-black pr-6">
-                                {isOccupied ? (
-                                 <span
-                                  className={`${
+                             <td className="py-3 px-4 text-right font-black pr-6">
+                              {isOccupied ? (
+                                <span
+                                  className={
                                     acimaPaletizacao
-                                      ? 'text-indigo-600'
-                                      : 'text-slate-800'
-                                  }`}
+                                      ? "text-indigo-600"
+                                      : "text-slate-800"
+                                  }
                                 >
                                   {s.saldo.toLocaleString()} pçs
                                 </span>
-                                )}
-                              </td>
+                              ) : (
+                                <span className="text-slate-300 font-normal">—</span>
+                              )}
+                            </td>
                               <td className="py-3 px-4 font-mono text-slate-550">{isOccupied ? (s.dataChacote || "—") : "—" }</td>
                               <td className="py-3 px-4 font-mono text-slate-500">{isOccupied ? s.ultimaData : "—"}</td>
                               <td className="py-3 px-4 font-mono text-slate-500">{isOccupied ? s.ultimaHora : "—"}</td>
