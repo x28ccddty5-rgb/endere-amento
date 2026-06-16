@@ -906,9 +906,16 @@ if (
             : cols[4]?.trim().toUpperCase() || "A1";
         
         const refRaw = cols[5]?.trim().toUpperCase();
-        const dataLancamento =
-  cols[1]?.trim() || launchDate;
-        
+        let dataLancamento = launchDate;
+
+if (cols[1]?.trim()) {
+  const partes = cols[1].trim().split("/");
+
+  if (partes.length === 3) {
+    dataLancamento =
+      `${partes[2]}-${partes[1]}-${partes[0]}`;
+  }
+}
         const qtyRaw = cols[7]?.trim().replace(/\./g, "");
         
         const typeRaw =
