@@ -343,6 +343,59 @@ useEffect(() => {
   return true;
 };
 
+    const updateProduct = async (
+  referencia: string,
+  descricao: string,
+  paletizacao: number
+): Promise<boolean> => {
+
+  const { error } = await supabase
+    .from("products")
+    .update({
+      descricao: descricao.trim(),
+      paletizacao
+    })
+    .eq("referencia", referencia);
+
+  if (error) {
+    console.error(error);
+    alert("Erro ao atualizar produto.");
+    return false;
+  }
+
+  await loadProductsFromSupabase();
+
+  alert("Produto atualizado com sucesso!");
+  return true;
+};
+
+const deleteProduct = async (
+  referencia: string
+): Promise<boolean> => {
+
+  const confirmDelete = window.confirm(
+    `Excluir referência ${referencia}?`
+  );
+
+  if (!confirmDelete) return false;
+
+  const { error } = await supabase
+    .from("products")
+    .delete()
+    .eq("referencia", referencia);
+
+  if (error) {
+    console.error(error);
+    alert("Erro ao excluir produto.");
+    return false;
+  }
+
+  await loadProductsFromSupabase();
+
+  alert("Produto excluído com sucesso!");
+  return true;
+};
+  
   // User Administration callbacks
   const handleRegisterUser = async (newUser: AppUser) => {
 
@@ -3352,11 +3405,13 @@ if (
           {/* TAB 6: BASE DE DADOS (References List and registering new ones) */}
           {activeTab === "base" && (
            <BaseDeDadosPanel
-            productsList={productsList}
-            slots={slots}
-            onRegisterProduct={registerNewProduct}
-            hasAccess={hasAccess}
-            currentUser={currentUser}
+             productsList={productsList}
+              slots={slots}
+              onRegisterProduct={registerNewProduct}
+              onUpdateProduct={updateProduct}
+              onDeleteProduct={deleteProduct}
+              hasAccess={hasAccess}
+              currentUser={currentUser}
           />
           )}
 
