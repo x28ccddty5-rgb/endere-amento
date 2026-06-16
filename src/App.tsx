@@ -2045,13 +2045,11 @@ if (
           )}
 
           {/* Render advanced sections if any advanced tab is accessible */}
-          {currentUser?.role === "administrador" &&
-           (canAccessTab("mapa") || canAccessTab("ai")) && (
+          {(canAccessTab("mapa") || canAccessTab("ai")) && (
             <>
               <span className="text-[9px] text-slate-500 font-extrabold block pt-4 pb-1.5 px-4 uppercase tracking-wider">Avançado & Controle</span>
 
-              {canAccessTab("mapa") &&
-             currentUser?.role === "administrador" && (
+              {canAccessTab("mapa") && (
                  <button
                   onClick={() => {
                     setAppMode("avancado");
