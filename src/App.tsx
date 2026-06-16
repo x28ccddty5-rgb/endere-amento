@@ -1,5 +1,6 @@
 import { useState, useEffect, FormEvent } from "react";
 import { jsPDF } from "jspdf";
+import autoTable from "jspdf-autotable";
 import { supabase } from './lib/supabase';
 import { 
   getInitialWarehouseSlots, 
@@ -987,46 +988,91 @@ if (
 
     
     const handleExportarEnderecamentoPDF = () => {
-     const doc = new jsPDF();
-    
-      doc.setFontSize(16);
-      doc.text("PORTO BRASIL", 10, 15);
-    
-      doc.setFontSize(12);
-      doc.text("Relatório de Endereçamento Filtrado", 10, 25);
-    
-      doc.setFontSize(8);
-      doc.text(
-        `Gerado em ${new Date().toLocaleString("pt-BR")}`,
-        10,
-        32
-      );
-    
-      let y = 45;
-    
-      filteredSlots.forEach((s) => {
-    
-        if (y > 270) {
-          doc.addPage();
-          y = 20;
-        }
-    
+
+        const doc = new jsPDF({
+          orientation: "landscape"
+        });
+      
+        doc.setFontSize(18);
+        doc.text("PORTO BRASIL", 14, 15);
+      
+        doc.setFontSize(11);
+        doc.text("Relatório de Endereçamento", 14, 23);
+      
+        doc.setFontSize(8);
         doc.text(
-          `E${s.estoque} | M${s.modulo} | ${s.posicao || "Corredor"} | ${s.referencia || "-"} | ${s.saldo} pçs`,
-          10,
-          y
+          `Gerado em ${new Date().toLocaleString("pt-BR")}`,
+          14,
+          30
         );
-    
-        y += 6;
-    
-      });
-    
-      doc.save(
-        `Enderecamento_${new Date()
-          .toISOString()
-          .slice(0,10)}.pdf`
-      );
-    };
+      
+        autoTable(doc, {
+          startY: 38,
+
+        didParseCell: (data) => {
+
+        if (data.section !== "body") return;
+      
+        const slot = filteredSlots[data.row.index];
+      
+        const produto = productsList.find(
+          p => p.referencia === slot.referencia
+        );
+      
+        const acimaPaletizacao =
+          produto?.paletizacao &&
+          slot.saldo > produto.paletizacao;
+      
+        if (acimaPaletizacao) {
+          data.cell.styles.fillColor = [219, 234, 254];
+        }
+      },
+          
+          head: [[
+            "Estoque",
+            "Módulo",
+            "Posição",
+            "SKU",
+            "Descrição",
+            "Saldo",
+            "Data Chacote",
+            "Última Mov.",
+            "Responsável"
+          ]],
+      
+          body: filteredSlots.map((s) => [
+            s.estoque,
+            s.modulo,
+            s.posicao || "-",
+            s.referencia || "-",
+            s.descricao || "-",
+            s.saldo.toLocaleString(),
+            s.dataChacote || "-",
+            s.ultimaData || "-",
+            s.ultimoResponsavel || "-"
+          ]),
+      
+          styles: {
+            fontSize: 7,
+            cellPadding: 2
+          },
+      
+          headStyles: {
+            fillColor: [37, 99, 235],
+            fontStyle: "bold"
+          },
+      
+          columnStyles: {
+            4: { cellWidth: 70 }, // descrição
+          }
+        });
+      
+        doc.save(
+          `Enderecamento_${new Date()
+            .toISOString()
+            .slice(0, 10)}.pdf`
+        );
+      };
   
   const handleExportarHistorico = () => {
     const headers = [
