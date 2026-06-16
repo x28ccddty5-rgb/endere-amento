@@ -379,7 +379,6 @@ if (estoque === "2") {
     percentage: occupancy,
     status: "warning"
   };
-}
 
     // ======================================
     // ESTOQUE 3 (B/D/F padrão)
