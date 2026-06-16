@@ -155,13 +155,13 @@ export const InteractiveMapa: React.FC<InteractiveMapaProps> = ({
 
   79: ["A1", "B1", "C1", "A2", "B2", "C2", "D2", "E2"],
   86: ["A1", "B1", "C1", "A2", "B2", "C2"],
-
+    
   89: ["A2", "B2", "C2", "D2", "E2"],
   90: ["A2", "B2", "C2", "D2", "E2"],
 
   93: ["A1", "B1", "C1", "A2", "B2", "C2"],
   100: ["A1", "B1", "C1", "A2", "B2", "C2"],
-
+    
   103: ["A2", "B2", "C2", "D2", "E2"],
   104: ["A2", "B2", "C2", "D2", "E2"],
 
@@ -281,7 +281,62 @@ export const InteractiveMapa: React.FC<InteractiveMapaProps> = ({
   const rua = slot.posicao[0];
 
   const modulo = Number(slot.modulo);
-  
+
+      const positionLimits: Record<string, number> = {
+
+  "2-F1": 40,
+  "3-F2": 40,
+
+  "8-G1": 40,
+  "9-G2": 40,
+
+  "12-F1": 40,
+  "13-F2": 40,
+
+  "15-F1": 40,
+  "17-F2": 40,
+
+  "20-F1": 40,
+  "21-F2": 40,
+
+  "23-F2": 40,
+
+  "25-F1": 40,
+  "26-F2": 40,
+
+  "32-F1": 40,
+  "33-F2": 40,
+
+  "76-F1": 40,
+  "77-F2": 40,
+
+  "83-F1": 40,
+  "84-F2": 40,
+
+  "86-F1": 40,
+
+  "90-F1": 40,
+  "91-F2": 40,
+
+  "97-F1": 40,
+  "98-F2": 40,
+
+  "102-F2": 40,
+
+  "104-F1": 40,
+  "105-F2": 40,
+
+  "109-F2": 40,
+
+  "111-F1": 40,
+  "112-F2": 40,
+};
+
+const positionKey =
+  `${modulo}-${slot.posicao}`;
+
+const specialPositionLimit =
+  positionLimits[positionKey];
 
   // ======================================
   // EXCEÇÕES ESTOQUE 3
@@ -289,6 +344,18 @@ export const InteractiveMapa: React.FC<InteractiveMapaProps> = ({
 
 if (estoque === "3") {
 
+    if (specialPositionLimit) {
+
+    return {
+      percentage: occupancy,
+      status:
+        occupancy > specialPositionLimit
+          ? "warning"
+          : "normal"
+    };
+  
+  }
+  
   const specialLimits: Record<number, Record<string, number>> = {
 
     7: {
@@ -309,7 +376,6 @@ if (estoque === "3") {
       D: 100,
       E: 120,
       F: 100,
-      G: 120,
     },
 
     9: {
@@ -319,7 +385,6 @@ if (estoque === "3") {
       D: 100,
       E: 100,
       F: 100,
-      G: 120,
     },
 
     24: {
@@ -623,8 +688,6 @@ if (estoque === "2") {
             <span className="w-3.5 h-3.5 bg-blue-100 border border-blue-200 rounded block"></span> Até 100% da capacidade </span>
           <span className="flex items-center gap-1.5">
             <span className="w-3.5 h-3.5 bg-blue-600 border border-blue-700 rounded block"></span> Faixa de tolerância (100%-120%) </span>
-          <span className="flex items-center gap-1.5">
-            <span className="w-3.5 h-3.5 bg-red-500 border border-red-700 rounded block"></span>Acima da capacidade</span>
         </div>
 
         {/* LAYOUT MAP VIEWER */}
