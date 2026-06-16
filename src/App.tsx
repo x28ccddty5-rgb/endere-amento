@@ -950,10 +950,44 @@ if (
       "Ultima_Movimentacao_Hora",
       "Ultimo_Responsavel"
     ];
+    
+    const rows = slots.map(s => [
+      s.id,
+      `E${s.estoque}`,
+      s.modulo,
+      s.posicao || "Corredor",
+      s.referencia || "",
+      s.descricao || "",
+      String(s.saldo),
+      s.dataChacote || "",
+      s.ultimaData || "",
+      s.ultimaHora || "",
+      s.ultimoResponsavel || ""
+    ]);
 
+    const csvContent = [
+      headers.join(";"),
+      ...rows.map(row => 
+        row.map(val => {
+          const cleanVal = val === null || val === undefined ? "" : String(val).replace(/"/g, '""');
+          return `"${cleanVal}"`;
+        }).join(";")
+      )
+    ].join("\n");
+
+    const blob = new Blob(["\uFEFF" + csvContent], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.setAttribute("href", url);
+    link.setAttribute("download", `enderecamento_porto_brasil_${new Date().toISOString().split('T')[0]}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
+    
     const handleExportarEnderecamentoPDF = () => {
-
-      const doc = new jsPDF();
+     const doc = new jsPDF();
     
       doc.setFontSize(16);
       doc.text("PORTO BRASIL", 10, 15);
@@ -993,41 +1027,7 @@ if (
           .slice(0,10)}.pdf`
       );
     };
-    
-    const rows = slots.map(s => [
-      s.id,
-      `E${s.estoque}`,
-      s.modulo,
-      s.posicao || "Corredor",
-      s.referencia || "",
-      s.descricao || "",
-      String(s.saldo),
-      s.dataChacote || "",
-      s.ultimaData || "",
-      s.ultimaHora || "",
-      s.ultimoResponsavel || ""
-    ]);
-
-    const csvContent = [
-      headers.join(";"),
-      ...rows.map(row => 
-        row.map(val => {
-          const cleanVal = val === null || val === undefined ? "" : String(val).replace(/"/g, '""');
-          return `"${cleanVal}"`;
-        }).join(";")
-      )
-    ].join("\n");
-
-    const blob = new Blob(["\uFEFF" + csvContent], { type: "text/csv;charset=utf-8;" });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.setAttribute("href", url);
-    link.setAttribute("download", `enderecamento_porto_brasil_${new Date().toISOString().split('T')[0]}.csv`);
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-  };
-
+  
   const handleExportarHistorico = () => {
     const headers = [
       "ID_Movimento",
