@@ -1898,8 +1898,8 @@ if (
 
     // Lideranca sees all except user administration & advanced twins/AI mode
     if (role === "lideranca") {
-      return !["users", "mapa", "ai"].includes(tab);
-    }
+    return tab !== "users";
+  }
 
     // Apoio sees all except user administration & advanced twins/AI mode
     if (role === "apoio") {
