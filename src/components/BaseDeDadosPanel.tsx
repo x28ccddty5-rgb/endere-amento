@@ -5,8 +5,26 @@ import { Database, Search, PlusCircle, ShieldAlert, Check } from "lucide-react";
 interface BaseDeDadosPanelProps {
   productsList: Product[];
   slots: WarehouseSlot[];
-  onRegisterProduct: (ref: string, desc: string) => Promise<boolean>;
-  hasAccess: (level: "administrador" | "operador" | "consulta") => boolean;
+
+  onRegisterProduct: (
+    ref: string,
+    desc: string
+  ) => Promise<boolean>;
+
+  onUpdateProduct: (
+    referencia: string,
+    descricao: string,
+    paletizacao: number
+  ) => Promise<boolean>;
+
+  onDeleteProduct: (
+    referencia: string
+  ) => Promise<boolean>;
+
+  hasAccess: (
+    level: "administrador" | "operador" | "consulta"
+  ) => boolean;
+
   currentUser: any;
 }
 
@@ -14,6 +32,8 @@ export const BaseDeDadosPanel: React.FC<BaseDeDadosPanelProps> = ({
   productsList,
   slots,
   onRegisterProduct,
+  onUpdateProduct,
+  onDeleteProduct,
   hasAccess,
   currentUser,
 }) => {
@@ -194,6 +214,50 @@ const canEditBase =
                             Sem estoque
                           </span>
                         )}
+                          {canEditBase && (
+                            <>
+                              <button
+                                onClick={() => {
+                          
+                                  const novaDescricao = prompt(
+                                    "Nova descrição:",
+                                    p.descricao
+                                  );
+                          
+                                  const novaPaletizacao = prompt(
+                                    "Nova paletização:",
+                                    String(p.paletizacao || 0)
+                                  );
+                          
+                                  if (
+                                    novaDescricao &&
+                                    novaPaletizacao
+                                  ) {
+                                    onUpdateProduct(
+                                      p.referencia,
+                                      novaDescricao,
+                                      Number(novaPaletizacao)
+                                    );
+                                  }
+                                }}
+                                className="bg-blue-100 text-blue-700 border border-blue-200 text-[10px] font-black px-2 py-1 rounded-md"
+                              >
+                                Editar
+                              </button>
+                          
+                              <button
+                                onClick={() =>
+                                  onDeleteProduct(
+                                    p.referencia
+                                  )
+                                }
+                                className="bg-red-100 text-red-700 border border-red-200 text-[10px] font-black px-2 py-1 rounded-md"
+                              >
+                                Excluir
+                              </button>
+                            </>
+                          )}
+                        
                       </div>
                     </div>
                   );
