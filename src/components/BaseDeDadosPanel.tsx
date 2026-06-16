@@ -8,7 +8,8 @@ interface BaseDeDadosPanelProps {
 
   onRegisterProduct: (
     ref: string,
-    desc: string
+    desc: string,
+    paletizacao: number
   ) => Promise<boolean>;
 
   onUpdateProduct: (
@@ -40,6 +41,7 @@ export const BaseDeDadosPanel: React.FC<BaseDeDadosPanelProps> = ({
   const [searchQuery, setSearchQuery] = useState("");
   const [newRef, setNewRef] = useState("");
   const [newDesc, setNewDesc] = useState("");
+  const [newPaletizacao, setNewPaletizacao] = useState("");
 
 const role =
   currentUser?.role
@@ -78,7 +80,11 @@ const canEditBase =
       return;
     }
 
-    const success = await onRegisterProduct(cleanRef, desc);
+    const success = await onRegisterProduct(
+      cleanRef,
+      desc,
+      Number(newPaletizacao)
+    );
     if (success) {
       setNewRef("");
       setNewDesc("");
@@ -153,6 +159,22 @@ const canEditBase =
                     onChange={(e) => setNewDesc(e.target.value)}
                     placeholder="Ex: RASO MONACO COK INCOLOR"
                     className="w-full bg-white border border-slate-300 rounded p-2 text-xs font-bold uppercase focus:ring-1 focus:ring-indigo-500 focus:outline-none text-slate-800"
+                  />
+                </div>
+                
+                <div>
+                  <label className="text-[10px] text-slate-500 font-bold uppercase block mb-1">
+                    Paletização
+                  </label>
+                
+                  <input
+                    type="number"
+                    value={newPaletizacao}
+                    onChange={(e) =>
+                      setNewPaletizacao(e.target.value)
+                    }
+                    placeholder="Ex: 648"
+                    className="w-full bg-white border border-slate-300 rounded p-2 text-xs font-bold"
                   />
                 </div>
 
