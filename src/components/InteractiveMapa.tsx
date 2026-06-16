@@ -379,7 +379,8 @@ if (estoque === "2") {
     percentage: occupancy,
     status: "warning"
   };
-
+}
+  
     // ======================================
     // ESTOQUE 3 (B/D/F padrão)
     // ======================================
@@ -395,6 +396,7 @@ if (estoque === "2") {
       percentage: occupancy,
       status: "warning"
     };
+  }
   
   // Handle slot selection
   const handleSelectSlot = (s: WarehouseSlot) => {
