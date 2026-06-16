@@ -879,37 +879,74 @@ if (
     }
 
     const lines = bulkText.split("\n").filter(l => l.trim() !== "");
+    const dataLines = lines.filter(
+  line =>
+    !line
+      .toLowerCase()
+      .includes("linha")
+);
     const newRows: LancamentoRow[] = [];
 
-    lines.forEach((line) => {
+    dataLines.forEach((line) => {
       const cols = line.split(/[;\t]/);
       if (cols.length >= 3) {
-        const refRaw = cols[0]?.trim().toUpperCase();
-        const qtyRaw = cols[1]?.trim();
-        const typeRaw = cols[2]?.trim().toLowerCase();
+        // Layout novo exportado pelo Excel
+
+        let estVal = `E${cols[2]?.trim()}`.toUpperCase();
         
-        let estVal = cols[3]?.trim().toUpperCase() || "E1";
-        if (!["E1", "E2", "E3"].includes(estVal)) estVal = "E1";
-
-        let modRaw = cols[4]?.trim() || (estVal === "E1" ? "11" : "1");
+        if (!["E1", "E2", "E3"].includes(estVal))
+          estVal = "E1";
+        
+        const modRaw = cols[3]?.trim() || "1";
         const modVal = modRaw.replace(/\D/g, "");
-        const posVal = estVal === "E1" ? "" : cols[5]?.trim().toUpperCase() || "A1";
+        
+        const posVal =
+          estVal === "E1"
+            ? ""
+            : cols[4]?.trim().toUpperCase() || "A1";
+        
+        const refRaw = cols[5]?.trim().toUpperCase();
+        
+        const qtyRaw = cols[7]?.trim();
+        
+        const typeRaw =
+  cols[8]?.trim().toLowerCase() || "entrada";
 
-        if (refRaw) {
-          newRows.push({
-            id: `ROW-${generateId()}`,
-            data: launchDate,
-            estoque: estVal,
-            modulo: modVal,
-            posicao: posVal,
-            referencia: refRaw,
-            quantidade: parseInt(qtyRaw) || 100,
-            tipo: typeRaw.includes("sai") || typeRaw.includes("baixa") ? "Saída" : "Entrada",
-            dataChacote: cols[6]?.trim() || "",
-            hora: cols[7]?.trim() || new Date().toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" }),
-            responsavel: cols[8]?.trim() || operator
-          });
-        }
+const dataChacote =
+  cols[9]?.trim() || "";
+
+const hora =
+  cols[10]?.trim() ||
+  new Date().toLocaleTimeString(
+    "pt-BR",
+    {
+      hour: "2-digit",
+      minute: "2-digit",
+    }
+  );
+
+const responsavel =
+  cols[11]?.trim() || operator;
+
+if (refRaw) {
+  newRows.push({
+    id: `ROW-${generateId()}`,
+    data: launchDate,
+    estoque: estVal,
+    modulo: modVal,
+    posicao: posVal,
+    referencia: refRaw,
+    quantidade: parseInt(qtyRaw) || 100,
+    tipo:
+      typeRaw.includes("sai") ||
+      typeRaw.includes("baixa")
+        ? "Saída"
+        : "Entrada",
+    dataChacote,
+    hora,
+    responsavel,
+   });
+}
       }
     });
 
