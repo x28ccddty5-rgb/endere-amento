@@ -1,4 +1,6 @@
 import React, { useState } from "react";
+import jsPDF from "jspdf";
+import autoTable from "jspdf-autotable";
 import { Divergencia, WarehouseSlot, Product, HistoricoMov } from "../types";
 import { AlertOctagon, Printer, FileSpreadsheet, Lock, Sparkles, Check, Trash2 } from "lucide-react";
 import { generateId } from "../data/mockStorage";
@@ -265,6 +267,79 @@ alert(
     document.body.removeChild(link);
   };
 
+    const handlePrintPDF = () => {
+
+    const doc = new jsPDF({
+      orientation: "landscape"
+    });
+  
+    doc.setFontSize(16);
+    doc.text(
+      "RELATÓRIO DE DIVERGÊNCIAS DE ESTOQUE",
+      14,
+      15
+    );
+  
+    doc.setFontSize(8);
+    doc.text(
+      `Gerado em ${new Date().toLocaleString("pt-BR")}`,
+      14,
+      22
+    );
+  
+    autoTable(doc, {
+      startY: 30,
+
+      didParseCell: (data) => {
+
+      if (data.section !== "body") return;
+    
+      const row = groupedDivergencias[data.row.index];
+    
+      if (row.status === "Aberta") {
+        data.cell.styles.fillColor = [254, 242, 242];
+      }
+    
+    },
+      
+      head: [[
+        "Protocolo",
+        "Data",
+        "Motivo",
+        "Estoque",
+        "Módulo",
+        "Posição",
+        "Qtd",
+        "SKU Confl.",
+        "SKU Corr.",
+        "Saldo",
+        "Agente",
+        "Status"
+      ]],
+  
+      body: groupedDivergencias.map((d: any) => [
+        d.id,
+        d.dataDivergencia,
+        d.tipoDivergencia,
+        d.estoque,
+        d.modulo,
+        d.posicao || "-",
+        d.qtdDivergencias,
+        d.refAtual || "-",
+        d.refNova || "-",
+        d.movimentacao,
+        d.responsavel,
+        d.status
+      ])
+    });
+  
+    doc.save(
+      `Divergencias_${new Date()
+        .toISOString()
+        .slice(0,10)}.pdf`
+    );
+  };
+  
   const handlePrint = () => {
 
   const printContent = document.getElementById("divergencias-print");
@@ -279,29 +354,61 @@ alert(
     <html>
       <head>
         <title>Relatório de Divergências</title>
-        <style>
-          body {
+       <style>
+
+          body{
             font-family: Arial, sans-serif;
-            padding: 20px;
+            padding:20px;
           }
-
-          table {
-            width: 100%;
-            border-collapse: collapse;
+          
+          h1{
+            margin-bottom:20px;
           }
-
-          th, td {
-            border: 1px solid #ccc;
-            padding: 8px;
-            text-align: left;
+          
+          table{
+            width:100%;
+            border-collapse:collapse;
+            font-size:11px;
           }
-
-          th {
-            background: #f5f5f5;
+          
+          thead tr{
+            background:#f1f5f9;
           }
-        </style>
+          
+          th{
+            padding:10px;
+            border:1px solid #cbd5e1;
+            text-transform:uppercase;
+            font-size:9px;
+            font-weight:700;
+          }
+          
+          td{
+            padding:8px;
+            border:1px solid #e2e8f0;
+          }
+          
+          tr:nth-child(even){
+            background:#fafafa;
+          }
+          
+          .no-print{
+            display:none !important;
+          }
+          
+          </style>
       </head>
       <body>
+          <h1>
+          RELATÓRIO DE DIVERGÊNCIAS DE ESTOQUE
+        </h1>
+        
+        <p>
+          Gerado em ${new Date().toLocaleString("pt-BR")}
+        </p>
+        
+        <hr style="margin:15px 0;">
+      
         ${printContent.innerHTML}
       </body>
     </html>
@@ -365,10 +472,10 @@ const tempoMedio =
               <FileSpreadsheet className="w-4 h-4" /> Exportar Excel
             </button>
             <button
-              onClick={handlePrint}
+              onClick={handlePrintPDF}
               className="bg-slate-55 bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-300 rounded-lg px-3.5 py-2 text-xs font-bold transition flex items-center gap-1.5 cursor-pointer uppercase tracking-wider"
             >
-              <Printer className="w-4 h-4" /> Imprimir Ficha
+              <Printer className="w-4 h-4" /> Exportar PDF
             </button>
           </div>
         </div>
