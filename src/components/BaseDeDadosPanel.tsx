@@ -181,6 +181,10 @@ const canEditBase =
                       </div>
 
                       <div className="shrink-0 flex items-center gap-2">
+                        <span className="bg-blue-50 text-blue-800 border border-blue-200 text-[10px] font-black px-2.5 py-1 rounded-md">
+                          Paletização: {p.paletizacao ?? 0}
+                        </span>
+
                         {countBalance > 0 ? (
                           <span className="bg-emerald-50 text-emerald-800 border border-emerald-200 text-[10px] font-black px-2.5 py-1 rounded-md">
                             Saldo: {countBalance.toLocaleString()} pçs
