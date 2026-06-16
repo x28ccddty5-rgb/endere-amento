@@ -1,6 +1,7 @@
 import { useState, useEffect, FormEvent } from "react";
 import { jsPDF } from "jspdf";
 import autoTable from "jspdf-autotable";
+import * as XLSX from "xlsx";
 import { supabase } from './lib/supabase';
 import { 
   getInitialWarehouseSlots, 
@@ -926,16 +927,41 @@ if (
   };
 
   const handleExportarLayout = () => {
-    const headers = "Referencia SKU;Quantidade;Tipo;Estoque;Modulo/Rua;Posicao;Data Chacote;Hora;Responsavel";
-    const exampleRow = `092;1500;Entrada;E1;11;;;${new Date().toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })};${operator}`;
-    const csvContent = "data:text/csv;charset=utf-8,\uFEFF" + encodeURIComponent(`${headers}\n${exampleRow}`);
-    const link = document.createElement("a");
-    link.setAttribute("href", csvContent);
-    link.setAttribute("download", "layout_porto_brasil.csv");
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-  };
+  const data = [
+    {
+      Linha: 1,
+      Data_Lancamento: new Date().toLocaleDateString("pt-BR"),
+      Estoque: 3,
+      Rua: 26,
+      Posicao: "A1",
+      SKU: "23101G",
+      Descricao: "",
+      Quant_PCS: 360,
+      Tipo: "Entrada",
+      Data_Chacote: "",
+      Hora: new Date().toLocaleTimeString("pt-BR", {
+        hour: "2-digit",
+        minute: "2-digit",
+      }),
+      Responsavel: operator,
+    },
+  ];
+
+  const worksheet = XLSX.utils.json_to_sheet(data);
+
+  const workbook = XLSX.utils.book_new();
+
+  XLSX.utils.book_append_sheet(
+    workbook,
+    worksheet,
+    "Lançamentos"
+  );
+
+  XLSX.writeFile(
+    workbook,
+    "layout_porto_brasil.xlsx"
+  );
+};
 
   const handleExportarEnderecamento = () => {
     const headers = [
