@@ -1901,11 +1901,13 @@ if (
         .normalize("NFD")
         .replace(/[\u0300-\u036f]/g, "");
   
-      const isReadOnly =
-      currentUser?.role
-      ?.toLowerCase()
-      .normalize("NFD")
-      .replace(/[\u0300-\u036f]/g, "") === "visualizador";
+      const normalizedRole =
+  currentUser?.role
+    ?.toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "") || "";
+
+const isReadOnly = normalizedRole !== "administrador";
   
   // Helper validation roles and permissions check
   const hasAccess = (requiredLevel: "administrador" | "operador" | "consulta"): boolean => {
@@ -2653,7 +2655,17 @@ if (
                       Lançador Operacional
                     </span>
 
+                    {isReadOnly ? (
+                    <div className="space-y-3">
+                      <div className="border border-red-200 bg-red-50 rounded-lg p-4">
+                        <p className="text-xs font-bold text-red-700 leading-relaxed">
+                          Apenas contas Administrador podem realizar movimentações de estoque.
+                        </p>
+                      </div>
+                    </div>
+                  ) : (
                     <div className="space-y-3 font-sans">
+                      
                       <div>
                         <label className="text-[10px] text-slate-450 block font-bold mb-1 uppercase">Selecionar Estoque</label>
                         <select
@@ -2767,6 +2779,7 @@ if (
                         </button>
                       </div>
                     </div>
+                    )}
                   </div>
 
                   {/* Right Column - Slots listing or active sessional slots */}
