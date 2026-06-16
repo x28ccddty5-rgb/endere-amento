@@ -2566,6 +2566,15 @@ const isReadOnly = normalizedRole !== "administrador";
                       {filteredSlots.length > 0 ? (
                         filteredSlots.map((s) => {
                           const isOccupied = s.saldo > 0;
+                        
+                          const produto = productsList.find(
+                            p => p.referencia === s.referencia
+                          );
+                        
+                          const acimaPaletizacao =
+                            produto?.paletizacao &&
+                            s.saldo > produto.paletizacao;
+                        
                           return (
                             <tr key={s.id} className="hover:bg-slate-50 border-b border-slate-100">
                               <td className="py-3 px-4 font-black text-blue-600 font-mono">{s.estoque.replace("E", "")}</td>
@@ -2585,9 +2594,15 @@ const isReadOnly = normalizedRole !== "administrador";
                               </td>
                               <td className="py-3 px-4 text-right font-black pr-6">
                                 {isOccupied ? (
-                                  <span className={`${s.saldo >= 1000 ? 'text-indigo-600' : 'text-slate-800'}`}>{s.saldo.toLocaleString()} pçs</span>
-                                ) : (
-                                  <span className="text-slate-300 font-normal">—</span>
+                                 <span
+                                  className={`${
+                                    acimaPaletizacao
+                                      ? 'text-indigo-600'
+                                      : 'text-slate-800'
+                                  }`}
+                                >
+                                  {s.saldo.toLocaleString()} pçs
+                                </span>
                                 )}
                               </td>
                               <td className="py-3 px-4 font-mono text-slate-550">{isOccupied ? (s.dataChacote || "—") : "—" }</td>
