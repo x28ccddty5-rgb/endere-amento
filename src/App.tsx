@@ -312,7 +312,12 @@ useEffect(() => {
 };
   
   // Save changes to custom references list
-  const registerNewProduct = async (ref: string, desc: string): Promise<boolean> => {
+  const registerNewProduct = async (
+    ref: string,
+    desc: string,
+    paletizacao: number
+  ): Promise<boolean> => {
+    
   const code = ref.trim().toUpperCase();
 
   if (!code || !desc.trim()) return false;
@@ -327,7 +332,8 @@ useEffect(() => {
     .insert([
       {
         referencia: code,
-        descricao: desc.trim()
+        descricao: desc.trim(),
+        paletizacao
       }
     ]);
 
