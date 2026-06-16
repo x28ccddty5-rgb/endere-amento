@@ -519,6 +519,8 @@ const deleteProduct = async (
   const [searchModulo, setSearchModulo] = useState("");
   const [searchPosicao, setSearchPosicao] = useState("");
 
+  const [somenteAcimaPaletizacao, setSomenteAcimaPaletizacao] = useState(false);
+
   // Base Products Catalog Filters
   const [baseSearch, setBaseSearch] = useState("");
 
@@ -1236,6 +1238,21 @@ if (
         )
       : true;
 
+      if (somenteAcimaPaletizacao) {
+
+        const produto = productsList.find(
+          p => p.referencia === s.referencia
+        );
+      
+        if (
+          !produto?.paletizacao ||
+          s.saldo <= produto.paletizacao
+        ) {
+          return false;
+        }
+      
+      }
+    
     return matchesRef && matchesDesc && matchesEstoque && matchesModulo && matchesPosicao;
   });
   
@@ -2464,6 +2481,20 @@ const isReadOnly = normalizedRole !== "administrador";
                         </select>
                       </div>
 
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="checkbox"
+                          checked={somenteAcimaPaletizacao}
+                          onChange={(e) =>
+                            setSomenteAcimaPaletizacao(e.target.checked)
+                          }
+                        />
+                      
+                        <label className="text-xs font-bold text-indigo-600">
+                          Apenas acima da paletização
+                        </label>
+                      </div>
+                      
                       <div>
                         <label className="text-[10px] text-slate-450 font-bold block uppercase mb-1">Módulo / Rua</label>
                         <input 
