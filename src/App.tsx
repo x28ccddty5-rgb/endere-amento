@@ -1418,24 +1418,35 @@ if (
         productsList.find(
           p => p.referencia === sku
         );
-
+      
       if (!produto?.paletizacao)
         return;
-
-      if (
-        data.saldo <= produto.paletizacao
-      ) {
-
+      
+      const posicoesNecessarias =
+        Math.ceil(
+          data.saldo / produto.paletizacao
+        );
+      
+      const posicoesAtuais =
+        data.posicoes.length;
+      
+      const ganho =
+        posicoesAtuais -
+        posicoesNecessarias;
+      
+      if (ganho > 0) {
+      
         opportunities.push({
           sku,
           descricao: data.descricao,
           saldo: data.saldo,
           capacidade: produto.paletizacao,
-          posicoes: data.posicoes
+          posicoes: data.posicoes,
+          posicoesNecessarias,
+          ganho
         });
-
+      
       }
-
     }
   );
 
@@ -1443,7 +1454,9 @@ if (
     (item, index) => {
 
       const destino =
-        item.posicoes[0];
+      [...item.posicoes].sort(
+        (a, b) => b.saldo - a.saldo
+      )[0];
 
       const origens =
         item.posicoes.slice(1);
@@ -1729,6 +1742,10 @@ if (
           }
     
         }
+        opportunities.sort(
+      (a, b) => b.ganho - a.ganho
+    );
+          
       );
   
         if (opportunities.length === 0) {
@@ -1865,13 +1882,21 @@ if (
             const origens =
               item.posicoes.slice(1);
     
-            responseText +=
-    
-              `${index + 1}) SKU ${item.sku}\n` +
-    
-              `${item.descricao}\n\n` +
-    
-              `Destino sugerido:\n` +
+           responseText +=
+
+            `${index + 1}) SKU ${item.sku}\n` +
+          
+            `${item.descricao}\n\n` +
+          
+            `Saldo total: ${item.saldo}\n` +
+          
+            `Paletização: ${item.capacidade}\n\n` +
+          
+            `Posições atuais: ${item.posicoes.length}\n` +
+          
+            `Posições necessárias: ${item.posicoesNecessarias}\n\n` +
+          
+            `Destino sugerido:\n` +
     
               `E${destino.estoque} • M${destino.modulo} • ${destino.posicao}\n\n` +
     
@@ -1884,7 +1909,7 @@ if (
                 )
                 .join("\n") +
     
-              `\n\nGanho estimado: +${origens.length} posição(ões)\n\n` +
+              `\n\nGanho estimado: +${item.ganho} posição(ões)\n\n` +
     
               `----------------------------\n\n`;
     
