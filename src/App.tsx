@@ -906,11 +906,17 @@ if (
             : cols[4]?.trim().toUpperCase() || "A1";
         
         const refRaw = cols[5]?.trim().toUpperCase();
+        const dataLancamento =
+  cols[1]?.trim() || launchDate;
         
-        const qtyRaw = cols[7]?.trim();
+        const qtyRaw = cols[7]?.trim().replace(/\./g, "");
         
         const typeRaw =
   cols[8]?.trim().toLowerCase() || "entrada";
+        
+        const tipoNormalizado = typeRaw
+  .normalize("NFD")
+  .replace(/[\u0300-\u036f]/g, "");
 
 const dataChacote =
   cols[9]?.trim() || "";
@@ -931,21 +937,22 @@ const responsavel =
 if (refRaw) {
   newRows.push({
     id: `ROW-${generateId()}`,
-    data: launchDate,
+    data: dataLancamento,
     estoque: estVal,
     modulo: modVal,
     posicao: posVal,
     referencia: refRaw,
     quantidade: parseInt(qtyRaw) || 100,
     tipo:
-      typeRaw.includes("sai") ||
-      typeRaw.includes("baixa")
+      tipoNormalizado === "saida" ||
+      tipoNormalizado.includes("saida") ||
+      tipoNormalizado.includes("baixa")
         ? "Saída"
         : "Entrada",
     dataChacote,
     hora,
     responsavel,
-   });
+  });
 }
       }
     });
