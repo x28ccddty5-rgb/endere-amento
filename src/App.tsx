@@ -951,6 +951,49 @@ if (
       "Ultimo_Responsavel"
     ];
 
+    const handleExportarEnderecamentoPDF = () => {
+
+      const doc = new jsPDF();
+    
+      doc.setFontSize(16);
+      doc.text("PORTO BRASIL", 10, 15);
+    
+      doc.setFontSize(12);
+      doc.text("Relatório de Endereçamento Filtrado", 10, 25);
+    
+      doc.setFontSize(8);
+      doc.text(
+        `Gerado em ${new Date().toLocaleString("pt-BR")}`,
+        10,
+        32
+      );
+    
+      let y = 45;
+    
+      filteredSlots.forEach((s) => {
+    
+        if (y > 270) {
+          doc.addPage();
+          y = 20;
+        }
+    
+        doc.text(
+          `E${s.estoque} | M${s.modulo} | ${s.posicao || "Corredor"} | ${s.referencia || "-"} | ${s.saldo} pçs`,
+          10,
+          y
+        );
+    
+        y += 6;
+    
+      });
+    
+      doc.save(
+        `Enderecamento_${new Date()
+          .toISOString()
+          .slice(0,10)}.pdf`
+      );
+    };
+    
     const rows = slots.map(s => [
       s.id,
       `E${s.estoque}`,
@@ -2449,6 +2492,12 @@ const isReadOnly = normalizedRole !== "administrador";
                       className="text-xs text-slate-400 hover:text-blue-600 transition font-medium cursor-pointer font-sans uppercase tracking-wider text-[11px]"
                     >
                       Limpar Filtros
+                    </button>
+                    <button
+                      onClick={handleExportarEnderecamentoPDF}
+                      className="bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-lg text-xs font-bold"
+                    >
+                      Exportar PDF
                     </button>
                   </div>
                 </div>
