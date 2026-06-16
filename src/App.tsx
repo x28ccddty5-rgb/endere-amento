@@ -1710,45 +1710,45 @@ if (
     
       });
     
-      Object.entries(skuMap).forEach(
-        ([sku, data]) => {
+     Object.entries(skuMap).forEach(
+      ([sku, data]) => {
     
-          if (data.posicoes.length < 2)
-            return;
+        if (data.posicoes.length < 2)
+          return;
     
-          const produto =
-            productsList.find(
-              p => p.referencia === sku
-            );
+        const produto =
+          productsList.find(
+            p => p.referencia === sku
+          );
     
-          if (!produto?.paletizacao)
-            return;
+        if (!produto?.paletizacao)
+          return;
     
-          if (
-            data.saldo <=
-            produto.paletizacao
-          ) {
+        if (
+          data.saldo <=
+          produto.paletizacao
+        ) {
     
-            opportunities.push({
-              sku,
-              descricao: data.descricao,
-              saldo: data.saldo,
-              capacidade:
-                produto.paletizacao,
-              posicoes:
-                data.posicoes
-            });
-    
-          }
+          opportunities.push({
+            sku,
+            descricao: data.descricao,
+            saldo: data.saldo,
+            capacidade:
+              produto.paletizacao,
+            posicoes:
+              data.posicoes
+          });
     
         }
-        opportunities.sort(
+    
+      }
+    );
+    
+    opportunities.sort(
       (a, b) => b.ganho - a.ganho
     );
-          
-      );
-  
-        if (opportunities.length === 0) {
+    
+    if (opportunities.length === 0) {
 
         responseText =
           "Nenhuma oportunidade de consolidação foi encontrada.";
