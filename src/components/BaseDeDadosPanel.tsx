@@ -21,8 +21,6 @@ export const BaseDeDadosPanel: React.FC<BaseDeDadosPanelProps> = ({
   const [newRef, setNewRef] = useState("");
   const [newDesc, setNewDesc] = useState("");
 
-  const isReadOnly = !canEditBase;
-
 const role =
   currentUser?.role
     ?.toLowerCase()
@@ -33,6 +31,8 @@ const canEditBase =
   role === "administrador" ||
   role === "lideranca";
 
+    const isReadOnly = !canEditBase;
+  
   const filteredProducts = productsList.filter((p) => {
     const q = searchQuery.toLowerCase();
     const refMatch = p.referencia.toLowerCase() === q;
