@@ -1526,7 +1526,7 @@ if (refRaw) {
       }
     }
   );
-
+  
   opportunities.forEach(
     (item, index) => {
 
@@ -1573,7 +1573,7 @@ if (refRaw) {
       y += 6;
 
       doc.text(
-        `Ganho estimado: +${origens.length} posicoes`,
+        `Ganho estimado: +${item.ganho} posicoes`,
         10,
         y
       );
@@ -1801,10 +1801,20 @@ if (refRaw) {
         if (!produto?.paletizacao)
           return;
     
-        if (
-          data.saldo <=
-          produto.paletizacao
-        ) {
+        const posicoesNecessarias =
+          Math.ceil(
+            data.saldo /
+            produto.paletizacao
+          );
+    
+        const posicoesAtuais =
+          data.posicoes.length;
+    
+        const ganho =
+          posicoesAtuais -
+          posicoesNecessarias;
+    
+        if (ganho > 0) {
     
           opportunities.push({
             sku,
@@ -1813,7 +1823,9 @@ if (refRaw) {
             capacidade:
               produto.paletizacao,
             posicoes:
-              data.posicoes
+              data.posicoes,
+            posicoesNecessarias,
+            ganho
           });
     
         }
@@ -1824,7 +1836,7 @@ if (refRaw) {
     opportunities.sort(
       (a, b) => b.ganho - a.ganho
     );
-    
+          
     if (opportunities.length === 0) {
 
         responseText =
@@ -1911,32 +1923,47 @@ if (refRaw) {
     
       Object.entries(skuMap).forEach(
         ([sku, data]) => {
-    
+      
           if (data.posicoes.length < 2)
             return;
-    
+      
           const produto =
             productsList.find(
               p => p.referencia === sku
             );
-    
+      
           if (!produto?.paletizacao)
             return;
-    
-          if (
-            data.saldo <= produto.paletizacao
-          ) {
-    
+      
+          const posicoesNecessarias =
+            Math.ceil(
+              data.saldo /
+              produto.paletizacao
+            );
+      
+          const posicoesAtuais =
+            data.posicoes.length;
+      
+          const ganho =
+            posicoesAtuais -
+            posicoesNecessarias;
+      
+          if (ganho > 0) {
+      
             opportunities.push({
               sku,
               descricao: data.descricao,
               saldo: data.saldo,
-              capacidade: produto.paletizacao,
-              posicoes: data.posicoes
+              capacidade:
+                produto.paletizacao,
+              posicoes:
+                data.posicoes,
+              posicoesNecessarias,
+              ganho
             });
-    
+      
           }
-    
+      
         }
       );
     
@@ -1954,7 +1981,9 @@ if (refRaw) {
           (item, index) => {
     
             const destino =
-              item.posicoes[0];
+            [...item.posicoes].sort(
+              (a, b) => b.saldo - a.saldo
+            )[0];
     
             const origens =
               item.posicoes.slice(1);
