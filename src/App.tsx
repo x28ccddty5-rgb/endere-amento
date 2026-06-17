@@ -1600,12 +1600,31 @@ if (refRaw) {
 
       }
 
-      doc.setFontSize(11);
-
+      doc.setFont(
+        "helvetica",
+        "bold"
+      );
+      
+      doc.setFontSize(12);
+      
       doc.text(
         `${index + 1}) SKU ${item.sku}`,
         10,
         y
+      );
+
+      doc.line(
+        10,
+        y,
+        200,
+        y
+      );
+      
+      y += 6;
+      
+      doc.setFont(
+        "helvetica",
+        "normal"
       );
 
       y += 6;
@@ -1650,32 +1669,20 @@ if (refRaw) {
       
       y += 8;
       
+     doc.setFont(
+        "helvetica",
+        "bold"
+      );
+      
       doc.text(
-        "DESTINOS:",
+        "MOVIMENTACOES",
         10,
         y
       );
       
-      y += 6;
-      
-      destinosComCapacidade.forEach(d => {
-      
-        doc.text(
-          `E${d.slot.estoque} M${d.slot.modulo} ${d.slot.posicao} -> Saldo final: ${d.saldoFinal}`,
-          15,
-          y
-        );
-      
-        y += 6;
-      
-      });
-      
-      y += 3;
-      
-      doc.text(
-        "MOVIMENTACOES:",
-        10,
-        y
+      doc.setFont(
+        "helvetica",
+        "normal"
       );
       
       y += 6;
@@ -1694,10 +1701,20 @@ if (refRaw) {
       
       y += 3;
       
+      doc.setFont(
+        "helvetica",
+        "bold"
+      );
+      
       doc.text(
-        "POSICOES LIBERADAS:",
+        "POSICOES LIBERADAS",
         10,
         y
+      );
+      
+      doc.setFont(
+        "helvetica",
+        "normal"
       );
       
       y += 6;
@@ -1714,14 +1731,33 @@ if (refRaw) {
       
       });
       
+      doc.setFont(
+        "helvetica",
+        "bold"
+      );
+      
       doc.text(
-        `Ganho estimado: +${item.ganho} posicoes`,
+        `GANHO ESTIMADO: +${item.ganho} POSICOES`,
         10,
         y
       );
       
+      doc.setFont(
+        "helvetica",
+        "normal"
+      );
+      
       y += 8;
 
+      doc.line(
+        10,
+        y,
+        200,
+        y
+      );
+      
+      y += 8;
+      
       y += 6;
 
     }
