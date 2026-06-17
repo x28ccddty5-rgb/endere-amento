@@ -2043,13 +2043,14 @@ if (refRaw) {
           
             `${item.descricao}\n\n` +
           
-            Saldo total: ${item.saldo.toLocaleString("pt-BR")}\n` +
+            `Saldo total: ${item.saldo.toLocaleString("pt-BR")}\n` +
           
             `Paletização: ${item.capacidade}\n\n` +
           
             `Posições atuais: ${item.posicoes.length}\n` +
           
             `Posições necessárias: ${item.posicoesNecessarias}\n\n` +
+            
              `Posições destino:\n` +
 
             destinosComCapacidade
