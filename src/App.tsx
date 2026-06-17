@@ -1530,13 +1530,67 @@ if (refRaw) {
   opportunities.forEach(
     (item, index) => {
 
-      const destino =
+     const sorted =
       [...item.posicoes].sort(
         (a, b) => b.saldo - a.saldo
-      )[0];
-
-      const origens =
-        item.posicoes.slice(1);
+      );
+    
+    const destinos =
+      sorted.slice(
+        0,
+        item.posicoesNecessarias
+      );
+    
+    const origens =
+      sorted.slice(
+        item.posicoesNecessarias
+      );
+    
+    const destinosComCapacidade =
+      destinos.map(d => ({
+        slot: d,
+        livre:
+          item.capacidade - d.saldo,
+        saldoFinal:
+          d.saldo
+      }));
+    
+    const movimentacoes: string[] = [];
+    
+    origens.forEach(origem => {
+    
+      let restante =
+        origem.saldo;
+    
+      destinosComCapacidade.forEach(
+        destino => {
+    
+          if (
+            restante <= 0 ||
+            destino.livre <= 0
+          )
+            return;
+    
+          const mover =
+            Math.min(
+              restante,
+              destino.livre
+            );
+    
+          movimentacoes.push(
+            `Mover ${mover.toLocaleString("pt-BR")} peças de E${origem.estoque} M${origem.modulo} ${origem.posicao} para E${destino.slot.estoque} M${destino.slot.modulo} ${destino.slot.posicao}`
+          );
+    
+          restante -= mover;
+    
+          destino.livre -= mover;
+    
+          destino.saldoFinal += mover;
+    
+        }
+      );
+    
+    });
 
       if (y > 260) {
 
@@ -1565,34 +1619,108 @@ if (refRaw) {
       y += 6;
 
       doc.text(
-        `Destino: E${destino.estoque} M${destino.modulo} ${destino.posicao}`,
+        `Saldo Total: ${item.saldo.toLocaleString("pt-BR")}`,
         10,
         y
       );
-
+      
       y += 6;
-
+      
+      doc.text(
+        `Paletizacao: ${item.capacidade}`,
+        10,
+        y
+      );
+      
+      y += 6;
+      
+      doc.text(
+        `Posicoes atuais: ${item.posicoes.length}`,
+        10,
+        y
+      );
+      
+      y += 6;
+      
+      doc.text(
+        `Posicoes necessarias: ${item.posicoesNecessarias}`,
+        10,
+        y
+      );
+      
+      y += 8;
+      
+      doc.text(
+        "DESTINOS:",
+        10,
+        y
+      );
+      
+      y += 6;
+      
+      destinosComCapacidade.forEach(d => {
+      
+        doc.text(
+          `E${d.slot.estoque} M${d.slot.modulo} ${d.slot.posicao} -> Saldo final: ${d.saldoFinal}`,
+          15,
+          y
+        );
+      
+        y += 6;
+      
+      });
+      
+      y += 3;
+      
+      doc.text(
+        "MOVIMENTACOES:",
+        10,
+        y
+      );
+      
+      y += 6;
+      
+      movimentacoes.forEach(m => {
+      
+        doc.text(
+          m,
+          15,
+          y
+        );
+      
+        y += 6;
+      
+      });
+      
+      y += 3;
+      
+      doc.text(
+        "POSICOES LIBERADAS:",
+        10,
+        y
+      );
+      
+      y += 6;
+      
+      origens.forEach(o => {
+      
+        doc.text(
+          `E${o.estoque} M${o.modulo} ${o.posicao}`,
+          15,
+          y
+        );
+      
+        y += 6;
+      
+      });
+      
       doc.text(
         `Ganho estimado: +${item.ganho} posicoes`,
         10,
         y
       );
-
-      y += 6;
-
-      origens.forEach(
-        (origem: WarehouseSlot) => {
-
-          doc.text(
-            `Mover de: E${origem.estoque} M${origem.modulo} ${origem.posicao}`,
-            15,
-            y
-          );
-
-          y += 6;
-
-        }
-      );
+      
+      y += 8;
 
       y += 6;
 
