@@ -1847,39 +1847,29 @@ if (refRaw) {
         const totalLiberacoes =
           opportunities.reduce(
             (acc, item) =>
-              acc + (item.posicoes.length - 1),
+              acc + item.ganho,
             0
           );
-      
+        
         responseText =
-      
+          `ANÁLISE DE CONSOLIDAÇÃO\n\n` +
+        
           `Oportunidades encontradas: ${opportunities.length}\n\n` +
-      
-          `Potencial estimado: liberar ${totalLiberacoes} posição(ões)\n\n` +
-      
+        
+          `Potencial total: +${totalLiberacoes} posições\n\n` +
+        
+          `Top oportunidades:\n\n` +
+        
           opportunities
-            .map((item, index) =>
-      
-              `${index + 1})\n` +
-      
-              `SKU: ${item.sku}\n` +
-      
-              `${item.descricao}\n\n` +
-      
-              `Posições: ${item.posicoes.length}\n` +
-      
-              `Saldo: ${item.saldo}\n` +
-      
-              `Capacidade: ${item.capacidade}\n` +
-      
-              `Ocupação: ${Math.round(
-                (item.saldo / item.capacidade) * 100
-              )}%\n\n` +
-      
-              `Potencial: +${item.posicoes.length - 1} posição(ões)\n`
-      
+            .slice(0, 10)
+            .map(
+              (item, index) =>
+        
+                `${index + 1}º SKU ${item.sku}\n` +
+                `${item.descricao}\n` +
+                `Ganho: +${item.ganho} posições\n`
             )
-            .join("\n------------------------\n\n");
+            .join("\n");
       
         }
       
@@ -1980,13 +1970,72 @@ if (refRaw) {
         opportunities.forEach(
           (item, index) => {
     
-            const destino =
+            const sorted =
             [...item.posicoes].sort(
               (a, b) => b.saldo - a.saldo
-            )[0];
-    
-            const origens =
-              item.posicoes.slice(1);
+            );
+          
+          const destinos =
+            sorted.slice(
+              0,
+              item.posicoesNecessarias
+            );
+          
+          const origens =
+            sorted.slice(
+              item.posicoesNecessarias
+            );
+          
+          const destinosComCapacidade =
+            destinos.map(d => ({
+              slot: d,
+              livre:
+                item.capacidade - d.saldo,
+              saldoFinal:
+                d.saldo
+            }));
+          
+          const movimentacoes: string[] = [];
+          
+          origens.forEach(origem => {
+          
+            let restante =
+              origem.saldo;
+          
+            destinosComCapacidade.forEach(
+              destino => {
+          
+                if (
+                  restante <= 0 ||
+                  destino.livre <= 0
+                )
+                  return;
+          
+                const mover =
+                  Math.min(
+                    restante,
+                    destino.livre
+                  );
+          
+                movimentacoes.push(
+          
+                  `Mover ${mover.toLocaleString("pt-BR")} peças de ` +
+                  `E${origem.estoque} M${origem.modulo} ${origem.posicao} ` +
+                  `para ` +
+                  `E${destino.slot.estoque} M${destino.slot.modulo} ${destino.slot.posicao}`
+          
+                );
+          
+                restante -= mover;
+          
+                destino.livre -= mover;
+          
+                destino.saldoFinal += mover;
+          
+              }
+            );
+          
+          });
     
            responseText +=
 
@@ -1994,27 +2043,37 @@ if (refRaw) {
           
             `${item.descricao}\n\n` +
           
-            `Saldo total: ${item.saldo}\n` +
+            Saldo total: ${item.saldo.toLocaleString("pt-BR")}\n` +
           
             `Paletização: ${item.capacidade}\n\n` +
           
             `Posições atuais: ${item.posicoes.length}\n` +
           
             `Posições necessárias: ${item.posicoesNecessarias}\n\n` +
-          
-            `Destino sugerido:\n` +
-    
-              `E${destino.estoque} • M${destino.modulo} • ${destino.posicao}\n\n` +
-    
-              `Mover de:\n` +
-    
-              origens
-                .map(
-                  (o: WarehouseSlot) =>
-                    `• E${o.estoque} • M${o.modulo} • ${o.posicao}`
-                )
-                .join("\n") +
-    
+             `Posições destino:\n` +
+
+            destinosComCapacidade
+              .map(
+                d =>
+            
+                  `• E${d.slot.estoque} M${d.slot.modulo} ${d.slot.posicao}` +
+                  ` → Saldo final: ${d.saldoFinal}`
+              )
+              .join("\n") +
+            
+            `\n\nPlano de movimentação:\n\n` +
+  
+             movimentacoes.join("\n") +
+
+            `\n\nPosições liberadas:\n` +
+
+            origens
+              .map(
+                o =>
+                  `✓ E${o.estoque} M${o.modulo} ${o.posicao}`
+              )
+              .join("\n") +
+             
               `\n\nGanho estimado: +${item.ganho} posição(ões)\n\n` +
     
               `----------------------------\n\n`;
