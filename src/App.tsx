@@ -2369,6 +2369,11 @@ if (refRaw) {
     .replace(/[\u0300-\u036f]/g, "") || "";
 
 const isReadOnly = normalizedRole !== "administrador";
+
+const canAccessBatchLaunch =
+  ["administrador", "lideranca", "apoio"].includes(normalizedRole);
+const canExecuteBatchLaunch =
+  ["administrador", "lideranca", "apoio"].includes(normalizedRole);
   
   // Helper validation roles and permissions check
   const hasAccess = (requiredLevel: "administrador" | "operador" | "consulta"): boolean => {
@@ -3130,8 +3135,8 @@ const isReadOnly = normalizedRole !== "administrador";
                     Lançamento Unitário (Igual Corredor)
                   </button>
                   <button
-                    onClick={() => !isReadOnly && setSelectedLaunchType("lote")}
-                    disabled={isReadOnly}
+                    onClick={() => setSelectedLaunchType("lote")}
+                    disabled={!canAccessBatchLaunch}
                     className={`flex-1 py-1.5 px-3 rounded-lg text-xs font-bold transition flex items-center justify-center gap-1.5 cursor-pointer uppercase tracking-wider ${
                       selectedLaunchType === "lote"
                         ? "bg-white text-indigo-700 shadow-sm border border-slate-200/55"
@@ -3376,8 +3381,8 @@ const isReadOnly = normalizedRole !== "administrador";
                       {showBulkImport ? "Ocultar Colagem Rápida" : "Colar do Excel / CSV"}
                     </button>
                     <button
-                      onClick={() => !isReadOnly && handleLancarLote()}
-                      disabled={isReadOnly}
+                      onClick={() => canExecuteBatchLaunch && handleLancarLote()}
+                      disabled={!canExecuteBatchLaunch}
                       className="bg-indigo-600 hover:bg-indigo-750 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg px-5 py-2 text-xs font-bold transition shadow-sm uppercase tracking-wider cursor-pointer"
                     >
                       Lançar Lote Completo
@@ -3405,8 +3410,8 @@ const isReadOnly = normalizedRole !== "administrador";
 
                     <div className="flex items-center gap-3">
                       <button
-                        onClick={() => !isReadOnly && handleImportExcelData()}
-                        disabled={isReadOnly}
+                        onClick={() => canExecuteBatchLaunch && handleImportExcelData()}
+                        disabled={!canExecuteBatchLaunch}
                         className="bg-indigo-650 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg px-4 py-2 text-xs font-bold transition shadow-sm"
                       >
                         Carregar Lançamentos
