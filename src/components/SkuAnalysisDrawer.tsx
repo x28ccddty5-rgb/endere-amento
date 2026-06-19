@@ -522,36 +522,92 @@ export function SkuAnalysisDrawer({
         4. Saúde do Portfólio
       </h3>
     
-      <div className="border rounded-xl p-4 mb-4">
+      <div
+      className={`border rounded-xl p-5 mb-4 ${
+        top20Percent > 60
+          ? "bg-red-50 border-red-200"
+          : top20Percent > 40
+          ? "bg-amber-50 border-amber-200"
+          : "bg-emerald-50 border-emerald-200"
+      }`}
+    >
     
-        <div className="text-xs uppercase text-slate-500">
-          Classificação Atual
-        </div>
+      <div className="text-xs uppercase font-bold mb-2">
     
-        <div className={`text-4xl font-black ${concentrationColor}`}>
-          {portfolioHealth}
-        </div>
+        {top20Percent > 60
+          ? "🔴 Alta Dependência"
+          : top20Percent > 40
+          ? "🟡 Portfólio em Atenção"
+          : "🟢 Portfólio Diversificado"}
     
       </div>
+    
+      <div className={`text-4xl font-black ${concentrationColor}`}>
+        {portfolioHealth}
+      </div>
+    
+      <div className="mt-3 text-sm text-slate-700">
+    
+        {top20Percent > 60
+          ? "Grande parte do estoque está concentrada em poucos SKUs, aumentando a exposição operacional."
+          : top20Percent > 40
+          ? "Existe concentração relevante, porém ainda distribuída entre diversos produtos."
+          : "O estoque apresenta boa distribuição entre os SKUs armazenados."}
+    
+      </div>
+    
+    </div>
     
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
     
         {portfolioCards.map((card) => (
     
           <div
-            key={card.titulo}
-            className="border rounded-xl p-4"
-          >
-    
-            <div className="font-bold text-slate-800 mb-2">
-              {card.titulo}
-            </div>
-    
-            <div className="text-sm text-slate-600">
-              {card.texto}
-            </div>
-    
+          key={card.titulo}
+          className={`border rounded-xl p-5 ${
+            top20Percent > 60
+              ? "bg-red-50 border-red-200"
+              : top20Percent > 40
+              ? "bg-amber-50 border-amber-200"
+              : "bg-emerald-50 border-emerald-200"
+          }`}
+        >
+        
+          <div
+          className={`text-3xl mb-3 ${
+            top20Percent > 60
+              ? "text-red-600"
+              : top20Percent > 40
+              ? "text-amber-600"
+              : "text-emerald-600"
+          }`}
+        >
+        
+            {card.titulo === "Risco Comercial"
+              ? "📈"
+              : card.titulo === "Risco Operacional"
+              ? "⚙️"
+              : "🔄"}
+        
           </div>
+        
+          <div
+            className={`font-bold mb-2 ${
+              top20Percent > 60
+                ? "text-red-700"
+                : top20Percent > 40
+                ? "text-amber-700"
+                : "text-emerald-700"
+            }`}
+          >
+            {card.titulo}
+          </div>
+        
+          <div className="text-sm text-slate-600">
+            {card.texto}
+          </div>
+        
+        </div>
     
         ))}
     
