@@ -2,6 +2,7 @@ import React, { useState } from "react";
 import { OccupancyAnalysisDrawer } from "./OccupancyAnalysisDrawer";
 import { FreeCapacityDrawer } from "./FreeCapacityDrawer";
 import { OccupationRateDrawer } from "./OccupationRateDrawer";
+import { SkuAnalysisDrawer } from "./SkuAnalysisDrawer";
 import { 
   Box, 
   Layers, 
@@ -41,6 +42,7 @@ export const DashboardCards: React.FC<DashboardCardsProps> = ({
   const [showOccupancyAnalysis, setShowOccupancyAnalysis] = useState(false);
   const [showFreeCapacity, setShowFreeCapacity] = useState(false);
   const [showOccupationAnalysis, setShowOccupationAnalysis] = useState(false);
+  const [showSkuAnalysis, setShowSkuAnalysis] = useState(false);
   
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [drawerDays, setDrawerDays] = useState(7);
@@ -403,7 +405,10 @@ const tempoMedio =
             <div className="text-[9px] text-slate-400 mt-0.5">Otimização de espaço físico</div>
           </div>
 
-          <div className="bg-white border border-slate-200 border-t-2 border-t-teal-500 rounded p-3 shadow-2xs hover:border-slate-350 transition-colors">
+         <div
+          onClick={() => setShowSkuAnalysis(true)}
+          className="bg-white border border-slate-200 border-t-2 border-t-teal-500 rounded p-3 shadow-2xs hover:border-slate-300 hover:shadow-md transition-all cursor-pointer"
+        >
             <div className="flex items-center justify-between mb-1">
               <span className="text-[10px] font-bold text-teal-850 bg-teal-50 px-1.5 py-0.5 rounded flex items-center gap-1 uppercase">
                 <Package className="w-3 h-3 text-teal-500" /> Itens SKUs
@@ -1010,6 +1015,11 @@ const tempoMedio =
             isOpen={showOccupationAnalysis}
             onClose={() => setShowOccupationAnalysis(false)}
             occupationRate={occupationRate}
+          />
+            <SkuAnalysisDrawer
+            isOpen={showSkuAnalysis}
+            onClose={() => setShowSkuAnalysis(false)}
+            uniqueSKUs={uniqueSKUs}
           />
     </div>
   );
