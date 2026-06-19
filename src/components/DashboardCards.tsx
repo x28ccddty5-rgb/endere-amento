@@ -1,5 +1,6 @@
 import React, { useState } from "react";
 import { OccupancyAnalysisDrawer } from "./OccupancyAnalysisDrawer";
+import { FreeCapacityDrawer } from "./FreeCapacityDrawer";
 import { 
   Box, 
   Layers, 
@@ -37,6 +38,7 @@ export const DashboardCards: React.FC<DashboardCardsProps> = ({
 }) => {
 
   const [showOccupancyAnalysis, setShowOccupancyAnalysis] = useState(false);
+  const [showFreeCapacity, setShowFreeCapacity] = useState(false);
   
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [drawerDays, setDrawerDays] = useState(7);
@@ -54,6 +56,19 @@ const occupiedSlotsE2 = slots.filter(
 const occupiedSlotsE3 = slots.filter(
   s => s.estoque === "3" && s.saldo > 0
 ).length;
+
+const totalSlotsE1 = 657;
+const totalSlotsE2 = 1373;
+const totalSlotsE3 = 1288;
+
+const freeSlotsE1 =
+  totalSlotsE1 - occupiedPalletsE1;
+
+const freeSlotsE2 =
+  totalSlotsE2 - occupiedSlotsE2;
+
+const freeSlotsE3 =
+  totalSlotsE3 - occupiedSlotsE3;
   
 const occupiedSlots =
   occupiedPalletsE1 +
@@ -356,7 +371,10 @@ const tempoMedio =
             <div className="text-[9px] text-slate-400 mt-0.5">De {totalSlots} posições no total</div>
           </div>
 
-          <div className="bg-white border border-slate-200 border-t-2 border-t-emerald-500 rounded p-3 shadow-2xs hover:border-slate-300 transition-colors">
+         <div
+          onClick={() => setShowFreeCapacity(true)}
+          className="bg-white border border-slate-200 border-t-2 border-t-emerald-500 rounded p-3 shadow-2xs hover:border-slate-300 hover:shadow-md transition-all cursor-pointer"
+        >
             <div className="flex items-center justify-between mb-1">
               <span className="text-[10px] font-bold text-emerald-850 bg-emerald-50 px-1.5 py-0.5 rounded flex items-center gap-1 uppercase">
                 <Layers className="w-3 h-3 text-emerald-500" /> Livres
@@ -974,7 +992,15 @@ const tempoMedio =
               occupiedSlotsE2={occupiedSlotsE2}
               occupiedSlotsE3={occupiedSlotsE3}
             />
-    
+            <FreeCapacityDrawer
+            isOpen={showFreeCapacity}
+            onClose={() => setShowFreeCapacity(false)}
+            freePositions={freeSlots}
+            totalPositions={totalSlots}
+            freeSlotsE1={freeSlotsE1}
+            freeSlotsE2={freeSlotsE2}
+            freeSlotsE3={freeSlotsE3}
+          />
     </div>
   );
 };
