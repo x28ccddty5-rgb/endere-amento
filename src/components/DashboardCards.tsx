@@ -779,9 +779,7 @@ const tempoMedio =
           
             </div>
           
-          </div>
-              
-            </div>
+          </div>         
               
             </div>
           </>
