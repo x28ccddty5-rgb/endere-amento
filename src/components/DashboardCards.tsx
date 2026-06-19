@@ -458,10 +458,10 @@ const tempoMedio =
             {/* Drawer */}
             <div className="fixed top-0 right-0 h-full w-[900px] bg-white shadow-2xl z-50 flex flex-col">
         
-              <div className="p-4 border-b flex items-center justify-between">
+              <div className="px-6 py-4 border-b flex items-center justify-between bg-white">
         
                 <div>
-                  <h2 className="text-xl font-bold text-slate-800">
+                  <h2 className="text-2xl font-bold text-slate-800">
                     SKUs Sem Movimentação
                   </h2>
                   
@@ -482,7 +482,7 @@ const tempoMedio =
               <div className="p-4 space-y-4">
 
                 {/* Cards Resumo */}
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-4 gap-3">
               
                   <div className="bg-slate-50 border rounded-lg p-3">
                     <div className="text-2xl font-black text-slate-800">
@@ -526,7 +526,75 @@ const tempoMedio =
                 </div>
               
               </div>
-        
+
+              {/* Filtros */}
+              <div className="flex items-center justify-between gap-4 flex-wrap">
+              
+                <div className="flex items-center gap-2">
+              
+                  <span className="text-sm text-slate-600 font-medium">
+                    Período:
+                  </span>
+              
+                  <button className="px-3 py-1 text-sm rounded bg-blue-600 text-white">
+                    7 dias
+                  </button>
+              
+                  <button className="px-3 py-1 text-sm rounded border hover:bg-slate-50">
+                    15 dias
+                  </button>
+              
+                  <button className="px-3 py-1 text-sm rounded border hover:bg-slate-50">
+                    30 dias
+                  </button>
+              
+                  <button className="px-3 py-1 text-sm rounded border hover:bg-slate-50">
+                    60+
+                  </button>
+              
+                </div>
+              
+                <div className="flex items-center gap-2">
+              
+                  <button
+                    className="
+                      px-3
+                      py-2
+                      text-sm
+                      rounded
+                      border
+                      bg-emerald-50
+                      text-emerald-700
+                      hover:bg-emerald-100
+                    "
+                  >
+                    Exportar CSV
+                  </button>
+              
+                </div>
+              
+              </div>
+
+            <div className="relative">
+
+              <input
+                type="text"
+                placeholder="Buscar SKU ou descrição..."
+                className="
+                  w-full
+                  border
+                  rounded-lg
+                  px-4
+                  py-2
+                  text-sm
+                  focus:outline-none
+                  focus:ring-2
+                  focus:ring-blue-500
+                "
+              />
+            
+            </div>
+              
             </div>
           </>
         )}
