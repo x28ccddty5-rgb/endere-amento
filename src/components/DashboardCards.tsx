@@ -756,9 +756,9 @@ const tempoMedio =
           
             <div className="max-h-[500px] overflow-auto">
           
-              {skusParados7DiasLista
+              {filteredSkus
                 .sort((a, b) => b.diasParado - a.diasParado)
-                .slice(0, 100)
+                .slice(0, 50)
                 .map((sku) => (
           
                 <div
