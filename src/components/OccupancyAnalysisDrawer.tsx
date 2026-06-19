@@ -53,6 +53,9 @@ export function OccupancyAnalysisDrawer({
         : 0,
   },
 ].sort((a, b) => b.percentual - a.percentual);
+
+    const maxOccupancyPercentage =
+    occupancyDistribution[0]?.percentual || 100;
   
   return (
     <div className="fixed inset-0 z-50 flex justify-end bg-black/40">
@@ -348,7 +351,9 @@ export function OccupancyAnalysisDrawer({
                   <div
                     className="h-full bg-blue-600 transition-all"
                     style={{
-                      width: `${item.percentual}%`,
+                      width: `${
+                        (item.percentual / maxOccupancyPercentage) * 100
+                      }%`,
                     }}
                   />
                 </div>
