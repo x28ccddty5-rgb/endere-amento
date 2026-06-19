@@ -47,14 +47,18 @@ export const DashboardCards: React.FC<DashboardCardsProps> = ({
   // 1. Calculate slot statuses
   const totalSlots = 657 + 1373 + 1288;
 
+const occupiedSlotsE2 = slots.filter(
+  s => s.estoque === "2" && s.saldo > 0
+).length;
+
+const occupiedSlotsE3 = slots.filter(
+  s => s.estoque === "3" && s.saldo > 0
+).length;
+  
 const occupiedSlots =
   occupiedPalletsE1 +
-  slots.filter(
-    s => s.estoque === "2" && s.saldo > 0
-  ).length +
-  slots.filter(
-    s => s.estoque === "3" && s.saldo > 0
-  ).length;
+  occupiedSlotsE2 +
+  occupiedSlotsE3;
 
 const freeSlots = totalSlots - occupiedSlots;
 
@@ -966,7 +970,9 @@ const tempoMedio =
               onClose={() => setShowOccupancyAnalysis(false)}
               occupiedPositions={occupiedSlots}
               totalPositions={totalSlots}
-              history={history}
+              occupiedSlotsE1={occupiedPalletsE1}
+              occupiedSlotsE2={occupiedSlotsE2}
+              occupiedSlotsE3={occupiedSlotsE3}
             />
     
     </div>
