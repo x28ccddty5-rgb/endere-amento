@@ -18,7 +18,15 @@ export function SkuAnalysisDrawer({
     0
   );
 
-    const skuMap = new Map();
+    const skuMap = new Map<
+      string,
+      {
+        referencia: string;
+        descricao: string;
+        saldo: number;
+      }
+    >();
+
     slots.forEach((slot) => {
   if (!slot.referencia || slot.saldo <= 0) return;
 
