@@ -11,6 +11,53 @@ export function SkuAnalysisDrawer({
 }: SkuAnalysisDrawerProps) {
   if (!isOpen) return null;
 
+    const totalSaldo = slots.reduce(
+    (acc, slot) => acc + slot.saldo,
+    0
+  );
+
+    const skuMap = new Map();
+    slots.forEach((slot) => {
+  if (!slot.referencia || slot.saldo <= 0) return;
+
+  const existing = skuMap.get(slot.referencia);
+
+  if (existing) {
+    existing.saldo += slot.saldo;
+  } else {
+    skuMap.set(slot.referencia, {
+      referencia: slot.referencia,
+      descricao: slot.descricao,
+      saldo: slot.saldo,
+    });
+  }
+});
+
+  const skuRanking = Array.from(
+  skuMap.values()
+)
+  .map((sku) => ({
+    ...sku,
+    percentual:
+      totalSaldo > 0
+        ? (sku.saldo / totalSaldo) * 100
+        : 0,
+  }))
+  .sort((a, b) => b.saldo - a.saldo);
+  
+  const top20Skus =
+  skuRanking.slice(0, 20);
+  
+  const top20Percent =
+  top20Skus.reduce(
+    (acc, sku) => acc + sku.percentual,
+    0
+  );
+
+  const remainingPercent =
+  100 - top20Percent;
+  
+  
   return (
     <div className="fixed inset-0 z-50 flex justify-end bg-black/40">
 
