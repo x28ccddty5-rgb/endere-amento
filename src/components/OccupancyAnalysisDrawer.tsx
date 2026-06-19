@@ -114,9 +114,9 @@ export function OccupancyAnalysisDrawer({
       </div>
 
       <div className="text-3xl font-black text-red-700 mt-2">
-        {occupancyPercent >= 90
+        {occupancyPercent >= 95
           ? "CRÍTICO"
-          : occupancyPercent >= 80
+          : occupancyPercent >= 85
           ? "ATENÇÃO"
           : "SAUDÁVEL"}
       </div>
@@ -145,9 +145,9 @@ export function OccupancyAnalysisDrawer({
       <div className="w-full h-4 bg-slate-200 rounded-full overflow-hidden">
         <div
           className={`h-full ${
-            occupancyPercent >= 90
+            occupancyPercent >= 95
               ? "bg-red-500"
-              : occupancyPercent >= 80
+              : occupancyPercent >= 85
               ? "bg-amber-500"
               : "bg-emerald-500"
           }`}
@@ -161,33 +161,33 @@ export function OccupancyAnalysisDrawer({
 
         <div>
           <div className="font-bold text-emerald-600">
-            🟢 Até 80%
+            🟢 Até 85%
           </div>
 
           <div className="text-xs text-slate-500">
-            Até {Math.floor(totalPositions * 0.8).toLocaleString()} posições
+            Até {Math.floor(totalPositions * 0.85).toLocaleString()} posições
           </div>
         </div>
 
         <div>
           <div className="font-bold text-amber-600">
-            🟡 80% a 90%
+            🟡 85% a 95%
           </div>
 
           <div className="text-xs text-slate-500">
-            {Math.floor(totalPositions * 0.8).toLocaleString()}
+            {Math.floor(totalPositions * 0.85).toLocaleString()}
             {" - "}
-            {Math.floor(totalPositions * 0.9).toLocaleString()}
+            {Math.floor(totalPositions * 0.95).toLocaleString()}
           </div>
         </div>
 
         <div>
           <div className="font-bold text-red-600">
-            🔴 Acima de 90%
+            🔴 Acima de 95%
           </div>
 
           <div className="text-xs text-slate-500">
-            Acima de {Math.floor(totalPositions * 0.9).toLocaleString()}
+            Acima de {Math.floor(totalPositions * 0.95).toLocaleString()}
           </div>
         </div>
 
@@ -203,9 +203,9 @@ export function OccupancyAnalysisDrawer({
           O estoque opera com{" "}
           <strong>{occupancyPercent.toFixed(1)}%</strong> da capacidade física.
           Restam apenas <strong>{freePositions}</strong> posições disponíveis.
-          {occupancyPercent >= 90
+          {occupancyPercent >= 95
             ? " A operação encontra-se em nível crítico de ocupação, reduzindo a flexibilidade para recebimentos e absorção de aumentos de produção."
-            : occupancyPercent >= 80
+            : occupancyPercent >= 85
             ? " A ocupação exige monitoramento constante para evitar restrições operacionais."
             : " A capacidade disponível ainda permite absorver crescimento com segurança."}
         </p>
