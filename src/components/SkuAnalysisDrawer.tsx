@@ -10,7 +10,7 @@ export function SkuAnalysisDrawer({
   onClose,
   uniqueSKUs,
   slots,
-}: SkuAnalysisDrawerProps)
+}: SkuAnalysisDrawerProps) {
   if (!isOpen) return null;
 
     const totalSaldo = slots.reduce(
