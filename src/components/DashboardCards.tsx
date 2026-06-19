@@ -962,10 +962,11 @@ const tempoMedio =
           </>
      )}
             <OccupancyAnalysisDrawer
-              isOpen={showOccupancyAnalysis}
+             isOpen={showOccupancyAnalysis}
               onClose={() => setShowOccupancyAnalysis(false)}
               occupiedPositions={occupiedSlots}
               totalPositions={totalSlots}
+              history={history}
             />
     
     </div>
