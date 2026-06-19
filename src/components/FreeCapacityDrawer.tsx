@@ -51,6 +51,13 @@ export function FreeCapacityDrawer({
 
 const maxFreePercentage =
   freeDistribution[0]?.percentual || 100;
+
+  const freeStatusColor =
+  freePercent < 5
+    ? "text-red-600"
+    : freePercent < 15
+    ? "text-amber-500"
+    : "text-emerald-600";
   
   return (
     <div className="fixed inset-0 z-50 flex justify-end bg-black/40">
@@ -97,10 +104,20 @@ const maxFreePercentage =
                   Capacidade Livre
                 </div>
           
-                <div className="text-5xl font-black text-emerald-600">
-                  {freePercent.toFixed(1)}%
-                </div>
-          
+                <div
+                className={`text-5xl font-black ${freeStatusColor}`}
+              >
+                {freePercent.toFixed(1)}%
+              </div>
+
+                <div className={`text-xs font-bold mt-2 ${freeStatusColor}`}>
+                {freePercent < 5
+                  ? "CRÍTICO"
+                  : freePercent < 15
+                  ? "ATENÇÃO"
+                  : "SAUDÁVEL"}
+              </div>
+                
               </div>
           
               <div className="border rounded-xl p-4">
@@ -240,7 +257,7 @@ const maxFreePercentage =
           
           </section>
 
-            <section className="bg-white border rounded-xl p-5 mt-6">
+          <section className="bg-white border rounded-xl p-5 mt-6">
 
                 <h3 className="text-lg font-bold mb-4">
                   3. Onde Está o Espaço Livre?
@@ -314,6 +331,115 @@ const maxFreePercentage =
                 </div>
               
             </section>
+
+            <section className="bg-white border rounded-xl p-5 mt-6">
+
+            <h3 className="text-lg font-bold mb-4">
+              4. Capacidade de Absorção
+            </h3>
+          
+            <div className="bg-amber-50 border border-amber-200 rounded-xl p-5">
+          
+              <div className="flex items-center gap-3 mb-3">
+          
+                <div className="font-bold text-amber-800">
+                  🟡 Em Consolidação
+                </div>
+          
+              </div>
+          
+              <p className="text-sm text-slate-700 leading-relaxed">
+                Os dados de absorção e potencial de expansão estão sendo consolidados
+                para gerar estimativas confiáveis de crescimento da capacidade física.
+              </p>
+          
+              <p className="text-sm text-slate-700 leading-relaxed mt-2">
+                A análise será disponibilizada automaticamente após a formação da base
+                histórica operacional.
+              </p>
+          
+              <div className="mt-4 grid grid-cols-3 gap-3">
+          
+                <div className="bg-white border rounded-lg p-3">
+          
+                  <div className="text-xs text-slate-500 uppercase">
+                    Base Histórica
+                  </div>
+          
+                  <div className="text-2xl font-black text-slate-700">
+                    Em coleta
+                  </div>
+          
+                </div>
+          
+                <div className="bg-white border rounded-lg p-3">
+          
+                  <div className="text-xs text-slate-500 uppercase">
+                    Capacidade Adicional
+                  </div>
+          
+                  <div className="text-2xl font-black text-slate-700">
+                    —
+                  </div>
+          
+                </div>
+          
+                <div className="bg-white border rounded-lg p-3">
+          
+                  <div className="text-xs text-slate-500 uppercase">
+                    Potencial de Expansão
+                  </div>
+          
+                  <div className="text-2xl font-black text-slate-700">
+                    —
+                  </div>
+          
+                </div>
+          
+              </div>
+          
+            </div>
+          
+          </section>
+
+          <section className="bg-white border rounded-xl p-5 mt-6">
+
+          <h3 className="text-lg font-bold mb-4">
+            5. Insight Executivo
+          </h3>
+        
+          <div className="bg-slate-50 border rounded-xl p-5">
+        
+            <p className="text-sm text-slate-700 leading-relaxed">
+        
+              Atualmente existem{" "}
+              <strong>{freePositions}</strong>{" "}
+              posições livres, representando{" "}
+              <strong>{freePercent.toFixed(1)}%</strong>{" "}
+              da capacidade física total.
+        
+            </p>
+        
+            <p className="text-sm text-slate-700 leading-relaxed mt-3">
+        
+              O{" "}
+              <strong>{freeDistribution[0]?.nome}</strong>{" "}
+              concentra a maior parte da capacidade disponível e deverá absorver
+              prioritariamente novos crescimentos operacionais.
+        
+            </p>
+        
+            <p className="text-sm text-slate-700 leading-relaxed mt-3">
+        
+              Os demais estoques operam próximos da saturação física, reduzindo sua
+              capacidade de acomodar aumentos de produção sem redistribuição ou
+              consolidação de posições.
+        
+            </p>
+        
+          </div>
+        
+        </section>
           
         </div>
 
