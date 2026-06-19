@@ -301,6 +301,8 @@ export function SkuAnalysisDrawer({
             
             </div>
 
+            <div className="border rounded-xl overflow-hidden">
+              
                 <div
                 className="
                   bg-slate-100
