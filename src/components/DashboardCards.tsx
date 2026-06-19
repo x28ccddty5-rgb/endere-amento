@@ -255,6 +255,66 @@ const tempoMedio =
       return matchBusca && matchPeriodo;
     
     });
+
+    const exportarCSV = () => {
+
+      const cabecalho = [
+        "Referencia",
+        "Descricao",
+        "Saldo",
+        "Valor",
+        "Ultima Movimentacao",
+        "Dias Parado"
+      ];
+    
+      const linhas = filteredSkus.map(sku => [
+        sku.referencia,
+        sku.descricao,
+        sku.saldo,
+        sku.valorTotal,
+        sku.ultimaMovimentacao,
+        sku.diasParado
+      ]);
+    
+      const csvContent = [
+        cabecalho,
+        ...linhas
+      ]
+        .map(row =>
+          row
+            .map(col => `"${col}"`)
+            .join(";")
+        )
+        .join("\n");
+    
+      const blob = new Blob(
+        [csvContent],
+        {
+          type: "text/csv;charset=utf-8;"
+        }
+      );
+    
+      const url =
+        window.URL.createObjectURL(blob);
+    
+      const link =
+        document.createElement("a");
+    
+      link.href = url;
+    
+      link.download =
+      `SKUs_Parados_${selectedDays}Dias_${new Date()
+        .toLocaleDateString("pt-BR")
+        .replaceAll("/", "-")}.csv`;
+    
+      document.body.appendChild(link);
+    
+      link.click();
+    
+      document.body.removeChild(link);
+    
+      window.URL.revokeObjectURL(url);
+    };
   
   return (
     <div className="space-y-5" id="dashboard-container">
@@ -576,7 +636,7 @@ const tempoMedio =
               
                   <div className="bg-slate-50 border rounded-lg p-3">
                     <div className="text-2xl font-black text-slate-800">
-                      {skusParados7Dias}
+                      {filteredSkus.length}
                     </div>
                     <div className="text-xs text-slate-500 uppercase">
                       SKUs Parados
@@ -586,7 +646,7 @@ const tempoMedio =
                   <div className="bg-slate-50 border rounded-lg p-3">
                     <div className="text-2xl font-black text-slate-800">
                       {
-                        skusParados7DiasLista
+                        filteredSkus
                           .reduce((acc, sku) => acc + sku.saldo, 0)
                           .toLocaleString()
                       }
@@ -599,7 +659,7 @@ const tempoMedio =
                   <div className="bg-slate-50 border rounded-lg p-3">
                     <div className="text-2xl font-black text-emerald-600">
                       R$ {
-                        skusParados7DiasLista
+                        filteredSkus
                           .reduce(
                             (acc, sku) =>
                               acc + sku.valorTotal,
@@ -619,7 +679,10 @@ const tempoMedio =
                   <div className="bg-slate-50 border rounded-lg p-3">
                     <div className="text-2xl font-black text-blue-600">
                       {uniqueSKUs > 0
-                        ? ((skusParados7Dias / uniqueSKUs) * 100).toFixed(1)
+                        ? (
+                            (filteredSkus.length / uniqueSKUs) *
+                            100
+                          ).toFixed(1)
                         : "0"}
                       %
                     </div>
@@ -690,6 +753,7 @@ const tempoMedio =
                 <div className="flex items-center gap-2">
               
                   <button
+                    onClick={exportarCSV}
                     className="
                       px-3
                       py-2
@@ -799,8 +863,12 @@ const tempoMedio =
                   </div>
 
                     <div>
-                      {sku.ultimaMovimentacao}
-                      </div>
+                      {sku.ultimaMovimentacao !== "-"
+                        ? new Date(
+                            `${sku.ultimaMovimentacao}T00:00:00`
+                          ).toLocaleDateString("pt-BR")
+                        : "-"}
+                    </div>
                       
                       <div>
                         <span
