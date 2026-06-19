@@ -40,6 +40,7 @@ export const DashboardCards: React.FC<DashboardCardsProps> = ({
 
   const [showOccupancyAnalysis, setShowOccupancyAnalysis] = useState(false);
   const [showFreeCapacity, setShowFreeCapacity] = useState(false);
+  const [showOccupationAnalysis, setShowOccupationAnalysis] = useState(false);
   
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [drawerDays, setDrawerDays] = useState(7);
@@ -387,7 +388,10 @@ const tempoMedio =
             <div className="text-[9px] text-slate-400 mt-0.5">Prontas para armazenar</div>
           </div>
 
-          <div className="bg-white border border-slate-200 border-t-2 border-t-amber-500 rounded p-3 shadow-2xs hover:border-slate-300 transition-colors">
+          <div
+            onClick={() => setShowOccupationAnalysis(true)}
+            className="bg-white border border-slate-200 border-t-2 border-t-amber-500 rounded p-3 shadow-2xs hover:border-slate-300 hover:shadow-md transition-all cursor-pointer"
+          >
             <div className="flex items-center justify-between mb-1">
               <span className="text-[10px] font-bold text-amber-800 bg-amber-50 px-1.5 py-0.5 rounded flex items-center gap-1 uppercase">
                 <TrendingUp className="w-3 h-3 text-amber-500" /> Ocupação %
@@ -1001,6 +1005,11 @@ const tempoMedio =
             freeSlotsE1={freeSlotsE1}
             freeSlotsE2={freeSlotsE2}
             freeSlotsE3={freeSlotsE3}
+          />
+            <OccupationRateDrawer
+            isOpen={showOccupationAnalysis}
+            onClose={() => setShowOccupationAnalysis(false)}
+            occupationRate={occupationRate}
           />
     </div>
   );
