@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useState } from "react";
 import { 
   Box, 
   Layers, 
@@ -34,6 +34,8 @@ export const DashboardCards: React.FC<DashboardCardsProps> = ({
   occupiedPalletsE1,
   appMode
 }) => {
+
+  const [drawerOpen, setDrawerOpen] = useState(false);
   
   // 1. Calculate slot statuses
   const totalSlots = 657 + 1373 + 1288;
@@ -257,7 +259,22 @@ const tempoMedio =
         </h3>
         <div className="grid grid-cols-1 md:grid-cols-5 gap-3">
 
-          <div className="bg-white border border-slate-200 border-t-2 border-t-slate-500 rounded p-3 shadow-2xs hover:border-slate-300 transition-colors">
+          <div
+            onClick={() => setDrawerOpen(true)}
+            className="
+              bg-white
+              border
+              border-slate-200
+              border-t-2
+              border-t-slate-500
+              rounded
+              p-3
+              shadow-2xs
+              hover:border-slate-300
+              hover:shadow-md
+              transition-all
+              cursor-pointer
+            ">
             <div className="flex items-center justify-between mb-1">
               <span className="text-[10px] font-bold text-slate-600 bg-slate-100 px-1.5 py-0.5 rounded flex items-center gap-1 uppercase">
                 <RefreshCw className="w-3 h-3 text-blue-500" /> SKUs PARADOS 7 DIAS
@@ -429,6 +446,47 @@ const tempoMedio =
           </div>
         </div>
       )}
+
+              {drawerOpen && (
+          <>
+            {/* Overlay */}
+            <div
+              className="fixed inset-0 bg-black/40 z-40"
+              onClick={() => setDrawerOpen(false)}
+            />
+        
+            {/* Drawer */}
+            <div className="fixed top-0 right-0 h-full w-[900px] bg-white shadow-2xl z-50 flex flex-col">
+        
+              <div className="p-4 border-b flex items-center justify-between">
+        
+                <div>
+                  <h2 className="text-lg font-bold">
+                    SKUs Parados
+                  </h2>
+        
+                  <p className="text-sm text-slate-500">
+                    Painel em construção
+                  </p>
+                </div>
+        
+                <button
+                  onClick={() => setDrawerOpen(false)}
+                  className="px-3 py-1 rounded border"
+                >
+                  Fechar
+                </button>
+        
+              </div>
+        
+              <div className="p-4">
+                Conteúdo será criado na próxima etapa
+              </div>
+        
+            </div>
+          </>
+        )}
+      
     </div>
   );
 };
