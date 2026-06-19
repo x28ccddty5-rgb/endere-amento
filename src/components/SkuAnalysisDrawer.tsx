@@ -2,13 +2,15 @@ interface SkuAnalysisDrawerProps {
   isOpen: boolean;
   onClose: () => void;
   uniqueSKUs: number;
+  slots: WarehouseSlot[];
 }
 
 export function SkuAnalysisDrawer({
   isOpen,
   onClose,
   uniqueSKUs,
-}: SkuAnalysisDrawerProps) {
+  slots,
+}: SkuAnalysisDrawerProps)
   if (!isOpen) return null;
 
     const totalSaldo = slots.reduce(
