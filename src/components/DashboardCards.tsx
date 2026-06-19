@@ -1,4 +1,5 @@
 import React, { useState } from "react";
+import { OccupancyAnalysisDrawer } from "./OccupancyAnalysisDrawer";
 import { 
   Box, 
   Layers, 
@@ -35,6 +36,8 @@ export const DashboardCards: React.FC<DashboardCardsProps> = ({
   appMode
 }) => {
 
+  const [showOccupancyAnalysis, setShowOccupancyAnalysis] = useState(false);
+  
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [drawerDays, setDrawerDays] = useState(7);
   
@@ -541,7 +544,10 @@ const tempoMedio =
             <div className="text-[9px] text-slate-400 mt-0.5">Ajustado por correção manual</div>
           </div>
 
-          <div className="bg-white border border-slate-200 border-t-2 border-t-blue-500 rounded p-3 shadow-2xs hover:border-slate-300 transition-colors">
+          <div
+            onClick={() => setShowOccupancyAnalysis(true)}
+            className="bg-white border border-slate-200 border-t-2 border-t-blue-500 rounded p-3 shadow-2xs hover:border-slate-300 hover:shadow-md transition-all cursor-pointer"
+          >
             <div className="flex items-center justify-between mb-1">
               <span className="text-[10px] font-bold text-blue-700 bg-blue-50 px-1.5 py-0.5 rounded flex items-center gap-1 uppercase">
                 <Percent className="w-3 h-3 text-blue-500" /> Tempo Médio
@@ -954,7 +960,16 @@ const tempoMedio =
               
             </div>
           </>
-        )}
+     )}
+      
+            <OccupancyAnalysisDrawer
+              isOpen={showOccupancyAnalysis}
+              onClose={() => setShowOccupancyAnalysis(false)}
+              occupiedPositions={occupiedSlots}
+              totalPositions={totalSlots}
+            />
+      
+          </div>
       
     </div>
   );
