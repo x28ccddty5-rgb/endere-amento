@@ -287,8 +287,10 @@ const tempoMedio =
         )
         .join("\n");
     
+     const BOM = "\uFEFF";
+
       const blob = new Blob(
-        [csvContent],
+        [BOM + csvContent],
         {
           type: "text/csv;charset=utf-8;"
         }
@@ -315,6 +317,11 @@ const tempoMedio =
     
       window.URL.revokeObjectURL(url);
     };
+
+    const limparFiltros = () => {
+    setSearchTerm("");
+    setSelectedDays(7);
+  };
   
   return (
     <div className="space-y-5" id="dashboard-container">
@@ -769,7 +776,25 @@ const tempoMedio =
                   </button>
               
                 </div>
-              
+
+                  {(searchTerm || selectedDays !== 7) && (
+                  <button
+                    onClick={limparFiltros}
+                    className="
+                      px-3
+                      py-2
+                      text-sm
+                      rounded
+                      border
+                      bg-slate-50
+                      text-slate-700
+                      hover:bg-slate-100
+                    "
+                  >
+                    Limpar
+                  </button>
+                )}
+                
               </div>
 
             <div className="relative">
