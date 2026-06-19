@@ -961,16 +961,13 @@ const tempoMedio =
             </div>
           </>
      )}
-      
             <OccupancyAnalysisDrawer
               isOpen={showOccupancyAnalysis}
               onClose={() => setShowOccupancyAnalysis(false)}
               occupiedPositions={occupiedSlots}
               totalPositions={totalSlots}
             />
-      
-          </div>
-      
+    
     </div>
   );
 };
