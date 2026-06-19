@@ -112,26 +112,62 @@ export function SkuAnalysisDrawer({
 
               <div className="border rounded-xl p-4">
 
-                <div className="text-xs uppercase text-slate-500">
-                  Base sem Giro
-                </div>
-
-                <div className="text-5xl font-black text-slate-400">
-                  —
-                </div>
+               <div className="text-xs uppercase text-slate-500">
+                Top 20 SKUs
+              </div>
+              
+              <div className="text-5xl font-black text-emerald-600">
+                {top20Percent.toFixed(1)}%
+              </div>
+              
+              <div className="text-xs text-slate-500 mt-2">
+                Representatividade
+              </div>
 
               </div>
 
               <div className="border rounded-xl p-4">
 
                 <div className="text-xs uppercase text-slate-500">
-                  Base com Giro
-                </div>
+                Demais SKUs
+              </div>
+              
+              <div className="text-5xl font-black text-blue-600">
+                {remainingPercent.toFixed(1)}%
+              </div>
+              
+              <div className="text-xs text-slate-500 mt-2">
+                Participação restante
+              </div>
 
-                <div className="text-5xl font-black text-slate-400">
-                  —
-                </div>
+                <div className="mt-5 border rounded-xl p-4 bg-slate-50">
 
+                  <div className="font-bold text-slate-800 mb-2">
+                    Insight Executivo
+                  </div>
+                
+                  <p className="text-sm text-slate-700">
+                    Os 20 principais SKUs representam
+                    {" "}
+                    <strong>{top20Percent.toFixed(1)}%</strong>
+                    {" "}
+                    de todo o volume armazenado atualmente.
+                  </p>
+                
+                  <p className="text-sm text-slate-700 mt-2">
+                    Os demais
+                    {" "}
+                    <strong>{Math.max(uniqueSKUs - 20, 0)}</strong>
+                    {" "}
+                    SKUs representam
+                    {" "}
+                    <strong>{remainingPercent.toFixed(1)}%</strong>
+                    {" "}
+                    do estoque total.
+                  </p>
+                
+                </div>
+                
               </div>
 
             </div>
