@@ -27,6 +27,33 @@ export function OccupancyAnalysisDrawer({
       ? (occupiedPositions / totalPositions) * 100
       : 0;
 
+    const occupancyDistribution = [
+  {
+    nome: "Estoque 1",
+    valor: occupiedSlotsE1,
+    percentual:
+      occupiedPositions > 0
+        ? (occupiedSlotsE1 / occupiedPositions) * 100
+        : 0,
+  },
+  {
+    nome: "Estoque 2",
+    valor: occupiedSlotsE2,
+    percentual:
+      occupiedPositions > 0
+        ? (occupiedSlotsE2 / occupiedPositions) * 100
+        : 0,
+  },
+  {
+    nome: "Estoque 3",
+    valor: occupiedSlotsE3,
+    percentual:
+      occupiedPositions > 0
+        ? (occupiedSlotsE3 / occupiedPositions) * 100
+        : 0,
+  },
+].sort((a, b) => b.percentual - a.percentual);
+  
   return (
     <div className="fixed inset-0 z-50 flex justify-end bg-black/40">
       <div className="w-full max-w-5xl bg-white h-full overflow-y-auto shadow-2xl">
@@ -292,61 +319,73 @@ export function OccupancyAnalysisDrawer({
               4. Distribuição da Ocupação
             </h3>
           
-            <div className="grid grid-cols-3 gap-4">
+            <div className="space-y-4">
+
+            {occupancyDistribution.map((item) => (
+              <div
+                key={item.nome}
+                className="border rounded-xl p-4"
+              >
+                <div className="flex justify-between items-center mb-3">
           
-              <div className="border rounded-xl p-4">
-                <div className="text-xs uppercase text-slate-500">
-                  Estoque 1
+                  <div>
+                    <div className="font-bold text-slate-800">
+                      {item.nome}
+                    </div>
+          
+                    <div className="text-sm text-slate-500">
+                      {item.valor.toLocaleString()} posições ocupadas
+                    </div>
+                  </div>
+          
+                  <div className="text-2xl font-black text-slate-800">
+                    {item.percentual.toFixed(1)}%
+                  </div>
+          
                 </div>
           
-                <div className="text-3xl font-black text-slate-800">
-                  {occupiedSlotsE1}
+                <div className="w-full h-4 bg-slate-200 rounded-full overflow-hidden">
+                  <div
+                    className="h-full bg-blue-600 transition-all"
+                    style={{
+                      width: `${item.percentual}%`,
+                    }}
+                  />
                 </div>
           
-                <div className="text-sm text-slate-500">
-                  {(
-                    (occupiedSlotsE1 / occupiedPositions) *
-                    100
-                  ).toFixed(1)}%
-                </div>
               </div>
+            ))}
           
-              <div className="border rounded-xl p-4">
-                <div className="text-xs uppercase text-slate-500">
-                  Estoque 2
-                </div>
+          </div>
           
-                <div className="text-3xl font-black text-slate-800">
-                  {occupiedSlotsE2}
-                </div>
+          <div className="mt-4 border rounded-xl p-4 bg-slate-50">
           
-                <div className="text-sm text-slate-500">
-                  {(
-                    (occupiedSlotsE2 / occupiedPositions) *
-                    100
-                  ).toFixed(1)}%
-                </div>
-              </div>
-          
-              <div className="border rounded-xl p-4">
-                <div className="text-xs uppercase text-slate-500">
-                  Estoque 3
-                </div>
-          
-                <div className="text-3xl font-black text-slate-800">
-                  {occupiedSlotsE3}
-                </div>
-          
-                <div className="text-sm text-slate-500">
-                  {(
-                    (occupiedSlotsE3 / occupiedPositions) *
-                    100
-                  ).toFixed(1)}%
-                </div>
-              </div>
-          
+            <div className="font-bold text-slate-800 mb-2">
+              Insight Executivo
             </div>
           
+            <p className="text-sm text-slate-700">
+              O <strong>{occupancyDistribution[0]?.nome}</strong>
+              concentra{" "}
+              <strong>
+                {occupancyDistribution[0]?.percentual.toFixed(1)}%
+              </strong>{" "}
+              das posições ocupadas da empresa.
+            </p>
+          
+            <p className="text-sm text-slate-700 mt-2">
+              Os dois maiores estoques representam{" "}
+              <strong>
+                {(
+                  (occupancyDistribution[0]?.percentual ?? 0) +
+                  (occupancyDistribution[1]?.percentual ?? 0)
+                ).toFixed(1)}%
+              </strong>{" "}
+              da ocupação física total.
+            </p>
+          
+          </div>
+              
           </section>
 
         </div>
