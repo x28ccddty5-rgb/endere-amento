@@ -103,9 +103,115 @@ export function OccupancyAnalysisDrawer({
               2. Status Geral
             </h3>
 
-            <div>
-              EM CONSTRUÇÃO
-            </div>
+            <div className="space-y-4">
+
+  {/* Status Atual */}
+  <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+
+    <div className="border rounded-xl p-4 bg-red-50 border-red-200">
+      <div className="text-sm font-bold text-red-600 uppercase">
+        Status Atual
+      </div>
+
+      <div className="text-3xl font-black text-red-700 mt-2">
+        {occupancyPercent >= 90
+          ? "CRÍTICO"
+          : occupancyPercent >= 80
+          ? "ATENÇÃO"
+          : "SAUDÁVEL"}
+      </div>
+
+      <div className="text-sm text-slate-600 mt-3">
+        {occupancyPercent.toFixed(1)}% da capacidade utilizada
+      </div>
+
+      <div className="text-sm text-slate-600">
+        {occupiedPositions.toLocaleString()} de{" "}
+        {totalPositions.toLocaleString()} posições ocupadas
+      </div>
+
+      <div className="text-sm font-semibold text-red-700 mt-2">
+        Restam apenas {freePositions.toLocaleString()} posições livres
+      </div>
+    </div>
+
+    {/* Barra */}
+    <div className="lg:col-span-2 border rounded-xl p-4">
+
+      <div className="text-sm font-bold text-slate-700 mb-3">
+        Nível de Utilização
+      </div>
+
+      <div className="w-full h-4 bg-slate-200 rounded-full overflow-hidden">
+        <div
+          className={`h-full ${
+            occupancyPercent >= 90
+              ? "bg-red-500"
+              : occupancyPercent >= 80
+              ? "bg-amber-500"
+              : "bg-emerald-500"
+          }`}
+          style={{
+            width: `${Math.min(occupancyPercent, 100)}%`,
+          }}
+        />
+      </div>
+
+      <div className="grid grid-cols-3 gap-3 mt-4 text-center">
+
+        <div>
+          <div className="font-bold text-emerald-600">
+            🟢 Até 80%
+          </div>
+
+          <div className="text-xs text-slate-500">
+            Até {Math.floor(totalPositions * 0.8).toLocaleString()} posições
+          </div>
+        </div>
+
+        <div>
+          <div className="font-bold text-amber-600">
+            🟡 80% a 90%
+          </div>
+
+          <div className="text-xs text-slate-500">
+            {Math.floor(totalPositions * 0.8).toLocaleString()}
+            {" - "}
+            {Math.floor(totalPositions * 0.9).toLocaleString()}
+          </div>
+        </div>
+
+        <div>
+          <div className="font-bold text-red-600">
+            🔴 Acima de 90%
+          </div>
+
+          <div className="text-xs text-slate-500">
+            Acima de {Math.floor(totalPositions * 0.9).toLocaleString()}
+          </div>
+        </div>
+
+      </div>
+
+    </div>
+
+  </div>
+
+      {/* Insight */}
+      <div className="border rounded-xl p-4 bg-slate-50">
+        <p className="text-sm text-slate-700 leading-relaxed">
+          O estoque opera com{" "}
+          <strong>{occupancyPercent.toFixed(1)}%</strong> da capacidade física.
+          Restam apenas <strong>{freePositions}</strong> posições disponíveis.
+          {occupancyPercent >= 90
+            ? " A operação encontra-se em nível crítico de ocupação, reduzindo a flexibilidade para recebimentos e absorção de aumentos de produção."
+            : occupancyPercent >= 80
+            ? " A ocupação exige monitoramento constante para evitar restrições operacionais."
+            : " A capacidade disponível ainda permite absorver crescimento com segurança."}
+        </p>
+      </div>
+    
+    </div>
           </section>
 
           {/* PROJEÇÃO */}
