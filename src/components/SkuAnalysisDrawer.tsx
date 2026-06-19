@@ -614,6 +614,76 @@ export function SkuAnalysisDrawer({
       </div>
     
     </section>
+
+        <section className="bg-white border rounded-xl p-5 mt-6">
+
+        <h3 className="text-lg font-bold mb-4">
+          5. Conclusão Estratégica
+        </h3>
+
+        <div
+        className={`border rounded-xl p-5 ${
+          top20Percent > 60
+            ? "bg-red-50 border-red-200"
+            : top20Percent > 40
+            ? "bg-amber-50 border-amber-200"
+            : "bg-emerald-50 border-emerald-200"
+        }`}
+      >
+
+          <div
+          className={`font-bold text-xl mb-4 ${
+            top20Percent > 60
+              ? "text-red-700"
+              : top20Percent > 40
+              ? "text-amber-700"
+              : "text-emerald-700"
+          }`}
+        >
+        
+          {top20Percent > 60
+            ? "🔴 Portfólio com Alta Dependência"
+            : top20Percent > 40
+            ? "🟡 Portfólio Moderadamente Concentrado"
+            : "🟢 Portfólio Diversificado"}
+        
+        </div>
+
+          <p className="text-slate-700 leading-relaxed">
+
+          Os <strong>20 principais SKUs</strong> representam{" "}
+          <strong>{top20Percent.toFixed(1)}%</strong>{" "}
+          do volume armazenado.
+        
+          Atualmente existem{" "}
+          <strong>{uniqueSKUs}</strong>{" "}
+          SKUs ativos no estoque.
+        
+        </p>
+        
+        <p className="text-slate-700 leading-relaxed mt-4">
+        
+          {top20Percent > 60
+            ? "A concentração elevada indica forte dependência dos principais produtos. Alterações de demanda nesses itens podem impactar significativamente a operação."
+            : top20Percent > 40
+            ? "Existe concentração relevante, porém distribuída entre diversos produtos. O cenário permanece equilibrado e operacionalmente saudável."
+            : "A distribuição dos volumes encontra-se bem pulverizada entre os SKUs ativos, reduzindo riscos de dependência operacional."}
+        
+        </p>
+        
+        <p className="text-slate-700 leading-relaxed mt-4">
+        
+          {top20Percent > 60
+            ? "Recomenda-se monitoramento contínuo dos produtos dominantes e avaliação periódica da diversificação do portfólio."
+            : top20Percent > 40
+            ? "Recomenda-se acompanhamento da evolução da concentração para garantir manutenção do equilíbrio atual."
+            : "O portfólio apresenta boa distribuição e flexibilidade para absorver mudanças de mercado e produção."}
+        
+        </p>
+
+          </div>
+
+      </section>
           
         </div>
 
