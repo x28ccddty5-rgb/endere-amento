@@ -180,13 +180,31 @@ const skusParados30Dias =
           )
         )[0];
   
+      const custoUnitario =
+      produto?.custoUnitario || 0;
+    
+      const valorTotal =
+        saldoTotal * custoUnitario;
+
+      const diasParado = ultimaMovimentacao
+      ? Math.floor(
+          (Date.now() -
+            new Date(
+              ultimaMovimentacao.data
+            ).getTime()) /
+          (1000 * 60 * 60 * 24)
+        )
+      : 999;
+      
       return {
         referencia,
         descricao: produto?.descricao || "-",
         saldo: saldoTotal,
+        custoUnitario,
+        valorTotal,
         ultimaMovimentacao:
           ultimaMovimentacao?.data || "-",
-        diasParado: 0
+        diasParado
       };
     });
   
@@ -493,7 +511,19 @@ const tempoMedio =
             />
         
             {/* Drawer */}
-            <div className="fixed top-0 right-0 h-full w-[900px] bg-white shadow-2xl z-50 flex flex-col">
+            <div className="
+              fixed
+              top-0
+              right-0
+              h-full
+              w-[900px]
+              bg-white
+              shadow-2xl
+              z-50
+              flex
+              flex-col
+              overflow-hidden
+            ">
         
               <div className="px-6 py-4 border-b flex items-center justify-between bg-white">
         
@@ -545,7 +575,18 @@ const tempoMedio =
               
                   <div className="bg-slate-50 border rounded-lg p-3">
                     <div className="text-2xl font-black text-emerald-600">
-                      R$ --
+                      R$ {
+                        skusParados7DiasLista
+                          .reduce(
+                            (acc, sku) =>
+                              acc + sku.valorTotal,
+                            0
+                          )
+                          .toLocaleString("pt-BR", {
+                            minimumFractionDigits: 2,
+                            maximumFractionDigits: 2
+                          })
+                      }
                     </div>
                     <div className="text-xs text-slate-500 uppercase">
                       Valor Parado
@@ -632,22 +673,40 @@ const tempoMedio =
                   focus:ring-2
                   focus:ring-blue-500
                 "
-              />
-
+              />  
+          </div>
+              
             <div className="border rounded-lg overflow-hidden">
 
-            <div className="bg-slate-100 px-4 py-2 grid grid-cols-4 text-xs font-bold text-slate-600 uppercase">
-          
+            <div
+              className="
+                bg-slate-100
+                px-4
+                py-2
+                grid
+                grid-cols-[120px_1fr_120px_140px_120px_80px]
+                text-xs
+                font-bold
+                text-slate-600
+                uppercase
+              "
+            >
+            
               <div>Referência</div>
               <div>Descrição</div>
               <div>Saldo</div>
+              <div>Valor</div>
               <div>Últ. Mov.</div>
-          
+              <div>Dias</div>
+            
             </div>
           
             <div className="max-h-[500px] overflow-auto">
           
-              {skusParados7DiasLista.slice(0, 50).map((sku) => (
+              {skusParados7DiasLista
+                .sort((a, b) => b.diasParado - a.diasParado)
+                .slice(0, 50)
+                .map((sku) => (
           
                 <div
                   key={sku.referencia}
@@ -655,7 +714,7 @@ const tempoMedio =
                     px-4
                     py-3
                     grid
-                    grid-cols-4
+                    grid-cols-[120px_1fr_120px_140px_120px_80px]
                     border-t
                     hover:bg-slate-50
                     text-sm
@@ -673,10 +732,46 @@ const tempoMedio =
                   <div>
                     {sku.saldo.toLocaleString()}
                   </div>
-          
-                  <div>
-                    {sku.ultimaMovimentacao}
+
+                  <div className="font-medium text-emerald-700">
+                   {sku.valorTotal > 0
+                    ? sku.valorTotal.toLocaleString(
+                        "pt-BR",
+                        {
+                          style: "currency",
+                          currency: "BRL"
+                        }
+                      )
+                    : "-"}
                   </div>
+
+                    <div>
+                      {sku.ultimaMovimentacao}
+                      </div>
+                      
+                      <div>
+                        <span
+                          className={`
+                            px-2
+                            py-1
+                            rounded
+                            text-xs
+                            font-semibold
+                      
+                            ${
+                              sku.diasParado >= 60
+                                ? "bg-red-100 text-red-700"
+                                : sku.diasParado >= 30
+                                ? "bg-orange-100 text-orange-700"
+                                : sku.diasParado >= 15
+                                ? "bg-yellow-100 text-yellow-700"
+                                : "bg-blue-100 text-blue-700"
+                            }
+                          `}
+                        >
+                          {sku.diasParado}
+                        </span>
+                      </div>
           
                 </div>
           
