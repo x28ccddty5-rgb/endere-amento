@@ -36,7 +36,8 @@ export const DashboardCards: React.FC<DashboardCardsProps> = ({
 }) => {
 
   const [drawerOpen, setDrawerOpen] = useState(false);
-
+  const [drawerDays, setDrawerDays] = useState(7);
+  
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedDays, setSelectedDays] = useState(7);
   
@@ -405,7 +406,11 @@ const tempoMedio =
         <div className="grid grid-cols-1 md:grid-cols-5 gap-3">
 
           <div
-            onClick={() => setDrawerOpen(true)}
+            onClick={() => {
+              setDrawerDays(7);
+              setSelectedDays(7);
+              setDrawerOpen(true);
+            }}
             className="
               bg-white
               border
@@ -426,12 +431,32 @@ const tempoMedio =
               </span>
             </div>
             <div className="text-2xl font-black font-sans text-slate-800 tracking-tight">
-              {filteredSkus.length}
+              {skusParados7Dias}
             </div>
             <div className="text-[9px] text-slate-400 mt-0.5">SKUs sem movimentos nos ultimos 7 dias</div>
           </div>
 
-          <div className="bg-white border border-slate-200 border-t-2 border-t-emerald-400 rounded p-3 shadow-2xs hover:border-slate-350 transition-colors">
+          <div
+            onClick={() => {
+              setDrawerDays(30);
+              setSelectedDays(30);
+              setDrawerOpen(true);
+            }}
+            className="
+              bg-white
+              border
+              border-slate-200
+              border-t-2
+              border-t-emerald-400
+              rounded
+              p-3
+              shadow-2xs
+              hover:border-slate-300
+              hover:shadow-md
+              transition-all
+              cursor-pointer
+            "
+          >
             <div className="flex items-center justify-between mb-1">
               <span className="text-[10px] font-bold text-emerald-805 bg-emerald-50 px-1.5 py-0.5 rounded flex items-center gap-1 uppercase">
                 <ArrowUpRight className="w-3 h-3 text-emerald-555" /> SKUs PARADOS 30 DIAS
