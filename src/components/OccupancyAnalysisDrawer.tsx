@@ -5,6 +5,7 @@ interface OccupancyAnalysisDrawerProps {
   onClose: () => void;
   occupiedPositions: number;
   totalPositions: number;
+  history: any[];
 }
 
 export function OccupancyAnalysisDrawer({
@@ -12,6 +13,7 @@ export function OccupancyAnalysisDrawer({
   onClose,
   occupiedPositions,
   totalPositions,
+  history,
 }: OccupancyAnalysisDrawerProps) {
   if (!isOpen) return null;
 
