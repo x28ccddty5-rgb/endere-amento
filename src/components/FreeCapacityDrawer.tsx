@@ -13,12 +13,45 @@ export function FreeCapacityDrawer({
   onClose,
   freePositions,
   totalPositions,
+  freeSlotsE1,
+  freeSlotsE2,
+  freeSlotsE3,
 }: FreeCapacityDrawerProps) {
   if (!isOpen) return null;
 
   const freePercent =
     (freePositions / totalPositions) * 100;
 
+  const freeDistribution = [
+  {
+    nome: "Estoque 1",
+    valor: freeSlotsE1,
+    percentual:
+      freePositions > 0
+        ? (freeSlotsE1 / freePositions) * 100
+        : 0,
+  },
+  {
+    nome: "Estoque 2",
+    valor: freeSlotsE2,
+    percentual:
+      freePositions > 0
+        ? (freeSlotsE2 / freePositions) * 100
+        : 0,
+  },
+  {
+    nome: "Estoque 3",
+    valor: freeSlotsE3,
+    percentual:
+      freePositions > 0
+        ? (freeSlotsE3 / freePositions) * 100
+        : 0,
+  },
+].sort((a, b) => b.percentual - a.percentual);
+
+const maxFreePercentage =
+  freeDistribution[0]?.percentual || 100;
+  
   return (
     <div className="fixed inset-0 z-50 flex justify-end bg-black/40">
 
@@ -125,7 +158,82 @@ export function FreeCapacityDrawer({
                 </div>
           
               </div>
-          
+
+              <section className="bg-white border rounded-xl p-5 mt-6">
+
+              <h3 className="text-lg font-bold mb-4">
+                3. Onde Está o Espaço Livre?
+              </h3>
+            
+              <div className="space-y-4">
+            
+                {freeDistribution.map((item) => (
+                  <div
+                    key={item.nome}
+                    className="border rounded-xl p-4"
+                  >
+                    <div className="flex justify-between items-center mb-3">
+            
+                      <div>
+            
+                        <div className="font-bold text-slate-800">
+                          {item.nome}
+                        </div>
+            
+                        <div className="text-sm text-slate-500">
+                          {item.valor.toLocaleString()} posições livres
+                        </div>
+            
+                      </div>
+            
+                      <div className="text-2xl font-black text-slate-800">
+                        {item.percentual.toFixed(1)}%
+                      </div>
+            
+                    </div>
+            
+                    <div className="w-full h-4 bg-slate-200 rounded-full overflow-hidden">
+            
+                      <div
+                        className="h-full bg-emerald-600 transition-all"
+                        style={{
+                          width: `${
+                            (item.percentual / maxFreePercentage) * 100
+                          }%`,
+                        }}
+                      />
+            
+                    </div>
+            
+                  </div>
+                ))}
+            
+              </div>
+            
+              <div className="mt-4 border rounded-xl p-4 bg-slate-50">
+            
+                <div className="font-bold text-slate-800 mb-2">
+                  Insight Executivo
+                </div>
+            
+                <p className="text-sm text-slate-700">
+                  O <strong>{freeDistribution[0]?.nome}</strong>
+                  concentra{" "}
+                  <strong>
+                    {freeDistribution[0]?.percentual.toFixed(1)}%
+                  </strong>{" "}
+                  das posições ainda disponíveis.
+                </p>
+            
+                <p className="text-sm text-slate-700 mt-2">
+                  Os demais estoques operam próximos da saturação física,
+                  reduzindo sua capacidade de absorver crescimento operacional.
+                </p>
+            
+              </div>
+            
+            </section>
+              
               <div className="lg:col-span-2 border rounded-xl p-4">
           
                 <div className="text-sm font-bold text-slate-700 mb-3">
