@@ -513,7 +513,9 @@ export function SkuAnalysisDrawer({
     </div>
 
       </section>
-    
+       
+)}
+          
       <section className="bg-white border rounded-xl p-5 mt-6">
     
       <h3 className="text-lg font-bold mb-4">
@@ -556,8 +558,6 @@ export function SkuAnalysisDrawer({
       </div>
     
     </section>
-      
-)}
           
         </div>
 
