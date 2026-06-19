@@ -90,9 +90,121 @@ export function SkuAnalysisDrawer({
     : top20Percent > 40
     ? "text-amber-600"
     : "text-emerald-600";
+
+  const portfolioHealth =
+  top20Percent > 60
+    ? "Alta Dependência"
+    : top20Percent > 40
+    ? "Moderadamente Concentrado"
+    : "Diversificado";
+
+  const portfolioCards =
+  top20Percent > 60
+    ? [
+        {
+          titulo: "Risco Comercial",
+          texto:
+            "Grande dependência de poucos SKUs para sustentar o volume armazenado.",
+        },
+        {
+          titulo: "Risco Operacional",
+          texto:
+            "Oscilações de demanda podem gerar impactos relevantes na ocupação e produção.",
+        },
+        {
+          titulo: "Flexibilidade",
+          texto:
+            "Baixa flexibilidade para absorver mudanças no mix de produtos.",
+        },
+      ]
+    : top20Percent > 40
+    ? [
+        {
+          titulo: "Risco Comercial",
+          texto:
+            "Existe concentração relevante, porém ainda distribuída entre diversos SKUs.",
+        },
+        {
+          titulo: "Risco Operacional",
+          texto:
+            "A operação mantém equilíbrio entre volume e diversidade de produtos.",
+        },
+        {
+          titulo: "Flexibilidade",
+          texto:
+            "Boa capacidade de adaptação a mudanças de demanda e portfólio.",
+        },
+      ]
+    : [
+        {
+          titulo: "Risco Comercial",
+          texto:
+            "Baixa dependência dos principais SKUs.",
+        },
+        {
+          titulo: "Risco Operacional",
+          texto:
+            "Estoque distribuído entre diferentes famílias de produtos.",
+        },
+        {
+          titulo: "Flexibilidade",
+          texto:
+            "Alta capacidade de absorção de mudanças no mix operacional.",
+        },
+      ];
   
   const [selectedRanking, setSelectedRanking] =
   useState<10 | 20 | null>(null);
+
+  const exportRankingCsv = (
+  ranking: typeof top10Skus,
+  nomeArquivo: string
+) => {
+
+  const headers = [
+    "Referência",
+    "Descrição",
+    "Saldo",
+    "Participação (%)"
+  ];
+
+  const rows = ranking.map((sku) => [
+    sku.referencia,
+    sku.descricao,
+    sku.saldo,
+    sku.percentual.toFixed(2)
+  ]);
+
+  const csvContent =
+    "\uFEFF" +
+    [headers, ...rows]
+      .map((row) => row.join(";"))
+      .join("\n");
+
+  const blob = new Blob(
+    [csvContent],
+    {
+      type: "text/csv;charset=utf-8;"
+    }
+  );
+
+  const link =
+    document.createElement("a");
+
+  const url =
+    URL.createObjectURL(blob);
+
+  link.href = url;
+
+  link.download =
+    `${nomeArquivo}_${new Date()
+      .toLocaleDateString("pt-BR")
+      .replace(/\//g, "-")}.csv`;
+
+  link.click();
+
+  URL.revokeObjectURL(url);
+};
   
   return (
     <div className="fixed inset-0 z-50 flex justify-end bg-black/40">
@@ -234,6 +346,30 @@ export function SkuAnalysisDrawer({
           
           </section>
 
+          <section className="bg-white border rounded-xl p-5 mt-6">
+
+            <h3 className="text-lg font-bold mb-4">
+              3. Curva ABC
+            </h3>
+          
+            <div className="border rounded-xl p-5 bg-amber-50 border-amber-200">
+          
+              <div className="text-xl font-bold text-amber-700">
+                🚧 Em Consolidação
+              </div>
+          
+              <p className="text-sm text-slate-700 mt-3">
+                A análise ABC depende do acúmulo de histórico operacional para classificar os SKUs de acordo com sua relevância e movimentação.
+              </p>
+          
+              <p className="text-sm text-slate-700 mt-2">
+                Conforme o histórico for sendo construído, o sistema passará a identificar automaticamente os produtos Classe A, B e C.
+              </p>
+          
+            </div>
+          
+          </section>
+          
           {selectedRanking && (
 
             <section className="bg-white border rounded-xl p-5 mt-6">
@@ -247,6 +383,14 @@ export function SkuAnalysisDrawer({
                 <div className="flex gap-2">
 
                   <button
+                    onClick={() =>
+                      exportRankingCsv(
+                        selectedRanking === 10
+                          ? top10Skus
+                          : top20Skus,
+                        `Top${selectedRanking}_SKUs`
+                      )
+                    }
                     className="px-3 py-1.5 text-sm bg-emerald-600 text-white rounded-lg hover:bg-emerald-700"
                   >
                     Exportar CSV
@@ -368,8 +512,51 @@ export function SkuAnalysisDrawer({
 
     </div>
 
-  </section>
-
+      </section>
+    
+      <section className="bg-white border rounded-xl p-5 mt-6">
+    
+      <h3 className="text-lg font-bold mb-4">
+        4. Saúde do Portfólio
+      </h3>
+    
+      <div className="border rounded-xl p-4 mb-4">
+    
+        <div className="text-xs uppercase text-slate-500">
+          Classificação Atual
+        </div>
+    
+        <div className={`text-4xl font-black ${concentrationColor}`}>
+          {portfolioHealth}
+        </div>
+    
+      </div>
+    
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+    
+        {portfolioCards.map((card) => (
+    
+          <div
+            key={card.titulo}
+            className="border rounded-xl p-4"
+          >
+    
+            <div className="font-bold text-slate-800 mb-2">
+              {card.titulo}
+            </div>
+    
+            <div className="text-sm text-slate-600">
+              {card.texto}
+            </div>
+    
+          </div>
+    
+        ))}
+    
+      </div>
+    
+    </section>
+      
 )}
           
         </div>
