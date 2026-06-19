@@ -245,16 +245,102 @@ export function SkuAnalysisDrawer({
                   Top {selectedRanking} SKUs
                 </h3>
           
-                <button
-                  onClick={() => setSelectedRanking(null)}
-                  className="text-sm text-slate-500 hover:text-slate-800"
-                >
-                  Fechar
-                </button>
+                <div className="flex gap-2">
+
+                  <button
+                    className="px-3 py-1.5 text-sm bg-emerald-600 text-white rounded-lg hover:bg-emerald-700"
+                  >
+                    Exportar CSV
+                  </button>
+                
+                  <button
+                    onClick={() => setSelectedRanking(null)}
+                    className="px-3 py-1.5 text-sm border rounded-lg hover:bg-slate-50"
+                  >
+                    Fechar
+                  </button>
+                
+                </div>
           
               </div>
-          
-              <div className="border rounded-xl overflow-hidden">
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+
+              <div className="border rounded-xl p-4 bg-slate-50">
+            
+                <div className="text-xs uppercase text-slate-500">
+                  Participação
+                </div>
+            
+                <div className="text-4xl font-black text-blue-600">
+                  {selectedRanking === 10
+                    ? top10Percent.toFixed(1)
+                    : top20Percent.toFixed(1)}%
+                </div>
+            
+                <div className="text-sm text-slate-500 mt-2">
+                  Do estoque total armazenado
+                </div>
+            
+              </div>
+            
+              <div className="border rounded-xl p-4 bg-slate-50">
+            
+                <div className="text-xs uppercase text-slate-500">
+                  Impacto Operacional
+                </div>
+            
+                <div className="text-sm text-slate-700 mt-2">
+            
+                  {selectedRanking === 10
+                    ? "Os 10 principais SKUs concentram parcela relevante da operação e influenciam diretamente armazenagem, produção e movimentação."
+                    : "Os 20 principais SKUs representam o núcleo operacional do estoque e concentram grande parte do volume armazenado."}
+            
+                </div>
+            
+              </div>
+            
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+            
+              <div className="border rounded-xl p-4 bg-slate-50">
+            
+                <div className="text-xs uppercase text-slate-500">
+                  Participação
+                </div>
+            
+                <div className="text-4xl font-black text-blue-600">
+                  {selectedRanking === 10
+                    ? top10Percent.toFixed(1)
+                    : top20Percent.toFixed(1)}%
+                </div>
+            
+                <div className="text-sm text-slate-500 mt-2">
+                  Do estoque total armazenado
+                </div>
+            
+              </div>
+            
+              <div className="border rounded-xl p-4 bg-slate-50">
+            
+                <div className="text-xs uppercase text-slate-500">
+                  Impacto Operacional
+                </div>
+            
+                <div className="text-sm text-slate-700 mt-2">
+            
+                  {selectedRanking === 10
+                    ? "Os 10 principais SKUs concentram parcela relevante da operação e influenciam diretamente armazenagem, produção e movimentação."
+                    : "Os 20 principais SKUs representam o núcleo operacional do estoque e concentram grande parte do volume armazenado."}
+            
+                </div>
+            
+              </div>
+            
+            </div>
+            
+            <div className="border rounded-xl overflow-hidden">
 
                 <div
                 className="
