@@ -218,13 +218,67 @@ export function OccupancyAnalysisDrawer({
 
           {/* PROJEÇÃO */}
           <section className="bg-white border rounded-xl p-5">
+          
             <h3 className="text-lg font-bold mb-4">
               3. Projeção de Capacidade
             </h3>
-
-            <div>
-              EM CONSTRUÇÃO
+          
+            <div className="bg-amber-50 border border-amber-200 rounded-xl p-5">
+          
+              <div className="flex items-center gap-3 mb-3">
+                <AlertTriangle className="w-5 h-5 text-amber-600" />
+          
+                <div className="font-bold text-amber-800">
+                  Em aprendizado
+                </div>
+              </div>
+          
+              <p className="text-sm text-slate-700 leading-relaxed">
+                Os dados de ocupação estão sendo consolidados para gerar projeções
+                confiáveis de capacidade.
+              </p>
+          
+              <p className="text-sm text-slate-700 leading-relaxed mt-2">
+                A estimativa de saturação será liberada automaticamente após a
+                consolidação da base histórica de ocupação.
+              </p>
+          
+              <div className="mt-4 grid grid-cols-3 gap-3">
+          
+                <div className="bg-white border rounded-lg p-3">
+                  <div className="text-xs text-slate-500 uppercase">
+                    Base Histórica
+                  </div>
+          
+                  <div className="text-2xl font-black text-slate-700">
+                    Em coleta
+                  </div>
+                </div>
+          
+                <div className="bg-white border rounded-lg p-3">
+                  <div className="text-xs text-slate-500 uppercase">
+                    Tendência
+                  </div>
+          
+                  <div className="text-2xl font-black text-slate-700">
+                    —
+                  </div>
+                </div>
+          
+                <div className="bg-white border rounded-lg p-3">
+                  <div className="text-xs text-slate-500 uppercase">
+                    Saturação
+                  </div>
+          
+                  <div className="text-2xl font-black text-slate-700">
+                    —
+                  </div>
+                </div>
+          
+              </div>
+          
             </div>
+          
           </section>
 
           {/* PRESSÃO */}
