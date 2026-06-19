@@ -1,8 +1,18 @@
+import {
+  X,
+  Shuffle,
+  Package,
+  Clock3,
+  Activity,
+  MoveHorizontal,
+  AlertTriangle
+} from "lucide-react";
 interface OccupationRateDrawerProps {
   isOpen: boolean;
   onClose: () => void;
   occupationRate: number;
 }
+
 export function OccupationRateDrawer({
   isOpen,
   onClose,
@@ -72,10 +82,95 @@ export function OccupationRateDrawer({
           "Necessidade urgente de consolidação",
         ],
 
+        const impactCards =
+        saturationLevel === "healthy"
+          ? [
+              {
+                icon: MoveHorizontal,
+                title: "Flexibilidade",
+                desc: "Maior liberdade operacional",
+              },
+              {
+                icon: Activity,
+                title: "Produtividade",
+                desc: "Fluxo operacional otimizado",
+              },
+              {
+                icon: Package,
+                title: "Capacidade",
+                desc: "Espaço para crescimento",
+              },
+              {
+                icon: Clock3,
+                title: "Agilidade",
+                desc: "Movimentação rápida",
+              },
+              {
+                icon: Shuffle,
+                title: "Consolidação",
+                desc: "Baixa necessidade",
+              },
+            ]
+          : saturationLevel === "attention"
+          ? [
+              {
+                icon: MoveHorizontal,
+                title: "Flexibilidade",
+                desc: "Redução gradual",
+              },
+              {
+                icon: Shuffle,
+                title: "Movimentações",
+                desc: "Tendência de aumento",
+              },
+              {
+                icon: Package,
+                title: "Consolidação",
+                desc: "Maior necessidade",
+              },
+              {
+                icon: Clock3,
+                title: "Tempo Operacional",
+                desc: "Possível aumento",
+              },
+              {
+                icon: Activity,
+                title: "Monitoramento",
+                desc: "Acompanhamento constante",
+              },
+            ]
+          : [
+              {
+                icon: MoveHorizontal,
+                title: "Flexibilidade",
+                desc: "Fortemente reduzida",
+              },
+              {
+                icon: Shuffle,
+                title: "Movimentações",
+                desc: "Alto volume interno",
+              },
+              {
+                icon: Package,
+                title: "Capacidade",
+                desc: "Próxima do limite",
+              },
+              {
+                icon: Clock3,
+                title: "Produtividade",
+                desc: "Risco operacional",
+              },
+              {
+                icon: Activity,
+                title: "Ação Imediata",
+                desc: "Necessária",
+              },
+            ];
+      
         insight:
           "A ocupação física encontra-se em nível crítico de saturação. A continuidade do crescimento sem ações corretivas poderá gerar restrições operacionais e impactos diretos na produtividade.",
       };
-  
+    
   return (
     <div className="fixed inset-0 z-50 flex justify-end bg-black/40">
 
@@ -264,39 +359,66 @@ export function OccupationRateDrawer({
 
         <section className="bg-white border rounded-xl p-5 mt-6">
 
-          <h3 className="text-lg font-bold mb-4">
-            4. Consequências da Saturação
-          </h3>
-        
-          <div className="border rounded-xl p-5 bg-slate-50">
-        
-            <div className="text-xl font-bold mb-2">
-              {saturationContent.title}
-            </div>
-        
-            <div className="text-sm text-slate-600 mb-5">
-              Ocupação atual: {occupationRate.toFixed(1)}%
-            </div>
-        
-            <div className="text-sm text-slate-700 mb-5">
-              {saturationContent.description}
-            </div>
-        
-            <div className="grid grid-cols-2 gap-3">
-        
-              {saturationContent.impacts.map((impact) => (
-                <div
-                  key={impact}
-                  className="border rounded-lg p-3 bg-white"
-                >
-                  {impact}
+            <h3 className="text-lg font-bold mb-4">
+              4. Consequências da Saturação
+            </h3>
+            
+            <div className="bg-amber-50 border border-amber-200 rounded-xl p-5">
+            
+              <div className="flex items-center gap-3 mb-4">
+            
+                <AlertTriangle className="w-8 h-8 text-amber-500" />
+            
+                <div>
+            
+                  <div className="text-lg font-bold text-amber-700">
+                    Cenário Atual: {occupationRate.toFixed(1)}% de ocupação
+                  </div>
+            
+                  <div className="font-semibold text-slate-800">
+                    {saturationContent.title}
+                  </div>
+            
                 </div>
-              ))}
-        
+            
+              </div>
+            
+              <p className="text-sm text-slate-700 mb-5">
+                {saturationContent.description}
+              </p>
+            
+              <div className="border-t border-amber-200 pt-5">
+            
+                <div className="grid grid-cols-5 gap-4">
+            
+                  {impactCards.map((item) => {
+                    const Icon = item.icon;
+            
+                    return (
+                      <div
+                        key={item.title}
+                        className="text-center"
+                      >
+                        <Icon className="w-8 h-8 mx-auto mb-3 text-amber-500" />
+            
+                        <div className="font-semibold text-sm text-slate-800">
+                          {item.title}
+                        </div>
+            
+                        <div className="text-xs text-slate-500 mt-1">
+                          {item.desc}
+                        </div>
+            
+                      </div>
+                    );
+                  })}
+            
+                </div>
+            
+              </div>
+            
             </div>
-        
-          </div>
-        
+          
         </section>
 
         <section className="bg-white border rounded-xl p-5 mt-6">
