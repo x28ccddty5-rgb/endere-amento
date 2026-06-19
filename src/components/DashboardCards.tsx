@@ -1016,10 +1016,10 @@ const tempoMedio =
             onClose={() => setShowOccupationAnalysis(false)}
             occupationRate={occupationRate}
           />
-            <SkuAnalysisDrawer
             isOpen={showSkuAnalysis}
             onClose={() => setShowSkuAnalysis(false)}
             uniqueSKUs={uniqueSKUs}
+            slots={slots}
           />
     </div>
   );
