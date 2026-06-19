@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 import { OccupancyAnalysisDrawer } from "./OccupancyAnalysisDrawer";
 import { FreeCapacityDrawer } from "./FreeCapacityDrawer";
+import { OccupationRateDrawer } from "./OccupationRateDrawer";
 import { 
   Box, 
   Layers, 
