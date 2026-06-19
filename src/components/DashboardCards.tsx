@@ -36,6 +36,9 @@ export const DashboardCards: React.FC<DashboardCardsProps> = ({
 }) => {
 
   const [drawerOpen, setDrawerOpen] = useState(false);
+
+  const [searchTerm, setSearchTerm] = useState("");
+  const [selectedDays, setSelectedDays] = useState(7);
   
   // 1. Calculate slot statuses
   const totalSlots = 657 + 1373 + 1288;
@@ -232,6 +235,26 @@ const tempoMedio =
         }, 0) / divergenciasCorrigidas.length
       ).toFixed(1)
     : "0.0";
+
+    const filteredSkus = skusParados7DiasLista.filter((sku) => {
+
+      const matchBusca =
+        sku.referencia
+          .toLowerCase()
+          .includes(searchTerm.toLowerCase()) ||
+    
+        sku.descricao
+          .toLowerCase()
+          .includes(searchTerm.toLowerCase());
+    
+      const matchPeriodo =
+        selectedDays === 60
+          ? sku.diasParado >= 60
+          : sku.diasParado >= selectedDays;
+    
+      return matchBusca && matchPeriodo;
+    
+    });
   
   return (
     <div className="space-y-5" id="dashboard-container">
@@ -336,7 +359,7 @@ const tempoMedio =
               </span>
             </div>
             <div className="text-2xl font-black font-sans text-slate-800 tracking-tight">
-              {skusParados7Dias}
+              {filteredSkus.length}
             </div>
             <div className="text-[9px] text-slate-400 mt-0.5">SKUs sem movimentos nos ultimos 7 dias</div>
           </div>
@@ -618,19 +641,47 @@ const tempoMedio =
                     Período:
                   </span>
               
-                  <button className="px-3 py-1 text-sm rounded bg-blue-600 text-white">
+                  <button
+                    onClick={() => setSelectedDays(7)}
+                    className={`px-3 py-1 text-sm rounded ${
+                      selectedDays === 7
+                        ? "bg-blue-600 text-white"
+                        : "border hover:bg-slate-50"
+                    }`}
+                  >
                     7 dias
                   </button>
               
-                  <button className="px-3 py-1 text-sm rounded border hover:bg-slate-50">
-                    15 dias
-                  </button>
+                  <button
+                  onClick={() => setSelectedDays(15)}
+                  className={`px-3 py-1 text-sm rounded ${
+                    selectedDays === 15
+                      ? "bg-blue-600 text-white"
+                      : "border hover:bg-slate-50"
+                  }`}
+                >
+                  15 dias
+                </button>
               
-                  <button className="px-3 py-1 text-sm rounded border hover:bg-slate-50">
+                  <button
+                    onClick={() => setSelectedDays(30)}
+                    className={`px-3 py-1 text-sm rounded ${
+                      selectedDays === 30
+                        ? "bg-blue-600 text-white"
+                        : "border hover:bg-slate-50"
+                    }`}
+                  >
                     30 dias
                   </button>
               
-                  <button className="px-3 py-1 text-sm rounded border hover:bg-slate-50">
+                  <button
+                    onClick={() => setSelectedDays(60)}
+                    className={`px-3 py-1 text-sm rounded ${
+                      selectedDays === 60
+                        ? "bg-blue-600 text-white"
+                        : "border hover:bg-slate-50"
+                    }`}
+                  >
                     60+
                   </button>
               
@@ -661,6 +712,8 @@ const tempoMedio =
 
               <input
                 type="text"
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
                 placeholder="Buscar SKU ou descrição..."
                 className="
                   w-full
@@ -705,7 +758,7 @@ const tempoMedio =
           
               {skusParados7DiasLista
                 .sort((a, b) => b.diasParado - a.diasParado)
-                .slice(0, 50)
+                .slice(0, 100)
                 .map((sku) => (
           
                 <div
