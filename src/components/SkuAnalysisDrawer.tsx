@@ -78,11 +78,18 @@ export function SkuAnalysisDrawer({
   100 - top20Percent;
 
   const concentrationLevel =
-  top20Percent > 70
+  top20Percent > 60
     ? "Alta"
-    : top20Percent > 50
+    : top20Percent > 40
     ? "Média"
     : "Baixa";
+
+  const concentrationColor =
+  top20Percent > 60
+    ? "text-red-600"
+    : top20Percent > 40
+    ? "text-amber-600"
+    : "text-emerald-600";
   
   const [selectedRanking, setSelectedRanking] =
   useState<10 | 20 | null>(null);
@@ -135,8 +142,8 @@ export function SkuAnalysisDrawer({
                 Top 20 SKUs
               </div>
               
-              <div className="text-5xl font-black text-emerald-600">
-                {top20Percent.toFixed(1)}%
+              <div className={`text-4xl font-black ${concentrationColor}`}>
+              {top20Percent.toFixed(1)}%
               </div>
               
               <div className="text-xs text-slate-500 mt-2">
@@ -213,15 +220,7 @@ export function SkuAnalysisDrawer({
                   Concentração
                 </div>
           
-                <div
-                  className={`text-4xl font-black ${
-                    concentrationLevel === "Alta"
-                      ? "text-red-600"
-                      : concentrationLevel === "Média"
-                      ? "text-amber-600"
-                      : "text-emerald-600"
-                  }`}
-                >
+                <div className={`text-4xl font-black ${concentrationColor}`}>
                   {concentrationLevel}
                 </div>
           
@@ -272,7 +271,7 @@ export function SkuAnalysisDrawer({
                   Participação
                 </div>
             
-                <div className="text-4xl font-black text-blue-600">
+                <div className={`text-4xl font-black ${concentrationColor}`}>
                   {selectedRanking === 10
                     ? top10Percent.toFixed(1)
                     : top20Percent.toFixed(1)}%
@@ -301,46 +300,6 @@ export function SkuAnalysisDrawer({
               </div>
             
             </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
-            
-              <div className="border rounded-xl p-4 bg-slate-50">
-            
-                <div className="text-xs uppercase text-slate-500">
-                  Participação
-                </div>
-            
-                <div className="text-4xl font-black text-blue-600">
-                  {selectedRanking === 10
-                    ? top10Percent.toFixed(1)
-                    : top20Percent.toFixed(1)}%
-                </div>
-            
-                <div className="text-sm text-slate-500 mt-2">
-                  Do estoque total armazenado
-                </div>
-            
-              </div>
-            
-              <div className="border rounded-xl p-4 bg-slate-50">
-            
-                <div className="text-xs uppercase text-slate-500">
-                  Impacto Operacional
-                </div>
-            
-                <div className="text-sm text-slate-700 mt-2">
-            
-                  {selectedRanking === 10
-                    ? "Os 10 principais SKUs concentram parcela relevante da operação e influenciam diretamente armazenagem, produção e movimentação."
-                    : "Os 20 principais SKUs representam o núcleo operacional do estoque e concentram grande parte do volume armazenado."}
-            
-                </div>
-            
-              </div>
-            
-            </div>
-            
-            <div className="border rounded-xl overflow-hidden">
 
                 <div
                 className="
