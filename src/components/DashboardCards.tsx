@@ -461,12 +461,12 @@ const tempoMedio =
               <div className="p-4 border-b flex items-center justify-between">
         
                 <div>
-                  <h2 className="text-lg font-bold">
-                    SKUs Parados
+                  <h2 className="text-xl font-bold text-slate-800">
+                    SKUs Sem Movimentação
                   </h2>
-        
+                  
                   <p className="text-sm text-slate-500">
-                    Painel em construção
+                    Monitoramento de estoque sem giro
                   </p>
                 </div>
         
@@ -479,8 +479,52 @@ const tempoMedio =
         
               </div>
         
-              <div className="p-4">
-                Conteúdo será criado na próxima etapa
+              <div className="p-4 space-y-4">
+
+                {/* Cards Resumo */}
+                <div className="grid grid-cols-2 gap-3">
+              
+                  <div className="bg-slate-50 border rounded-lg p-3">
+                    <div className="text-2xl font-black text-slate-800">
+                      {skusParados7Dias}
+                    </div>
+                    <div className="text-xs text-slate-500 uppercase">
+                      SKUs Parados
+                    </div>
+                  </div>
+              
+                  <div className="bg-slate-50 border rounded-lg p-3">
+                    <div className="text-2xl font-black text-slate-800">
+                      --
+                    </div>
+                    <div className="text-xs text-slate-500 uppercase">
+                      Peças Paradas
+                    </div>
+                  </div>
+              
+                  <div className="bg-slate-50 border rounded-lg p-3">
+                    <div className="text-2xl font-black text-emerald-600">
+                      R$ --
+                    </div>
+                    <div className="text-xs text-slate-500 uppercase">
+                      Valor Parado
+                    </div>
+                  </div>
+              
+                  <div className="bg-slate-50 border rounded-lg p-3">
+                    <div className="text-2xl font-black text-blue-600">
+                      {uniqueSKUs > 0
+                        ? ((skusParados7Dias / uniqueSKUs) * 100).toFixed(1)
+                        : "0"}
+                      %
+                    </div>
+                    <div className="text-xs text-slate-500 uppercase">
+                      Representatividade
+                    </div>
+                  </div>
+              
+                </div>
+              
               </div>
         
             </div>
