@@ -5,7 +5,9 @@ interface OccupancyAnalysisDrawerProps {
   onClose: () => void;
   occupiedPositions: number;
   totalPositions: number;
-  history: any[];
+  occupiedSlotsE1: number;
+  occupiedSlotsE2: number;
+  occupiedSlotsE3: number;
 }
 
 export function OccupancyAnalysisDrawer({
@@ -13,7 +15,9 @@ export function OccupancyAnalysisDrawer({
   onClose,
   occupiedPositions,
   totalPositions,
-  history,
+  occupiedSlotsE1,
+  occupiedSlotsE2,
+  occupiedSlotsE3,
 }: OccupancyAnalysisDrawerProps) {
   if (!isOpen) return null;
 
@@ -283,13 +287,66 @@ export function OccupancyAnalysisDrawer({
 
           {/* PRESSÃO */}
           <section className="bg-white border rounded-xl p-5">
-            <h3 className="text-lg font-bold mb-4">
-              4. Principais Pressões do Estoque
-            </h3>
 
-            <div>
-              EM CONSTRUÇÃO
+            <h3 className="text-lg font-bold mb-4">
+              4. Distribuição da Ocupação
+            </h3>
+          
+            <div className="grid grid-cols-3 gap-4">
+          
+              <div className="border rounded-xl p-4">
+                <div className="text-xs uppercase text-slate-500">
+                  Estoque 1
+                </div>
+          
+                <div className="text-3xl font-black text-slate-800">
+                  {occupiedSlotsE1}
+                </div>
+          
+                <div className="text-sm text-slate-500">
+                  {(
+                    (occupiedSlotsE1 / occupiedPositions) *
+                    100
+                  ).toFixed(1)}%
+                </div>
+              </div>
+          
+              <div className="border rounded-xl p-4">
+                <div className="text-xs uppercase text-slate-500">
+                  Estoque 2
+                </div>
+          
+                <div className="text-3xl font-black text-slate-800">
+                  {occupiedSlotsE2}
+                </div>
+          
+                <div className="text-sm text-slate-500">
+                  {(
+                    (occupiedSlotsE2 / occupiedPositions) *
+                    100
+                  ).toFixed(1)}%
+                </div>
+              </div>
+          
+              <div className="border rounded-xl p-4">
+                <div className="text-xs uppercase text-slate-500">
+                  Estoque 3
+                </div>
+          
+                <div className="text-3xl font-black text-slate-800">
+                  {occupiedSlotsE3}
+                </div>
+          
+                <div className="text-sm text-slate-500">
+                  {(
+                    (occupiedSlotsE3 / occupiedPositions) *
+                    100
+                  ).toFixed(1)}%
+                </div>
+              </div>
+          
             </div>
+          
           </section>
 
         </div>
