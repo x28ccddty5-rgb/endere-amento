@@ -1,3 +1,4 @@
+import React, { useState } from "react";
 interface SkuAnalysisDrawerProps {
   isOpen: boolean;
   onClose: () => void;
@@ -57,6 +58,9 @@ export function SkuAnalysisDrawer({
   
   const top20Skus =
   skuRanking.slice(0, 20);
+
+  const top10Skus =
+  skuRanking.slice(0, 10);
   
   const top20Percent =
   top20Skus.reduce(
@@ -64,9 +68,24 @@ export function SkuAnalysisDrawer({
     0
   );
 
+  const top10Percent =
+  top10Skus.reduce(
+    (acc, sku) => acc + sku.percentual,
+    0
+  );
+  
   const remainingPercent =
   100 - top20Percent;
+
+  const concentrationLevel =
+  top20Percent > 70
+    ? "Alta"
+    : top20Percent > 50
+    ? "Média"
+    : "Baixa";
   
+  const [selectedRanking, setSelectedRanking] =
+  useState<10 | 20 | null>(null);
   
   return (
     <div className="fixed inset-0 z-50 flex justify-end bg-black/40">
@@ -139,34 +158,6 @@ export function SkuAnalysisDrawer({
               <div className="text-xs text-slate-500 mt-2">
                 Participação restante
               </div>
-
-                <div className="mt-5 border rounded-xl p-4 bg-slate-50">
-
-                  <div className="font-bold text-slate-800 mb-2">
-                    Insight Executivo
-                  </div>
-                
-                  <p className="text-sm text-slate-700">
-                    Os 20 principais SKUs representam
-                    {" "}
-                    <strong>{top20Percent.toFixed(1)}%</strong>
-                    {" "}
-                    de todo o volume armazenado atualmente.
-                  </p>
-                
-                  <p className="text-sm text-slate-700 mt-2">
-                    Os demais
-                    {" "}
-                    <strong>{Math.max(uniqueSKUs - 20, 0)}</strong>
-                    {" "}
-                    SKUs representam
-                    {" "}
-                    <strong>{remainingPercent.toFixed(1)}%</strong>
-                    {" "}
-                    do estoque total.
-                  </p>
-                
-                </div>
                 
               </div>
 
@@ -174,6 +165,166 @@ export function SkuAnalysisDrawer({
 
           </section>
 
+          <section className="bg-white border rounded-xl p-5 mt-6">
+
+            <h3 className="text-lg font-bold mb-4">
+              2. Distribuição dos SKUs
+            </h3>
+          
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          
+              <div
+                onClick={() => setSelectedRanking(10)}
+                className="border rounded-xl p-4 cursor-pointer hover:bg-slate-50"
+              >
+                <div className="text-xs uppercase text-slate-500">
+                  Top 10 SKUs
+                </div>
+          
+                <div className="text-4xl font-black text-blue-600">
+                  {top10Percent.toFixed(1)}%
+                </div>
+          
+                <div className="text-xs text-slate-500 mt-2">
+                  Clique para visualizar
+                </div>
+              </div>
+          
+              <div
+                onClick={() => setSelectedRanking(20)}
+                className="border rounded-xl p-4 cursor-pointer hover:bg-slate-50"
+              >
+                <div className="text-xs uppercase text-slate-500">
+                  Top 20 SKUs
+                </div>
+          
+                <div className="text-4xl font-black text-emerald-600">
+                  {top20Percent.toFixed(1)}%
+                </div>
+          
+                <div className="text-xs text-slate-500 mt-2">
+                  Clique para visualizar
+                </div>
+              </div>
+          
+              <div className="border rounded-xl p-4">
+          
+                <div className="text-xs uppercase text-slate-500">
+                  Concentração
+                </div>
+          
+                <div
+                  className={`text-4xl font-black ${
+                    concentrationLevel === "Alta"
+                      ? "text-red-600"
+                      : concentrationLevel === "Média"
+                      ? "text-amber-600"
+                      : "text-emerald-600"
+                  }`}
+                >
+                  {concentrationLevel}
+                </div>
+          
+                <div className="text-xs text-slate-500 mt-2">
+                  Dependência dos principais SKUs
+                </div>
+          
+              </div>
+          
+            </div>
+          
+          </section>
+
+          {selectedRanking && (
+
+            <section className="bg-white border rounded-xl p-5 mt-6">
+          
+              <div className="flex items-center justify-between mb-4">
+          
+                <h3 className="text-lg font-bold">
+                  Top {selectedRanking} SKUs
+                </h3>
+          
+                <button
+                  onClick={() => setSelectedRanking(null)}
+                  className="text-sm text-slate-500 hover:text-slate-800"
+                >
+                  Fechar
+                </button>
+          
+              </div>
+          
+              <div className="border rounded-xl overflow-hidden">
+
+                <div
+                className="
+                  bg-slate-100
+                  px-4
+                  py-3
+                  grid
+                  grid-cols-[140px_1fr_140px_100px]
+                  text-xs
+                  font-bold
+                  uppercase
+                  text-slate-600
+                "
+              >
+        
+                <div>Referência</div>
+                <div>Descrição</div>
+                <div>Saldo</div>
+                <div>%</div>
+        
+              </div>
+
+            <div className="max-h-[450px] overflow-auto">
+
+        {(selectedRanking === 10
+          ? top10Skus
+          : top20Skus
+        ).map((sku) => (
+
+                  <div
+            key={sku.referencia}
+            className="
+              px-4
+              py-3
+              grid
+              grid-cols-[140px_1fr_140px_100px]
+              border-t
+              hover:bg-slate-50
+              text-sm
+            "
+          >
+
+            <div className="font-semibold">
+              {sku.referencia}
+            </div>
+
+            <div className="truncate">
+              {sku.descricao}
+            </div>
+
+            <div>
+              {sku.saldo.toLocaleString()}
+            </div>
+
+            <div className="font-semibold text-blue-600">
+              {sku.percentual.toFixed(1)}%
+            </div>
+
+          </div>
+
+          ))}
+
+      </div>
+
+    </div>
+
+  </section>
+
+)}
+          
         </div>
 
       </div>
