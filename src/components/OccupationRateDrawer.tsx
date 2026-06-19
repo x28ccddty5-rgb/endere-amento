@@ -82,7 +82,11 @@ export function OccupationRateDrawer({
           "Necessidade urgente de consolidação",
         ],
 
-        const impactCards =
+        insight:
+          "A ocupação física encontra-se em nível crítico de saturação. A continuidade do crescimento sem ações corretivas poderá gerar restrições operacionais e impactos diretos na produtividade.",
+      };
+
+      const impactCards =
         saturationLevel === "healthy"
           ? [
               {
@@ -167,10 +171,7 @@ export function OccupationRateDrawer({
               },
             ];
       
-        insight:
-          "A ocupação física encontra-se em nível crítico de saturação. A continuidade do crescimento sem ações corretivas poderá gerar restrições operacionais e impactos diretos na produtividade.",
-      };
-    
+  
   return (
     <div className="fixed inset-0 z-50 flex justify-end bg-black/40">
 
