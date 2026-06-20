@@ -21,9 +21,12 @@ export function TotalStockDrawer({
     totalSaldo - stockTarget;
 
   const stockPressurePercent =
-  Math.min(
-    (totalSaldo / stockTarget) * 100,
-    120
+  Math.max(
+    0,
+    Math.min(
+      ((stockEfficiency - 90) / 20) * 100,
+      100
+    )
   );
   
   const stockStatus =
@@ -37,7 +40,7 @@ export function TotalStockDrawer({
   stockStatus === "critical"
     ? "text-red-600"
     : stockStatus === "warning"
-    ? "text-amber-600"
+    ? "text-yellow-600"
     : "text-emerald-600";
 
   const stockTitle =
@@ -202,9 +205,11 @@ export function TotalStockDrawer({
       
             <div
               className={`text-4xl font-black ${
-                stockDifference > 0
-                  ? "text-amber-600"
-                  : "text-emerald-600"
+                stockStatus === "critical"
+                ? "text-red-600"
+                : stockStatus === "warning"
+                ? "text-amber-500"
+                : "text-emerald-600"
               }`}
             >
               {stockDifference > 0 ? "+" : ""}
@@ -237,10 +242,10 @@ export function TotalStockDrawer({
       
           </div>
       
-          <div className="w-full h-5 bg-slate-200 rounded-full overflow-hidden">
+          <div className="w-full h-6 bg-slate-200 rounded-full overflow-hidden">
       
             <div
-              className={`h-full ${
+              className={`h-full rounded-full shadow-sm ${
                 stockStatus === "critical"
                   ? "bg-red-500"
                   : stockStatus === "warning"
@@ -267,7 +272,7 @@ export function TotalStockDrawer({
             </div>
       
             <div>
-              <div className="font-bold text-amber-600">
+              <div className="font-bold text-yellow-600">
                 🟡 100% a 105%
               </div>
       
