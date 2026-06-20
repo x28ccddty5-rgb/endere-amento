@@ -118,6 +118,28 @@ export function TotalStockDrawer({
     : stockStatus === "warning"
     ? `O estoque atual encontra-se em ${totalSaldo.toLocaleString()} peças, operando em ${stockEfficiency.toFixed(1)}% da meta definida para a unidade. Embora ainda não represente um cenário crítico, o excedente de ${stockDifference.toLocaleString()} peças exige monitoramento contínuo para evitar aumento da pressão operacional.`
     : `O estoque atual encontra-se em ${totalSaldo.toLocaleString()} peças, operando em ${stockEfficiency.toFixed(1)}% da meta definida para a unidade. O volume armazenado permanece dentro dos limites recomendados, garantindo capacidade operacional e flexibilidade para absorção de demanda.`;
+
+  const pressureImpacts =
+  stockStatus === "critical"
+    ? [
+        "🏢 Saturação física",
+        "💰 Capital elevado",
+        "🔄 Consolidação intensa",
+        "⚠️ Risco operacional",
+      ]
+    : stockStatus === "warning"
+    ? [
+        "🏢 Maior ocupação física",
+        "💰 Capital imobilizado",
+        "🔄 Necessidade de consolidação",
+        "⚠️ Menor margem produtiva",
+      ]
+    : [
+        "🏢 Capacidade disponível",
+        "💰 Estoque saudável",
+        "🔄 Alta flexibilidade",
+        "✅ Baixo risco operacional",
+      ];
   
   return (
     <div className="fixed inset-0 z-50 flex justify-end bg-black/40">
@@ -242,15 +264,7 @@ export function TotalStockDrawer({
       
           </div>
       
-          <div className="relative w-full h-6 bg-slate-200 rounded-full overflow-hidden">
-
-          {/* Linha da Meta (100%) */}
-            <div
-            className="absolute -top-6 text-xs font-bold text-slate-700"
-            style={{ left: "50%", transform: "translateX(-50%)" }}
-          >
-            META
-          </div>
+          <div className="relative w-full h-8 bg-slate-200 rounded-full overflow-hidden">
         
           <div
             className={`h-full rounded-full shadow-sm ${
@@ -264,7 +278,14 @@ export function TotalStockDrawer({
               width: `${stockPressurePercent}%`,
             }}
           />
-        
+
+        <div
+          className="absolute top-0 bottom-0 w-1 bg-slate-800 z-20"
+          style={{
+            left: `${stockPressurePercent}%`,
+          }}
+        />
+            
         </div>
       
           <div className="grid grid-cols-3 mt-4 text-center">
@@ -299,29 +320,46 @@ export function TotalStockDrawer({
               </div>
             </div>
 
-          <div
-            className={`mt-6 border rounded-xl p-4 ${
-              stockStatus === "critical"
-                ? "bg-red-50 border-red-200"
-                : stockStatus === "warning"
-                ? "bg-amber-50 border-amber-200"
-                : "bg-emerald-50 border-emerald-200"
-            }`}
-          >
-          
-            <div className="font-bold mb-2">
-              {stockTitle}
-            </div>
-          
-            <p className="text-sm text-slate-700">
-              O estoque opera em
-              <strong> {stockEfficiency.toFixed(1)}%</strong>
-              da meta operacional,
-              representando um excedente de
-              <strong> {stockDifference.toLocaleString()} peças</strong>.
-            </p>
-          
+          <div className="flex justify-between mt-2 text-xs">
+
+          <span className="text-slate-500">
+            90%
+          </span>
+        
+          <span className={`font-bold ${stockColor}`}>
+            Atual: {stockEfficiency.toFixed(1)}%
+          </span>
+        
+          <span className="text-slate-500">
+            110%
+          </span>
+        
+        </div>
+
+          <div className="mt-8">
+
+          <div className="font-bold text-slate-800 mb-4">
+            Consequências Operacionais
           </div>
+        
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        
+            {pressureImpacts.map((impact) => (
+        
+              <div
+                key={impact}
+                className="border rounded-xl p-4 bg-slate-50 text-center"
+              >
+                <div className="font-medium text-sm">
+                  {impact}
+                </div>
+              </div>
+        
+            ))}
+        
+          </div>
+        
+        </div>
             
           </div>
       
