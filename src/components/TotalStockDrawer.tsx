@@ -175,8 +175,8 @@ export function TotalStockDrawer({
       
           <div className="border rounded-xl p-4">
       
-            <div className="text-xs uppercase text-slate-500">
-              Saldo Atual
+            <div className="text-xs uppercase text-slate-500 flex items-center gap-2">
+              📦 Saldo Atual
             </div>
       
             <div className="text-4xl font-black text-slate-800">
@@ -187,11 +187,11 @@ export function TotalStockDrawer({
       
           <div className="border rounded-xl p-4">
       
-            <div className="text-xs uppercase text-slate-500">
-              Meta Operacional
+            <div className="text-xs uppercase text-slate-500 flex items-center gap-2">
+              🎯 Meta Operacional
             </div>
       
-            <div className="text-4xl font-black text-slate-800">
+            <div className="text-3xl font-black text-slate-800">
               {stockTarget.toLocaleString()}
             </div>
       
@@ -199,8 +199,8 @@ export function TotalStockDrawer({
       
           <div className="border rounded-xl p-4">
       
-            <div className="text-xs uppercase text-slate-500">
-              Diferença
+            <div className="text-xs uppercase text-slate-500 flex items-center gap-2">
+              📈 Diferença
             </div>
       
             <div
@@ -242,22 +242,28 @@ export function TotalStockDrawer({
       
           </div>
       
-          <div className="w-full h-6 bg-slate-200 rounded-full overflow-hidden">
-      
-            <div
-              className={`h-full rounded-full shadow-sm ${
-                stockStatus === "critical"
-                  ? "bg-red-500"
-                  : stockStatus === "warning"
-                  ? "bg-amber-500"
-                  : "bg-emerald-500"
-              }`}
-              style={{
-                width: `${stockPressurePercent}%`,
-              }}
-            />
-      
-          </div>
+          <div className="relative w-full h-6 bg-slate-200 rounded-full overflow-hidden">
+
+          {/* Linha da Meta (100%) */}
+          <div
+            className="absolute top-0 bottom-0 w-1 bg-slate-700 z-10"
+            style={{ left: "50%" }}
+          />
+        
+          <div
+            className={`h-full rounded-full shadow-sm ${
+              stockStatus === "critical"
+                ? "bg-red-500"
+                : stockStatus === "warning"
+                ? "bg-amber-500"
+                : "bg-emerald-500"
+            }`}
+            style={{
+              width: `${stockPressurePercent}%`,
+            }}
+          />
+        
+        </div>
       
           <div className="grid grid-cols-3 mt-4 text-center">
       
@@ -290,7 +296,30 @@ export function TotalStockDrawer({
                 Crítico
               </div>
             </div>
-      
+
+          <div className="mt-6 border rounded-xl p-4 bg-slate-50">
+
+            <div className="font-bold text-slate-800 mb-2">
+              Impacto Atual
+            </div>
+          
+            <p className="text-sm text-slate-700">
+          
+              O estoque encontra-se
+          
+              <strong>
+                {" "}
+                {stockDifference > 0
+                  ? `${stockDifference.toLocaleString()} peças acima`
+                  : `${Math.abs(stockDifference).toLocaleString()} peças abaixo`}
+              </strong>
+          
+              {" "}da meta operacional definida para a unidade.
+          
+            </p>
+          
+          </div>
+            
           </div>
       
         </div>
