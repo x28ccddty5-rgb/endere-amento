@@ -76,6 +76,35 @@ export function OccupancyAnalysisDrawer({
       occupancyMarkerPosition,
       100
     );
+
+    const occupancyStatus =
+  occupancyPercent >= 95
+    ? "critical"
+    : occupancyPercent >= 85
+    ? "warning"
+    : "healthy";
+
+    const occupancyStyles =
+      occupancyStatus === "critical"
+        ? {
+            bg: "bg-red-50",
+            border: "border-red-200",
+            text: "text-red-700",
+            label: "text-red-600",
+          }
+        : occupancyStatus === "warning"
+        ? {
+            bg: "bg-amber-50",
+            border: "border-amber-200",
+            text: "text-amber-700",
+            label: "text-amber-600",
+          }
+        : {
+            bg: "bg-emerald-50",
+            border: "border-emerald-200",
+            text: "text-emerald-700",
+            label: "text-emerald-600",
+          };
   
   return (
     <div className="fixed inset-0 z-50 flex justify-end bg-black/40">
@@ -164,12 +193,28 @@ export function OccupancyAnalysisDrawer({
   {/* Status Atual */}
   <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
 
-    <div className="border rounded-xl p-4 bg-red-50 border-red-200">
-      <div className="text-sm font-bold text-red-600 uppercase">
+    <div
+      className={`
+        border rounded-xl p-4
+        ${occupancyStyles.bg}
+        ${occupancyStyles.border}
+      `}
+    >
+      <div
+      className={`
+        text-sm font-bold uppercase
+        ${occupancyStyles.label}
+      `}
+    >
         Status Atual
       </div>
 
-      <div className="text-3xl font-black text-red-700 mt-2">
+      <div
+        className={`
+          text-3xl font-black mt-2
+          ${occupancyStyles.text}
+        `}
+      >
         {occupancyPercent >= 95
           ? "CRÍTICO"
           : occupancyPercent >= 85
@@ -186,7 +231,12 @@ export function OccupancyAnalysisDrawer({
         {totalPositions.toLocaleString()} posições ocupadas
       </div>
 
-      <div className="text-sm font-semibold text-red-700 mt-2">
+      <div
+        className={`
+          text-sm font-semibold mt-2
+          ${occupancyStyles.text}
+        `}
+      >
         Restam apenas {freePositions.toLocaleString()} posições livres
       </div>
     </div>
