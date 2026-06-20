@@ -374,11 +374,12 @@ export function TotalStockDrawer({
               <div className="text-xs text-slate-500">
                 Crítico
               </div>
+              
             </div>
 
           </div>
 
-          <div className="mt-8">
+         <div className="mt-8">
 
           <div className="font-bold text-slate-800 mb-4">
             Impactos do Cenário Atual
@@ -422,10 +423,6 @@ export function TotalStockDrawer({
         
           </div>
         
-        </div>
-            
-          </div>
-      
         </div>
       
       </section>
