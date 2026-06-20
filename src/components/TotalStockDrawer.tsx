@@ -321,29 +321,72 @@ export function TotalStockDrawer({
         
           </div>
         
-          <div className={`text-lg font-bold ${stockColor}`}>
-            {stockEfficiency.toFixed(1)}%
+          <div className="flex items-center gap-3">
+
+            <div className={`text-lg font-bold ${stockColor}`}>
+              {stockEfficiency.toFixed(1)}%
+            </div>
+          
+            <div
+              className={`
+                px-2 py-1 rounded-full text-xs font-bold
+                ${
+                  stockStatus === "critical"
+                    ? "bg-red-100 text-red-700"
+                    : stockStatus === "warning"
+                    ? "bg-amber-100 text-amber-700"
+                    : "bg-emerald-100 text-emerald-700"
+                }
+              `}
+            >
+              {stockStatus === "critical"
+                ? "CRÍTICO"
+                : stockStatus === "warning"
+                ? "ATENÇÃO"
+                : "SAUDÁVEL"}
+            </div>
+          
           </div>
         
         </div>
       
-          <div className="relative w-full h-8 bg-slate-200 rounded-full overflow-hidden">
-        
-          <div
-            className={`h-full rounded-full shadow-sm ${
-              stockStatus === "critical"
-                ? "bg-red-500"
-                : stockStatus === "warning"
-                ? "bg-amber-500"
-                : "bg-emerald-500"
-            }`}
-            style={{
-              width: `${stockPressurePercent}%`,
-            }}
-          />
-            
+        <div className="relative w-full h-8 rounded-full overflow-hidden flex">
+
+            <div className="w-[80%] bg-emerald-500" />
+          
+            <div className="w-[10%] bg-amber-500" />
+          
+            <div className="w-[10%] bg-red-500" />
+          
+            <div
+              className="absolute top-0 bottom-0 w-1 bg-white border border-slate-800 z-20"
+              style={{
+                left: `${Math.min(stockPressurePercent, 100)}%`,
+              }}
+            />
+          
         </div>
-      
+
+        <div className="flex justify-between mt-2 text-xs">
+
+          <span className="text-slate-500">
+            0%
+          </span>
+        
+          <span className="text-emerald-600 font-semibold">
+            100%
+          </span>
+        
+          <span className="text-amber-600 font-semibold">
+            105%
+          </span>
+        
+          <span className="text-red-600 font-semibold">
+            110%
+          </span>
+        
+      </div>
+          
           <div className="grid grid-cols-3 mt-4 text-center">
       
             <div>
