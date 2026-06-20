@@ -119,27 +119,82 @@ export function TotalStockDrawer({
     ? `O estoque atual encontra-se em ${totalSaldo.toLocaleString()} peças, operando em ${stockEfficiency.toFixed(1)}% da meta definida para a unidade. Embora ainda não represente um cenário crítico, o excedente de ${stockDifference.toLocaleString()} peças exige monitoramento contínuo para evitar aumento da pressão operacional.`
     : `O estoque atual encontra-se em ${totalSaldo.toLocaleString()} peças, operando em ${stockEfficiency.toFixed(1)}% da meta definida para a unidade. O volume armazenado permanece dentro dos limites recomendados, garantindo capacidade operacional e flexibilidade para absorção de demanda.`;
 
-  const pressureImpacts =
-  stockStatus === "critical"
-    ? [
-        "🏢 Saturação física",
-        "💰 Capital elevado",
-        "🔄 Consolidação intensa",
-        "⚠️ Risco operacional",
-      ]
-    : stockStatus === "warning"
-    ? [
-        "🏢 Maior ocupação física",
-        "💰 Capital imobilizado",
-        "🔄 Necessidade de consolidação",
-        "⚠️ Menor margem produtiva",
-      ]
-    : [
-        "🏢 Capacidade disponível",
-        "💰 Estoque saudável",
-        "🔄 Alta flexibilidade",
-        "✅ Baixo risco operacional",
+  let pressureImpacts;
+
+    if (stockStatus === "healthy") {
+      pressureImpacts = [
+        {
+          icon: "🏢",
+          title: "Capacidade Disponível",
+          description: "Espaço adequado para crescimento operacional",
+        },
+        {
+          icon: "💰",
+          title: "Capital Equilibrado",
+          description: "Volume compatível com a operação",
+        },
+        {
+          icon: "🔄",
+          title: "Alta Flexibilidade",
+          description: "Facilidade para reorganizações e absorção de demanda",
+        },
+        {
+          icon: "✅",
+          title: "Baixo Risco",
+          description: "Operação dentro dos parâmetros recomendados",
+        },
       ];
+    }
+    
+    else if (stockStatus === "warning") {
+      pressureImpacts = [
+        {
+          icon: "🏢",
+          title: "Maior Ocupação Física",
+          description: "Utilização crescente da capacidade disponível",
+        },
+        {
+          icon: "💰",
+          title: "Capital Imobilizado",
+          description: "Volume acima da meta operacional",
+        },
+        {
+          icon: "🔄",
+          title: "Necessidade de Consolidação",
+          description: "Maior dependência de reorganizações internas",
+        },
+        {
+          icon: "⚠️",
+          title: "Menor Margem Produtiva",
+          description: "Redução gradual da flexibilidade operacional",
+        },
+      ];
+    }
+    
+    else {
+      pressureImpacts = [
+        {
+          icon: "🚨",
+          title: "Saturação Física",
+          description: "Capacidade próxima do limite operacional",
+        },
+        {
+          icon: "💰",
+          title: "Capital Elevado",
+          description: "Volume excessivo imobilizado em estoque",
+        },
+        {
+          icon: "🔄",
+          title: "Consolidação Intensa",
+          description: "Maior necessidade de movimentações internas",
+        },
+        {
+          icon: "⛔",
+          title: "Risco Operacional",
+          description: "Impacto potencial na armazenagem e produção",
+        },
+      ];
+    }
   
   return (
     <div className="fixed inset-0 z-50 flex justify-end bg-black/40">
@@ -327,18 +382,32 @@ export function TotalStockDrawer({
             Impactos do Cenário Atual
           </div>
         
-          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         
             {pressureImpacts.map((impact) => (
         
-              <div
-                key={impact}
-                className="border rounded-xl p-4 bg-slate-50 text-center"
-              >
-                <div className="font-medium text-sm">
-                  {impact}
-                </div>
+             <div
+              key={impact.title}
+              className="border rounded-xl p-4 bg-slate-50 flex items-center gap-4"
+            >
+            
+              <div className="text-3xl flex-shrink-0">
+                {impact.icon}
               </div>
+            
+              <div>
+            
+                <div className="font-semibold text-slate-800">
+                  {impact.title}
+                </div>
+            
+                <div className="text-sm text-slate-500">
+                  {impact.description}
+                </div>
+            
+              </div>
+            
+            </div>
         
             ))}
         
