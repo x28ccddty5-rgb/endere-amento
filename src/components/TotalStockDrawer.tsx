@@ -195,6 +195,11 @@ export function TotalStockDrawer({
         },
       ];
     }
+
+    const markerPosition = Math.min(
+    (stockEfficiency / 110) * 100,
+    100
+  );
   
   return (
     <div className="fixed inset-0 z-50 flex justify-end bg-black/40">
@@ -352,16 +357,14 @@ export function TotalStockDrawer({
       
         <div className="relative w-full h-8 rounded-full overflow-hidden flex">
 
-            <div className="w-[80%] bg-emerald-500" />
-          
-            <div className="w-[10%] bg-amber-500" />
-          
-            <div className="w-[10%] bg-red-500" />
+            <div className="w-[90.9%] bg-emerald-500" />
+            <div className="w-[4.55%] bg-amber-500" />
+            <div className="w-[4.55%] bg-red-500" />
           
             <div
               className="absolute top-0 bottom-0 w-1 bg-white border border-slate-800 z-20"
               style={{
-                left: `${Math.min(stockPressurePercent, 100)}%`,
+                left: `${markerPosition}%`,
               }}
             />
           
