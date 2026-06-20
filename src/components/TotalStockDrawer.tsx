@@ -382,32 +382,39 @@ export function TotalStockDrawer({
             Impactos do Cenário Atual
           </div>
         
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div className="grid grid-cols-4 gap-4">
         
             {pressureImpacts.map((impact) => (
         
-             <div
-              key={impact.title}
-              className="border rounded-xl p-4 bg-slate-50 flex items-center gap-4"
-            >
-            
-              <div className="text-3xl flex-shrink-0">
-                {impact.icon}
-              </div>
-            
-              <div>
-            
+              <div
+                key={impact.title}
+                className="
+                  border
+                  rounded-xl
+                  p-4
+                  bg-slate-50
+                  flex
+                  flex-col
+                  items-center
+                  text-center
+                  min-h-[150px]
+                  justify-center
+                "
+              >
+              
+                <div className="text-4xl mb-3">
+                  {impact.icon}
+                </div>
+              
                 <div className="font-semibold text-slate-800">
                   {impact.title}
                 </div>
-            
-                <div className="text-sm text-slate-500">
+              
+                <div className="text-xs text-slate-500 mt-2">
                   {impact.description}
                 </div>
-            
+              
               </div>
-            
-            </div>
         
             ))}
         
