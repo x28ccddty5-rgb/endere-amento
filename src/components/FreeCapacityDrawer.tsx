@@ -22,6 +22,22 @@ export function FreeCapacityDrawer({
   const freePercent =
     (freePositions / totalPositions) * 100;
 
+  let freeMarkerPosition = 0;
+  
+  if (freePercent <= 5) {
+    freeMarkerPosition = (freePercent / 5) * 15;
+  }
+  else if (freePercent <= 15) {
+    freeMarkerPosition =
+      15 + ((freePercent - 5) / 10) * 20;
+  }
+  else {
+    freeMarkerPosition =
+      35 + (Math.min(freePercent, 30) - 15) / 15 * 65;
+  }
+  
+  freeMarkerPosition = Math.min(freeMarkerPosition, 100);
+  
   const freeDistribution = [
   {
     nome: "Estoque 1",
@@ -182,22 +198,58 @@ const maxFreePercentage =
                   Disponibilidade Atual
                 </div>
           
-                <div className="w-full h-4 bg-slate-200 rounded-full overflow-hidden">
-          
-                  <div
-                    className={`h-full ${
-                      freePercent < 5
-                        ? "bg-red-500"
-                        : freePercent < 15
-                        ? "bg-amber-500"
-                        : "bg-emerald-500"
-                    }`}
+              <div className="relative w-full h-6 rounded-full overflow-hidden flex">
+
+                <div className="w-[15%] bg-red-500" />
+              
+                <div className="w-[20%] bg-amber-500" />
+              
+                <div className="w-[65%] bg-emerald-500" />
+              
+                <div
+                  className="absolute top-0 bottom-0 w-1 bg-white border border-slate-800 z-20"
+                  style={{
+                    left: `${freeMarkerPosition}%`,
+                  }}
+                />
+              
+            </div>
+
+            <div className="relative mt-2 h-5 text-xs">
+
+                  <span
+                    className="absolute left-0 text-red-600 font-semibold"
+                  >
+                    0%
+                  </span>
+                
+                  <span
+                    className="absolute text-red-600 font-semibold"
                     style={{
-                      width: `${Math.min(freePercent, 100)}%`,
+                      left: "15%",
+                      transform: "translateX(-50%)",
                     }}
-                  />
-          
-                </div>
+                  >
+                    5%
+                  </span>
+                
+                  <span
+                    className="absolute text-amber-600 font-semibold"
+                    style={{
+                      left: "35%",
+                      transform: "translateX(-50%)",
+                    }}
+                  >
+                    15%
+                  </span>
+                
+                  <span
+                    className="absolute right-0 text-emerald-600 font-semibold"
+                  >
+                    30%+
+                  </span>
+                
+            </div>
           
                 <div className="grid grid-cols-3 gap-3 mt-4 text-center">
           
