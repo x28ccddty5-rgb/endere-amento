@@ -252,17 +252,25 @@ export function TotalStockDrawer({
       
         <div className="border rounded-xl p-5">
       
-          <div className="flex justify-between mb-2">
-      
-            <span className="text-sm font-medium text-slate-600">
+          <div className="flex justify-between items-start mb-3">
+
+          <div>
+        
+            <div className="font-semibold text-slate-700">
               Meta Operacional
-            </span>
-      
-            <span className={`font-bold ${stockColor}`}>
-              {stockEfficiency.toFixed(1)}%
-            </span>
-      
+            </div>
+        
+            <div className="text-xs text-slate-500">
+              Limite recomendado de estoque
+            </div>
+        
           </div>
+        
+          <div className={`text-lg font-bold ${stockColor}`}>
+            {stockEfficiency.toFixed(1)}%
+          </div>
+        
+        </div>
       
           <div className="relative w-full h-8 bg-slate-200 rounded-full overflow-hidden">
         
@@ -278,13 +286,6 @@ export function TotalStockDrawer({
               width: `${stockPressurePercent}%`,
             }}
           />
-
-        <div
-          className="absolute top-0 bottom-0 w-1 bg-slate-800 z-20"
-          style={{
-            left: `${stockPressurePercent}%`,
-          }}
-        />
             
         </div>
       
@@ -320,29 +321,13 @@ export function TotalStockDrawer({
               </div>
             </div>
 
-          <div className="flex justify-between mt-2 text-xs">
-
-          <span className="text-slate-500">
-            90%
-          </span>
-        
-          <span className={`font-bold ${stockColor}`}>
-            Atual: {stockEfficiency.toFixed(1)}%
-          </span>
-        
-          <span className="text-slate-500">
-            110%
-          </span>
-        
-        </div>
-
           <div className="mt-8">
 
           <div className="font-bold text-slate-800 mb-4">
-            Consequências Operacionais
+            Impactos do Cenário Atual
           </div>
         
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
         
             {pressureImpacts.map((impact) => (
         
