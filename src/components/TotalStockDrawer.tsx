@@ -387,25 +387,41 @@ export function TotalStockDrawer({
           
         </div>
 
-        <div className="flex justify-between mt-2 text-xs">
+       <div className="relative mt-2 h-5 text-xs">
 
-          <span className="text-slate-500">
+          <span
+            className="absolute left-0 text-slate-500"
+          >
             0%
           </span>
         
-          <span className="text-emerald-600 font-semibold">
+          <span
+            className="absolute text-emerald-600 font-semibold"
+            style={{
+              left: "70%",
+              transform: "translateX(-50%)",
+            }}
+          >
             100%
           </span>
         
-          <span className="text-amber-600 font-semibold">
+          <span
+            className="absolute text-amber-600 font-semibold"
+            style={{
+              left: "85%",
+              transform: "translateX(-50%)",
+            }}
+          >
             105%
           </span>
         
-          <span className="text-red-600 font-semibold">
+          <span
+            className="absolute right-0 text-red-600 font-semibold"
+          >
             110%
           </span>
         
-      </div>
+        </div>
           
           <div className="grid grid-cols-3 mt-4 text-center">
       
