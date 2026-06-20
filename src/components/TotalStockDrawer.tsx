@@ -424,7 +424,9 @@ export function TotalStockDrawer({
           </div>
         
         </div>
-      
+
+     </div>
+        
       </section>
 
       <section className="bg-white border rounded-xl p-5 mt-6">
