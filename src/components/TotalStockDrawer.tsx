@@ -118,6 +118,9 @@ export function TotalStockDrawer({
     : stockStatus === "warning"
     ? `O estoque atual encontra-se em ${totalSaldo.toLocaleString()} peças, operando em ${stockEfficiency.toFixed(1)}% da meta definida para a unidade. Embora ainda não represente um cenário crítico, o excedente de ${stockDifference.toLocaleString()} peças exige monitoramento contínuo para evitar aumento da pressão operacional.`
     : `O estoque atual encontra-se em ${totalSaldo.toLocaleString()} peças, operando em ${stockEfficiency.toFixed(1)}% da meta definida para a unidade. O volume armazenado permanece dentro dos limites recomendados, garantindo capacidade operacional e flexibilidade para absorção de demanda.`;
+
+  const stockTargetMarker =
+  ((100 - 90) / 20) * 100;
   
   return (
     <div className="fixed inset-0 z-50 flex justify-end bg-black/40">
