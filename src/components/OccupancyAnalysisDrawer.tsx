@@ -56,6 +56,26 @@ export function OccupancyAnalysisDrawer({
 
     const maxOccupancyPercentage =
     occupancyDistribution[0]?.percentual || 100;
+
+    let occupancyMarkerPosition = 0;
+    
+    if (occupancyPercent <= 85) {
+      occupancyMarkerPosition =
+        (occupancyPercent / 85) * 70;
+    }
+    else if (occupancyPercent <= 95) {
+      occupancyMarkerPosition =
+        70 + ((occupancyPercent - 85) / 10) * 20;
+    }
+    else {
+      occupancyMarkerPosition =
+        90 + ((Math.min(occupancyPercent, 100) - 95) / 5) * 10;
+    }
+    
+    occupancyMarkerPosition = Math.min(
+      occupancyMarkerPosition,
+      100
+    );
   
   return (
     <div className="fixed inset-0 z-50 flex justify-end bg-black/40">
@@ -178,21 +198,55 @@ export function OccupancyAnalysisDrawer({
         Nível de Utilização
       </div>
 
-      <div className="w-full h-4 bg-slate-200 rounded-full overflow-hidden">
+      <div className="relative w-full h-6 rounded-full overflow-hidden flex">
+
+        <div className="w-[70%] bg-emerald-500" />
+      
+        <div className="w-[20%] bg-amber-500" />
+      
+        <div className="w-[10%] bg-red-500" />
+      
         <div
-          className={`h-full ${
-            occupancyPercent >= 95
-              ? "bg-red-500"
-              : occupancyPercent >= 85
-              ? "bg-amber-500"
-              : "bg-emerald-500"
-          }`}
+          className="absolute top-0 bottom-0 w-1 bg-white border border-slate-800 z-20"
           style={{
-            width: `${Math.min(occupancyPercent, 100)}%`,
+            left: `${occupancyMarkerPosition}%`,
           }}
         />
+      
       </div>
 
+      <div className="relative mt-2 h-5 text-xs">
+
+        <span className="absolute left-0 text-emerald-600 font-semibold">
+          0%
+        </span>
+      
+        <span
+          className="absolute text-emerald-600 font-semibold"
+          style={{
+            left: "70%",
+            transform: "translateX(-50%)",
+          }}
+        >
+          85%
+        </span>
+      
+        <span
+          className="absolute text-amber-600 font-semibold"
+          style={{
+            left: "90%",
+            transform: "translateX(-50%)",
+          }}
+        >
+          95%
+        </span>
+      
+        <span className="absolute right-0 text-red-600 font-semibold">
+          100%
+        </span>
+      
+      </div>
+      
       <div className="grid grid-cols-3 gap-3 mt-4 text-center">
 
         <div>
