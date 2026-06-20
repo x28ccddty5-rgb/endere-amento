@@ -3,7 +3,7 @@ import { OccupancyAnalysisDrawer } from "./OccupancyAnalysisDrawer";
 import { FreeCapacityDrawer } from "./FreeCapacityDrawer";
 import { OccupationRateDrawer } from "./OccupationRateDrawer";
 import { SkuAnalysisDrawer } from "./SkuAnalysisDrawer";
-import { TotalStockAnalysis } from "./TotalStockAnalysis";
+import { TotalStockDrawer } from "./TotalStockDrawer";
 import { 
   Box, 
   Layers, 
