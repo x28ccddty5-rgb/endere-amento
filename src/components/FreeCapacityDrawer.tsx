@@ -180,15 +180,51 @@ const maxFreePercentage =
           
                 </div>
           
-                <div className="mt-3 text-sm text-slate-700">
-          
-                  {freePercent < 5
-                    ? "Baixíssima disponibilidade de espaço."
-                    : freePercent < 15
-                    ? "Monitoramento necessário."
-                    : "Capacidade confortável para expansão."}
-          
+                <div className="mt-4 space-y-3">
+
+                <div>
+              
+                  <div className="text-xs uppercase text-slate-500">
+                    Disponibilidade Atual
+                  </div>
+              
+                  <div className={`text-3xl font-black ${freeStatusColor}`}>
+                    {freePercent.toFixed(1)}%
+                  </div>
+              
                 </div>
+              
+                <div>
+              
+                  <div className="text-xs uppercase text-slate-500">
+                    Meta Recomendada
+                  </div>
+              
+                  <div className="font-bold text-slate-800">
+                    15%
+                  </div>
+              
+                </div>
+              
+                <div>
+              
+                  <div className="text-xs uppercase text-slate-500">
+                    Diferença
+                  </div>
+              
+                  <div
+                    className={`font-bold ${
+                      freePercent >= 15
+                        ? "text-emerald-600"
+                        : "text-red-600"
+                    }`}
+                  >
+                    {(freePercent - 15).toFixed(1)} p.p.
+                  </div>
+              
+                </div>
+              
+              </div>
           
               </div>
 
