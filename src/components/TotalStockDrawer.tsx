@@ -118,9 +118,6 @@ export function TotalStockDrawer({
     : stockStatus === "warning"
     ? `O estoque atual encontra-se em ${totalSaldo.toLocaleString()} peças, operando em ${stockEfficiency.toFixed(1)}% da meta definida para a unidade. Embora ainda não represente um cenário crítico, o excedente de ${stockDifference.toLocaleString()} peças exige monitoramento contínuo para evitar aumento da pressão operacional.`
     : `O estoque atual encontra-se em ${totalSaldo.toLocaleString()} peças, operando em ${stockEfficiency.toFixed(1)}% da meta definida para a unidade. O volume armazenado permanece dentro dos limites recomendados, garantindo capacidade operacional e flexibilidade para absorção de demanda.`;
-
-  const stockTargetMarker =
-  ((100 - 90) / 20) * 100;
   
   return (
     <div className="fixed inset-0 z-50 flex justify-end bg-black/40">
@@ -249,13 +246,6 @@ export function TotalStockDrawer({
 
           {/* Linha da Meta (100%) */}
             <div
-            className="absolute top-0 bottom-0 w-1 bg-slate-700 z-10"
-            style={{
-              left: `${stockTargetMarker}%`,
-            }}
-          />
-            
-            <div
             className="absolute -top-6 text-xs font-bold text-slate-700"
             style={{ left: "50%", transform: "translateX(-50%)" }}
           >
@@ -309,21 +299,26 @@ export function TotalStockDrawer({
               </div>
             </div>
 
-          <div className="mt-6 border rounded-xl p-5 bg-slate-50">
-
-            <div className="font-bold text-slate-800 mb-2">
-              Impacto Atual
+          <div
+            className={`mt-6 border rounded-xl p-4 ${
+              stockStatus === "critical"
+                ? "bg-red-50 border-red-200"
+                : stockStatus === "warning"
+                ? "bg-amber-50 border-amber-200"
+                : "bg-emerald-50 border-emerald-200"
+            }`}
+          >
+          
+            <div className="font-bold mb-2">
+              {stockTitle}
             </div>
-            
+          
             <p className="text-sm text-slate-700">
               O estoque opera em
               <strong> {stockEfficiency.toFixed(1)}%</strong>
-              da meta definida para a unidade, representando um excedente de
+              da meta operacional,
+              representando um excedente de
               <strong> {stockDifference.toLocaleString()} peças</strong>.
-            </p>
-            
-            <p className="text-sm text-slate-700 mt-2">
-              Embora o cenário ainda não seja crítico, exige monitoramento contínuo para evitar aumento da pressão sobre capacidade física e movimentações internas.
             </p>
           
           </div>
