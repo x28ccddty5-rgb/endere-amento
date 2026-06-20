@@ -196,14 +196,25 @@ export function TotalStockDrawer({
       ];
     }
 
-    const markerPosition = Math.min(
-    (stockEfficiency / 110) * 100,
-    100
-  );
+    let markerPosition = 0;
 
-    const greenWidth = (100 / 110) * 100;
-    const yellowWidth = (5 / 110) * 100;
-    const redWidth = (5 / 110) * 100;
+    if (stockEfficiency <= 100) {
+      markerPosition = (stockEfficiency / 100) * 70;
+    }
+    else if (stockEfficiency <= 105) {
+      markerPosition =
+        70 + ((stockEfficiency - 100) / 5) * 15;
+    }
+    else {
+      markerPosition =
+        85 + ((stockEfficiency - 105) / 5) * 15;
+    }
+    
+    markerPosition = Math.min(markerPosition, 100);
+
+    const greenWidth = 70;
+    const yellowWidth = 15;
+    const redWidth = 15;
   
   return (
     <div className="fixed inset-0 z-50 flex justify-end bg-black/40">
@@ -361,20 +372,11 @@ export function TotalStockDrawer({
       
         <div className="relative w-full h-8 rounded-full overflow-hidden flex">
 
-            <div
-              className="bg-emerald-500"
-              style={{ width: `${greenWidth}%` }}
-            />
+            <div className="w-[70%] bg-emerald-500" />
+  
+            <div className="w-[15%] bg-amber-500" />
             
-            <div
-              className="bg-amber-500"
-              style={{ width: `${yellowWidth}%` }}
-            />
-            
-            <div
-              className="bg-red-500"
-              style={{ width: `${redWidth}%` }}
-            />
+            <div className="w-[15%] bg-red-500" />
           
             <div
               className="absolute top-0 bottom-0 w-1 bg-white border border-slate-800 z-20"
