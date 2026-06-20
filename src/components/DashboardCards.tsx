@@ -3,6 +3,7 @@ import { OccupancyAnalysisDrawer } from "./OccupancyAnalysisDrawer";
 import { FreeCapacityDrawer } from "./FreeCapacityDrawer";
 import { OccupationRateDrawer } from "./OccupationRateDrawer";
 import { SkuAnalysisDrawer } from "./SkuAnalysisDrawer";
+import { TotalStockAnalysis } from "./TotalStockAnalysis";
 import { 
   Box, 
   Layers, 
@@ -43,6 +44,7 @@ export const DashboardCards: React.FC<DashboardCardsProps> = ({
   const [showFreeCapacity, setShowFreeCapacity] = useState(false);
   const [showOccupationAnalysis, setShowOccupationAnalysis] = useState(false);
   const [showSkuAnalysis, setShowSkuAnalysis] = useState(false);
+  const [showTotalStockAnalysis, setShowTotalStockAnalysis] = useState(false);
   
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [drawerDays, setDrawerDays] = useState(7);
