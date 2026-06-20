@@ -376,6 +376,8 @@ export function TotalStockDrawer({
               </div>
             </div>
 
+          </div>
+
           <div className="mt-8">
 
           <div className="font-bold text-slate-800 mb-4">
