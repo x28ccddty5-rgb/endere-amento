@@ -245,10 +245,12 @@ export function TotalStockDrawer({
           <div className="relative w-full h-6 bg-slate-200 rounded-full overflow-hidden">
 
           {/* Linha da Meta (100%) */}
-          <div
-            className="absolute top-0 bottom-0 w-1 bg-slate-700 z-10"
-            style={{ left: "50%" }}
-          />
+            <div
+            className="absolute -top-6 text-xs font-bold text-slate-700"
+            style={{ left: "50%", transform: "translateX(-50%)" }}
+          >
+            META
+          </div>
         
           <div
             className={`h-full rounded-full shadow-sm ${
@@ -297,25 +299,26 @@ export function TotalStockDrawer({
               </div>
             </div>
 
-          <div className="mt-6 border rounded-xl p-4 bg-slate-50">
+          <div className="mt-6 border rounded-xl p-5 bg-slate-50">
 
             <div className="font-bold text-slate-800 mb-2">
               Impacto Atual
             </div>
+
           
+            <div className="font-bold text-slate-800 mb-2">
+              Impacto Atual
+            </div>
+            
             <p className="text-sm text-slate-700">
-          
-              O estoque encontra-se
-          
-              <strong>
-                {" "}
-                {stockDifference > 0
-                  ? `${stockDifference.toLocaleString()} peças acima`
-                  : `${Math.abs(stockDifference).toLocaleString()} peças abaixo`}
-              </strong>
-          
-              {" "}da meta operacional definida para a unidade.
-          
+              O estoque opera em
+              <strong> {stockEfficiency.toFixed(1)}%</strong>
+              da meta definida para a unidade, representando um excedente de
+              <strong> {stockDifference.toLocaleString()} peças</strong>.
+            </p>
+            
+            <p className="text-sm text-slate-700 mt-2">
+              Embora o cenário ainda não seja crítico, exige monitoramento contínuo para evitar aumento da pressão sobre capacidade física e movimentações internas.
             </p>
           
           </div>
