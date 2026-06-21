@@ -23,7 +23,7 @@ export const E1_CAPACITY = {
   "21": 30
 };
 
-export const E2_BLOCKED_POSITIONS = {
+export const E2_BLOCKED_POSITIONS: Record<number, string[]> = {
   4: ["E1"],
 
   7: ["A2", "B2", "C2", "D2", "E2"],
@@ -101,7 +101,7 @@ export const E2_BLOCKED_POSITIONS = {
   168: ["A2", "B2", "C2", "D2", "E2"],
 };
 
-export const E3_BLOCKED_POSITIONS = {
+export const E3_BLOCKED_POSITIONS: Record<number, string[]> = {
   11: ["A1", "B1", "C1", "A2", "B2", "C2", "F1", "F2"],
   22: ["A1", "B1", "C1", "A2", "B2", "C2", "F1", "F2"],
   41: ["A1", "B1", "C1", "A2", "B2", "C2", "F1", "F2"],
@@ -116,7 +116,7 @@ export const E3_BLOCKED_POSITIONS = {
   62: ["F1"]
 };
 
-  export const E3_EXTRA_POSITIONS = {
+export const E3_EXTRA_POSITIONS: Record<number, string[]> = {
   7: ["G1", "H1", "G2", "H2"],
   8: ["G1", "G2"],
   9: ["G1", "G2"],
