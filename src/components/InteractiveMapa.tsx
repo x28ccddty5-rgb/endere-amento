@@ -5,6 +5,13 @@ import { WarehouseSlot, Product } from "../types";
 import { Map, Info, User, Calendar, Sliders, Check, Hammer, Package } from "lucide-react";
 import { VerticalModuleMap } from "./VerticalModuleMap";
 
+import {
+  E1_CAPACITY,
+  E2_BLOCKED_POSITIONS,
+  E3_BLOCKED_POSITIONS,
+  E3_EXTRA_POSITIONS
+} from "../constants/layout";
+
 interface InteractiveMapaProps {
   slots: WarehouseSlot[];
   onQuickUpdateSlot: (updatedSlot: WarehouseSlot) => void;
