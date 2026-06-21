@@ -93,28 +93,6 @@ export const InteractiveMapa: React.FC<InteractiveMapaProps> = ({
   
   const e2Positions = ["A1", "B1", "C1", "D1", "E1", "A2", "B2", "C2", "D2", "E2"];
   const e3Positions = ["A1", "B1", "C1", "D1", "E1", "F1", "A2", "B2", "C2", "D2", "E2", "F2"];
-
-  const e3BlockedPositions: Record<number, string[]> = {
-  11: ["A1", "B1", "C1", "A2", "B2", "C2", "F1", "F2"],
-  22: ["A1", "B1", "C1", "A2", "B2", "C2", "F1", "F2"],
-  41: ["A1", "B1", "C1", "A2", "B2", "C2", "F1", "F2"],
-  49: ["A1", "B1", "C1", "A2", "B2", "C2", "F1", "F2"],
-  60: ["A1", "B1", "C1", "A2", "B2", "C2", "F1", "F2"],
-  68: ["A1", "B1", "C1", "A2", "B2", "C2", "F1", "F2"],
-  81: ["A1", "B1", "C1", "A2", "B2", "C2", "F1", "F2"],
-  87: ["F2"],
-  89: ["A1", "B1", "C1", "A2", "B2", "C2", "F1", "F2"],
-  95: ["A2", "B2", "C2", "D2", "E2", "F2"],
-  101: ["F1"],
-  62: ["F1"]
-};
-
-  const e3ExtraPositions: Record<number, string[]> = {
-  7: ["G1", "H1", "G2", "H2"],
-  8: ["G1", "G2"],
-  9: ["G1", "G2"],
-  24: ["G1", "G2"],
-};
   
     const blockedE2Positions =
   e2BlockedPositions[selectedE2Module] || [];
