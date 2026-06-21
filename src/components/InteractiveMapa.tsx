@@ -1,4 +1,5 @@
 import React, { useState } from "react";
+import { calcularPaletes } from "../lib/palletUtils";
 import { Search } from "lucide-react";
 import { jsPDF } from "jspdf";
 import { WarehouseSlot, Product } from "../types";
@@ -78,13 +79,10 @@ export const InteractiveMapa: React.FC<InteractiveMapaProps> = ({
     return total;
   }
 
-  const resultado = slot.saldo / produto.paletizacao;
-
-  if (resultado < 0.5) {
-    return total;
-  }
-
-  return total + Math.ceil(resultado);
+    return total + calcularPaletes(
+    slot.saldo,
+    produto.paletizacao
+  );
 
 }, 0);
 
@@ -437,16 +435,13 @@ if (estoque === "2") {
       return total;
     }
 
-    const resultado = slot.saldo / produto.paletizacao;
-
-    if (resultado < 0.5) {
-      return total;
-    }
-
-    return total + Math.ceil(resultado);
-
-  }, 0);
+    return total + calcularPaletes(
+    slot.saldo,
+    produto.paletizacao
+  );
   
+   }, 0);
+
   // Occupancy summary
   const occupiedCount =
   selectedEstoque === "1"
@@ -601,15 +596,13 @@ if (estoque === "2") {
                       return total;
                     }
                 
-                    const resultado = x.saldo / produto.paletizacao;
-                
-                    let paletes = 0;
-                
-                    if (resultado >= 0.5) {
-                      paletes = Math.ceil(resultado);
-                    }
-                
-                    return total + paletes;
+                    return (
+                      total +
+                      calcularPaletes(
+                        x.saldo,
+                        produto.paletizacao
+                      )
+                    );
                 
                   }, 0);
                 
@@ -1076,18 +1069,10 @@ if (estoque === "2") {
                               p => p.referencia === slot.referencia
                             );
                       
-                            let paletes = 0;
-                      
-                            if (produto?.paletizacao) {
-                      
-                              const resultado =
-                                slot.saldo / produto.paletizacao;
-                      
-                              if (resultado >= 0.5) {
-                                paletes = Math.ceil(resultado);
-                              }
-                      
-                            }
+                            const paletes = calcularPaletes(
+                              slot.saldo,
+                              produto?.paletizacao
+                            );
                       
                             return (
                       

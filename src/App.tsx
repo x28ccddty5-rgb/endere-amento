@@ -1,4 +1,5 @@
 import { useState, useEffect, FormEvent } from "react";
+import { calcularPaletes } from "./lib/palletUtils";
 import { jsPDF } from "jspdf";
 import autoTable from "jspdf-autotable";
 import * as XLSX from "xlsx";
@@ -475,13 +476,13 @@ const deleteProduct = async (
       return total;
     }
 
-    const resultado = slot.saldo / produto.paletizacao;
-
-    if (resultado < 0.5) {
-      return total;
-    }
-
-    return total + Math.ceil(resultado);
+    return (
+      total +
+      calcularPaletes(
+        slot.saldo,
+        produto.paletizacao
+      )
+    );
 
   }, 0);
   
