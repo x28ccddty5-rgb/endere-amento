@@ -53,7 +53,7 @@ export const InteractiveMapa: React.FC<InteractiveMapaProps> = ({
   const [editChacote, setChacote] = useState("");
   const [editOperator, setEditOperator] = useState("");
 
-  const capacidadeTotalE1 = Object.values(e1Capacidade)
+  const capacidadeTotalE1 = Object.values(E1_CAPACITY)
   .reduce((total, capacidade) => total + capacidade, 0);
   
   const activeSlots = slots.filter(s => s.estoque === selectedEstoque);
@@ -90,7 +90,7 @@ export const InteractiveMapa: React.FC<InteractiveMapaProps> = ({
 
   const capacidadeRuaSelecionada =
     selectedSlot?.estoque === "1"
-      ? e1Capacidade[selectedSlot.modulo] || 33
+      ? E1_CAPACITY[selectedSlot.modulo] || 33
       : 0;
   const livresRua =
   capacidadeRuaSelecionada - paletesRua;
@@ -102,13 +102,13 @@ export const InteractiveMapa: React.FC<InteractiveMapaProps> = ({
   const e3Positions = ["A1", "B1", "C1", "D1", "E1", "F1", "A2", "B2", "C2", "D2", "E2", "F2"];
   
     const blockedE2Positions =
-  e2BlockedPositions[selectedE2Module] || [];
+  E2_BLOCKED_POSITIONS[selectedE2Module] || [];
 
   const blockedE3Positions =
-  e3BlockedPositions[selectedE3Module] || [];
+    E3_BLOCKED_POSITIONS[selectedE3Module] || [];
 
   const extraE3Positions =
-  e3ExtraPositions[selectedE3Module] || [];
+    E3_EXTRA_POSITIONS[selectedE3Module] || [];
 
   const buildVerticalRows = (positions: string[]) => {
 
@@ -613,7 +613,7 @@ if (estoque === "2") {
                 
                   }, 0);
                 
-                const capacidadeRua = e1Capacidade[rua] || 33;
+                const capacidadeRua = E1_CAPACITY[rua] || 33;
 
                 const percentualOcupacao = Math.round(
                 (ocupacaoReal / capacidadeRua) * 100
