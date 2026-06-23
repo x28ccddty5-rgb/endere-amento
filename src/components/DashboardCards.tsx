@@ -380,6 +380,13 @@ const tempoMedio =
   };
   
   return (
+      <button
+    onClick={saveOccupancySnapshot}
+    className="px-4 py-2 bg-blue-600 text-white rounded"
+  >
+    Registrar Snapshot
+  </button>
+    
     <div className="space-y-5" id="dashboard-container">
       {/* SECTION 1: ENDEREÇAMENTO */}
       <div>
