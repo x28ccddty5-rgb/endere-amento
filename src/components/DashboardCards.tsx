@@ -381,12 +381,14 @@ const tempoMedio =
   
   return (
     <div className="space-y-5" id="dashboard-container">
+      {userRole === "admin" && (
       <button
     onClick={saveOccupancySnapshot}
     className="px-4 py-2 bg-blue-600 text-white rounded"
   >
     Registrar Snapshot
   </button>
+)}
       {/* SECTION 1: ENDEREÇAMENTO */}
       <div>
         <h3 className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-2 flex items-center gap-1.5">
