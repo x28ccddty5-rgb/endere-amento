@@ -387,7 +387,7 @@ const tempoMedio =
     onClick={saveOccupancySnapshot}
     className="text-xs text-slate-500 hover:text-slate-700"
   >
-    Atualizar Base Histórica
+    Registrar Ocupação
   </button>
 </div>
       
