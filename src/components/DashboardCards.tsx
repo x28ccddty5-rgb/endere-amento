@@ -4,6 +4,7 @@ import { FreeCapacityDrawer } from "./FreeCapacityDrawer";
 import { OccupationRateDrawer } from "./OccupationRateDrawer";
 import { SkuAnalysisDrawer } from "./SkuAnalysisDrawer";
 import { TotalStockDrawer } from "./TotalStockDrawer";
+import { supabase } from "../lib/supabase";
 import { 
   Box, 
   Layers, 
@@ -88,6 +89,32 @@ const occupationRate =
     ? (occupiedSlots / totalSlots) * 100
     : 0;
 
+  const saveOccupancySnapshot = async () => {
+  try {
+    const today = new Date().toISOString().split("T")[0];
+
+    const { error } = await supabase
+      .from("occupancy_history")
+      .upsert({
+        snapshot_date: today,
+        occupied_positions: occupiedSlots,
+        free_positions: freeSlots,
+        total_positions: totalSlots,
+        occupancy_percent: Number(
+          occupationRate.toFixed(2)
+        ),
+        total_pieces: totalStoredQuantity
+      });
+
+    if (error) throw error;
+
+    alert("Snapshot registrado com sucesso.");
+  } catch (err) {
+    console.error(err);
+    alert("Erro ao registrar snapshot.");
+  }
+};
+  
   // 2. SKUs & Total Quantities
  const uniqueSKUs = new Set(
   slots
