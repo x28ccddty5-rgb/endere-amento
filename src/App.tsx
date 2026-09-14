@@ -1,4 +1,4 @@
-import { useState, useEffect, FormEvent } from "react";
+import { useState, useEffect, useMemo, FormEvent } from "react";
 import { calcularPaletes } from "./lib/palletUtils";
 import { jsPDF } from "jspdf";
 import autoTable from "jspdf-autotable";
@@ -52,108 +52,149 @@ import {
   UserPlus
 } from "lucide-react";
 
-const loadSlotsFromSupabase = async (): Promise<WarehouseSlot[]> => {
+const HISTORY_PAGE_SIZE = 1000;
+const HISTORY_DASHBOARD_DAYS = 30;
 
+const getTodayIsoDate = (): string => new Date().toISOString().slice(0, 10);
+
+const getIsoDateDaysAgo = (days: number): string => {
+  const date = new Date();
+  date.setDate(date.getDate() - days);
+  return date.toISOString().slice(0, 10);
+};
+
+const loadSlotsFromSupabase = async (): Promise<WarehouseSlot[]> => {
   let allData: any[] = [];
   let from = 0;
-  const pageSize = 1000;
 
   while (true) {
-
     const { data, error } = await supabase
       .from("slots")
-      .select("*")
-      .range(from, from + pageSize - 1);
+      .select("id,estoque,modulo,posicao,referencia,descricao,saldo,dataChacote,ultimaData,ultimaHora,ultimoResponsavel")
+      .range(from, from + HISTORY_PAGE_SIZE - 1);
 
     if (error) {
       console.error("Erro ao carregar slots:", error);
       return [];
     }
 
-    if (!data || data.length === 0) {
-      break;
-    }
+    if (!data || data.length === 0) break;
 
     allData = [...allData, ...data];
 
-    if (data.length < pageSize) {
-      break;
-    }
+    if (data.length < HISTORY_PAGE_SIZE) break;
 
-    from += pageSize;
+    from += HISTORY_PAGE_SIZE;
   }
-
-  console.log("SLOTS CARREGADOS:", allData.length);
 
   return allData as WarehouseSlot[];
 };
 
-const saveSlotsToSupabase = async (slotsData: WarehouseSlot[]) => {
-  console.log("SALVANDO SLOTS:", slotsData);
+/**
+ * Persiste somente os slots que realmente mudaram.
+ * O banco continua sendo a fonte oficial; o React mantém apenas o estado da tela.
+ */
+const saveSlotsToSupabase = async (slotsData: WarehouseSlot[]): Promise<boolean> => {
+  if (slotsData.length === 0) return true;
 
-  const { data, error } = await supabase
+  const { error } = await supabase
     .from("slots")
-    .upsert(slotsData)
-    .select();
-
-  console.log("UPSERT DATA:", data);
-  console.log("UPSERT ERROR:", error);
+    .upsert(slotsData);
 
   if (error) {
     console.error("Erro ao salvar slots:", error);
+    return false;
   }
+
+  return true;
 };
 
-const loadHistoryFromSupabase = async (): Promise<HistoricoMov[]> => {
+interface HistoryLoadOptions {
+  startDate?: string;
+  endDate?: string;
+}
 
+/**
+ * Carrega histórico por período, paginado para não depender do limite padrão do Supabase.
+ * Sem período, mantém o comportamento de buscar todos os registros apenas quando isso
+ * for explicitamente necessário (ex.: exportação "Tudo").
+ */
+const loadHistoryFromSupabase = async (
+  options: HistoryLoadOptions = {}
+): Promise<HistoricoMov[]> => {
   let allData: any[] = [];
   let from = 0;
-  const pageSize = 1000;
 
   while (true) {
-
-    const { data, error } = await supabase
+    let query = supabase
       .from("history")
-      .select("*")
-      .range(from, from + pageSize - 1);
+      .select("id,dataLancamento,quemLancou,data,estoque,modulo,posicao,referencia,quantidade,tipo,dataChacote,hora,responsavel")
+      .order("data", { ascending: false })
+      .order("hora", { ascending: false })
+      .range(from, from + HISTORY_PAGE_SIZE - 1);
+
+    if (options.startDate) {
+      query = query.gte("data", options.startDate);
+    }
+
+    if (options.endDate) {
+      query = query.lte("data", options.endDate);
+    }
+
+    const { data, error } = await query;
 
     if (error) {
       console.error("Erro ao carregar histórico:", error);
       return [];
     }
 
-    if (!data || data.length === 0) {
-      break;
-    }
+    if (!data || data.length === 0) break;
 
     allData = [...allData, ...data];
 
-    if (data.length < pageSize) {
-      break;
-    }
+    if (data.length < HISTORY_PAGE_SIZE) break;
 
-    from += pageSize;
+    from += HISTORY_PAGE_SIZE;
   }
 
   return allData as HistoricoMov[];
 };
 
-const saveHistoryToSupabase = async (
-  historyData: HistoricoMov[]
-) => {
-  console.log("SALVANDO HISTORY:", historyData);
-
+/**
+ * Histórico é append-only. Nunca reenviamos o histórico inteiro para o banco.
+ */
+const loadLatestHistoryRecord = async (): Promise<HistoricoMov | null> => {
   const { data, error } = await supabase
     .from("history")
-    .upsert(historyData)
-    .select();
-
-  console.log("HISTORY DATA:", data);
-  console.log("HISTORY ERROR:", error);
+    .select("id,dataLancamento,quemLancou,data,estoque,modulo,posicao,referencia,quantidade,tipo,dataChacote,hora,responsavel")
+    .order("data", { ascending: false })
+    .order("hora", { ascending: false })
+    .limit(1)
+    .maybeSingle();
 
   if (error) {
-    console.error("Erro ao salvar histórico:", error);
+    console.error("Erro ao carregar última movimentação:", error);
+    return null;
   }
+
+  return (data as HistoricoMov | null) || null;
+};
+
+const appendHistoryToSupabase = async (
+  historyData: HistoricoMov[]
+): Promise<boolean> => {
+  if (historyData.length === 0) return true;
+
+  const { error } = await supabase
+    .from("history")
+    .insert(historyData);
+
+  if (error) {
+    console.error("Erro ao inserir histórico:", error);
+    return false;
+  }
+
+  return true;
 };
 
 const loadDivergenciasFromSupabase = async (): Promise<Divergencia[]> => {
@@ -171,15 +212,21 @@ const loadDivergenciasFromSupabase = async (): Promise<Divergencia[]> => {
 
 const saveDivergenciasToSupabase = async (
   divergenciasData: Divergencia[]
-) => {
+): Promise<boolean> => {
+  if (divergenciasData.length === 0) return true;
+
   const { error } = await supabase
     .from("divergencias")
     .upsert(divergenciasData);
 
   if (error) {
     console.error("Erro ao salvar divergências:", error);
+    return false;
   }
+
+  return true;
 };
+
 
 export default function App() {
   // --- USER AUTHENTICATION & SECURITY STATE ---
@@ -266,19 +313,22 @@ useEffect(() => {
   
   useEffect(() => {
   const loadHistory = async () => {
-  const data = await loadHistoryFromSupabase();
+    const data = await loadHistoryFromSupabase({
+      startDate: getIsoDateDaysAgo(HISTORY_DASHBOARD_DAYS),
+      endDate: getTodayIsoDate()
+    });
 
-  console.log("HISTORY CARREGADO:", data.length);
+    // Mantém o indicador de "última movimentação" do Dashboard mesmo
+    // quando o último movimento aconteceu há mais de 30 dias.
+    const latest = await loadLatestHistoryRecord();
+    const merged = latest && !data.some(item => item.id === latest.id)
+      ? [latest, ...data]
+      : data;
 
-  console.log(
-    "ESTOQUES ENCONTRADOS:",
-    [...new Set(data.map(h => h.estoque))]
-  );
+    setHistory(merged);
+  };
 
-  setHistory(data);
-};
-  
-   loadHistory();
+  loadHistory();
   }, []);
 
 useEffect(() => {
@@ -432,15 +482,10 @@ const deleteProduct = async (
 
   const handleDeleteUser = async (username: string) => {
 
-  console.log("Tentando excluir:", username);
-
-  const { data, error } = await supabase
+  const { error } = await supabase
     .from("users")
     .delete()
     .eq("username", username);
-
-  console.log("DELETE DATA:", data);
-  console.log("DELETE ERROR:", error);
 
   if (error) {
     alert("Erro ao excluir usuário.");
@@ -459,32 +504,88 @@ const deleteProduct = async (
 
   const [divergencias, setDivergencias] = useState<Divergencia[]>([]);
 
-  const occupiedPalletsE1 = slots
-  .filter(
-    s =>
-      s.estoque === "1" &&
-      s.referencia &&
-      s.saldo > 0
-  )
-  .reduce((total, slot) => {
+  /**
+   * Atualiza e persiste somente os slots novos/alterados.
+   * Isso mantém o Supabase como fonte oficial sem reenviar toda a tabela.
+   */
+  const persistSlotsUpdate = async (updatedSlots: WarehouseSlot[]): Promise<boolean> => {
+    const previousById = new globalThis.Map(slots.map(slot => [slot.id, slot]));
+    const changedSlots = updatedSlots.filter(slot => {
+      const previous = previousById.get(slot.id);
+      return !previous || JSON.stringify(previous) !== JSON.stringify(slot);
+    });
 
-    const produto = productsList.find(
-      p => p.referencia === slot.referencia
-    );
+    const saved = await saveSlotsToSupabase(changedSlots);
 
-    if (!produto?.paletizacao) {
-      return total;
+    if (saved) {
+      setSlots(updatedSlots);
     }
 
-    return (
-      total +
-      calcularPaletes(
-        slot.saldo,
-        produto.paletizacao
-      )
+    return saved;
+  };
+
+  const appendHistory = async (newMovements: HistoricoMov[]): Promise<boolean> => {
+    if (newMovements.length === 0) return true;
+
+    const saved = await appendHistoryToSupabase(newMovements);
+
+    if (saved) {
+      setHistory(prev => [...newMovements, ...prev]);
+
+      setHistoryQueryRows(prev => {
+        if (!prev) return prev;
+        const inSelectedPeriod = newMovements.filter(
+          movement =>
+            movement.data >= histDateStart &&
+            movement.data <= histDateEnd
+        );
+        return [...inSelectedPeriod, ...prev];
+      });
+    }
+
+    return saved;
+  };
+
+  const persistDivergenciasUpdate = async (
+    updatedDivergencias: Divergencia[]
+  ): Promise<boolean> => {
+    const previousById = new globalThis.Map(divergencias.map(div => [div.id, div]));
+    const changed = updatedDivergencias.filter(div => {
+      const previous = previousById.get(div.id);
+      return !previous || JSON.stringify(previous) !== JSON.stringify(div);
+    });
+
+    const saved = await saveDivergenciasToSupabase(changed);
+
+    if (saved) {
+      setDivergencias(updatedDivergencias);
+    }
+
+    return saved;
+  };
+
+  const occupiedPalletsE1 = useMemo(() => {
+    const productsByReference = new globalThis.Map<string, Product>(
+      productsList.map(product => [product.referencia, product])
     );
 
-  }, 0);
+    return slots
+      .filter(
+        s =>
+          s.estoque === "1" &&
+          s.referencia &&
+          s.saldo > 0
+      )
+      .reduce((total, slot) => {
+        const produto = productsByReference.get(slot.referencia);
+
+        if (!produto?.paletizacao) {
+          return total;
+        }
+
+        return total + calcularPaletes(slot.saldo, produto.paletizacao);
+      }, 0);
+  }, [slots, productsList]);
   
   const [appMode, setAppMode] = useState<AppMode>(() => {
     const saved = localStorage.getItem("eb_mode");
@@ -493,18 +594,7 @@ const deleteProduct = async (
 
   const [activeTab, setActiveTab] = useState<string>("endereçamento");
   
-  // Save changes to localStorage on modifier updates
-  useEffect(() => {
-  saveSlotsToSupabase(slots);
-  }, [slots]);
-
-  useEffect(() => {
-  saveHistoryToSupabase(history);
-}, [history]);
-
-  useEffect(() => {
-  saveDivergenciasToSupabase(divergencias);
-}, [divergencias]);
+  // Persistência explícita: evita gravar listas inteiras a cada render/alteração de estado.
 
   useEffect(() => {
     localStorage.setItem("eb_mode", appMode);
@@ -533,6 +623,44 @@ const deleteProduct = async (
   const [histFilterModulo, setHistFilterModulo] = useState("");
   const [histFilterPosicao, setHistFilterPosicao] = useState("");
 
+  // Histórico da tela: por padrão mostra somente hoje. Períodos maiores são
+  // consultados sob demanda para não carregar o banco inteiro no navegador.
+  const [histDateStart, setHistDateStart] = useState(getTodayIsoDate());
+  const [histDateEnd, setHistDateEnd] = useState(getTodayIsoDate());
+  const [historyQueryRows, setHistoryQueryRows] = useState<HistoricoMov[] | null>(null);
+  const [historyQueryLoading, setHistoryQueryLoading] = useState(false);
+  const [historyExportAll, setHistoryExportAll] = useState(false);
+  const [historyExportLoading, setHistoryExportLoading] = useState(false);
+
+  const handleHistoryPeriodSearch = async () => {
+    if (!histDateStart || !histDateEnd) {
+      alert("Informe a data inicial e a data final.");
+      return;
+    }
+
+    if (histDateStart > histDateEnd) {
+      alert("A data inicial não pode ser maior que a data final.");
+      return;
+    }
+
+    setHistoryQueryLoading(true);
+    try {
+      const data = await loadHistoryFromSupabase({
+        startDate: histDateStart,
+        endDate: histDateEnd
+      });
+      setHistoryQueryRows(data);
+    } finally {
+      setHistoryQueryLoading(false);
+    }
+  };
+
+  const clearHistoryPeriodQuery = () => {
+    setHistDateStart(getTodayIsoDate());
+    setHistDateEnd(getTodayIsoDate());
+    setHistoryQueryRows(null);
+  };
+
   // New product register state helper
   const [newProdRef, setNewProdRef] = useState("");
   const [newProdDesc, setNewProdDesc] = useState("");
@@ -551,7 +679,45 @@ const deleteProduct = async (
   );
 
   // --- LANÇAMENTO (TABULAR BATCH LEDGER) ---
-  const [lancamentoRows, setLancamentoRows] = useState<LancamentoRow[]>([]);
+  const [lancamentoRows, setLancamentoRows] = useState<LancamentoRow[]>(() => {
+    try {
+      const saved = localStorage.getItem("eb_lancamento_draft_v1");
+      if (!saved) return [];
+      const parsed = JSON.parse(saved);
+      return Array.isArray(parsed) ? parsed : [];
+    } catch (error) {
+      console.error("Erro ao recuperar rascunho de lançamento:", error);
+      return [];
+    }
+  });
+
+  // Rascunho local: protege o preenchimento contra F5/atualização da página.
+  useEffect(() => {
+    const timeout = window.setTimeout(() => {
+      try {
+        if (lancamentoRows.length > 0) {
+          localStorage.setItem(
+            "eb_lancamento_draft_v1",
+            JSON.stringify(lancamentoRows)
+          );
+        } else {
+          localStorage.removeItem("eb_lancamento_draft_v1");
+        }
+      } catch (error) {
+        console.error("Erro ao salvar rascunho de lançamento:", error);
+      }
+    }, 150);
+
+    return () => window.clearTimeout(timeout);
+  }, [lancamentoRows]);
+
+  const clearLancamentoDraft = () => {
+    if (lancamentoRows.length === 0) return;
+    if (!confirm("Limpar o rascunho atual do lançamento? Os dados ainda não lançados serão perdidos.")) {
+      return;
+    }
+    setLancamentoRows([]);
+  };
 
   // Bulk Excel import panel state
   const [showBulkImport, setShowBulkImport] = useState(false);
@@ -687,7 +853,7 @@ if (
   };
 
   // Executing batch launches with Travas (blocking validators)
-  const handleLancarLote = () => {
+  const handleLancarLote = async () => {
     // Perform validators for each active field
     const activeData = lancamentoRows.filter(r => r.referencia.trim() !== "");
     if (activeData.length === 0) {
@@ -703,30 +869,46 @@ if (
     });
 
     if (allErrors.length > 0) {
-      // Build a beautiful visual blocker list of errors
       alert(`O lote contém inconsistências de validação e não pôde ser lançado:\n\n${allErrors.slice(0, 10).join("\n")}${allErrors.length > 10 ? `\n...e mais ${allErrors.length - 10} travas violadas.` : ""}`);
       return;
     }
 
-    const { 
-      updatedSlots, 
-      newHistory, 
-      newDivergencias, 
-      processedCount, 
-      errorCount 
+    const {
+      updatedSlots,
+      newHistory,
+      newDivergencias,
+      processedCount,
+      errorCount
     } = processLancamentosInSequence(activeData, slots, operator, launchDate, divergencias, productsList, appMode === "avancado");
 
-    setSlots(updatedSlots);
-    setHistory([...newHistory, ...history]);
-    setDivergencias([...newDivergencias, ...divergencias]);
+    // Persistência incremental: somente o que foi alterado é enviado ao Supabase.
+    const slotsSaved = await persistSlotsUpdate(updatedSlots);
+    if (!slotsSaved) {
+      alert("O lote não foi concluído porque não foi possível salvar os endereços no Supabase.");
+      return;
+    }
 
-    // Show dynamic feedback popup
+    const historySaved = await appendHistory(newHistory);
+    if (!historySaved) {
+      // O endereço já foi salvo. Recarregamos para manter a tela fiel ao banco.
+      const latestSlots = await loadSlotsFromSupabase();
+      setSlots(latestSlots);
+      alert("Os endereços foram salvos, mas o histórico não pôde ser gravado. Nenhum rascunho foi apagado; tente novamente após verificar a conexão.");
+      return;
+    }
+
+    const updatedDivergencias = [...newDivergencias, ...divergencias];
+    const divergenciasSaved = await persistDivergenciasUpdate(updatedDivergencias);
+    if (!divergenciasSaved) {
+      alert("Lote salvo e histórico registrado, mas houve falha ao salvar as divergências. Recarregue a aba Divergências antes de continuar.");
+      return;
+    }
+
     alert(`Lote processado!\n✔️ ${processedCount} movimentações consolidadas de modo sequencial.\n⚠️ ${errorCount} divergências identificadas e enviadas para revisão.`);
 
-    // Clear grid
+    // Clear grid only after the persistent writes succeeded.
     setLancamentoRows([]);
   };
-
   const handleUnitaryLaunch = async (type: "Entrada" | "Saída") => {
     if (!hasAccess("Operador")) {
       alert("Seu nível de permissão jurídica (Consulta) não permite efetuar lançamentos lógicos.");
@@ -838,10 +1020,11 @@ if (
       updatedSlots = updatedSlots.map((s) => (s.id === targetSlot.id ? targetSlot : s));
     }
 
-    await saveSlotsToSupabase(updatedSlots);
-
-    const data = await loadSlotsFromSupabase();
-    setSlots(data);
+    const slotsSaved = await persistSlotsUpdate(updatedSlots);
+    if (!slotsSaved) {
+      alert("O lançamento não foi concluído porque não foi possível salvar o endereço no Supabase.");
+      return;
+    }
 
     // Create history record
     const newMovement: HistoricoMov = {
@@ -860,7 +1043,14 @@ if (
       responsavel: operator,
     };
 
-    setHistory([newMovement, ...history]);
+    const historySaved = await appendHistory([newMovement]);
+    if (!historySaved) {
+      // O endereço já foi salvo. Recarregamos para evitar divergência entre tela e banco.
+      const latestSlots = await loadSlotsFromSupabase();
+      setSlots(latestSlots);
+      alert("O endereço foi salvo, mas o histórico não pôde ser registrado. Verifique a conexão antes de repetir a operação.");
+      return;
+    }
 
     // Clear inputs
     setUnitCorredor("");
@@ -1152,57 +1342,93 @@ if (refRaw) {
         );
       };
   
-  const handleExportarHistorico = () => {
-    const headers = [
-      "ID_Movimento",
-      "Data_Lancamento_Sistema",
-      "Quem_Lancou",
-      "Data_Operacional",
-      "Hora_Operacional",
-      "Estoque",
-      "Modulo_Rua",
-      "Posicao",
-      "Referencia_SKU",
-      "Quantidade_Pecas",
-      "Tipo_Movimento",
-      "Data_Chacote",
-      "Responsavel_Operacional"
-    ];
+  const handleExportarHistorico = async () => {
+    if (!historyExportAll && (!histDateStart || !histDateEnd || histDateStart > histDateEnd)) {
+      alert("Selecione um período válido para exportação.");
+      return;
+    }
 
-    const rows = history.map(h => [
-      h.id,
-      h.dataLancamento,
-      h.quemLancou,
-      h.data,
-      h.hora,
-      `E${h.estoque}`,
-      h.modulo,
-      h.posicao || "Corredor",
-      h.referencia,
-      String(h.quantidade),
-      h.tipo,
-      h.dataChacote || "",
-      h.responsavel
-    ]);
+    setHistoryExportLoading(true);
 
-    const csvContent = [
-      headers.join(";"),
-      ...rows.map(row => 
-        row.map(val => {
-          const cleanVal = val === null || val === undefined ? "" : String(val).replace(/"/g, '""');
-          return `"${cleanVal}"`;
-        }).join(";")
-      )
-    ].join("\n");
+    try {
+      const exportData = await loadHistoryFromSupabase(
+        historyExportAll
+          ? {}
+          : {
+              startDate: histDateStart,
+              endDate: histDateEnd
+            }
+      );
 
-    const blob = new Blob(["\uFEFF" + csvContent], { type: "text/csv;charset=utf-8;" });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.setAttribute("href", url);
-    link.setAttribute("download", `historico_movimentacoes_${new Date().toISOString().split('T')[0]}.csv`);
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+      if (exportData.length === 0) {
+        alert("Nenhuma movimentação encontrada para o período selecionado.");
+        return;
+      }
+
+      const headers = [
+        "ID_Movimento",
+        "Data_Lancamento_Sistema",
+        "Quem_Lancou",
+        "Data_Operacional",
+        "Hora_Operacional",
+        "Estoque",
+        "Modulo_Rua",
+        "Posicao",
+        "Referencia_SKU",
+        "Quantidade_Pecas",
+        "Tipo_Movimento",
+        "Data_Chacote",
+        "Responsavel_Operacional"
+      ];
+
+      const rows = exportData.map(h => [
+        h.id,
+        h.dataLancamento,
+        h.quemLancou,
+        h.data,
+        h.hora,
+        `E${h.estoque}`,
+        h.modulo,
+        h.posicao || "Corredor",
+        h.referencia,
+        String(h.quantidade),
+        h.tipo,
+        h.dataChacote || "",
+        h.responsavel
+      ]);
+
+      const csvContent = [
+        headers.join(";"),
+        ...rows.map(row =>
+          row.map(val => {
+            const cleanVal = val === null || val === undefined
+              ? ""
+              : String(val).replace(/"/g, '""');
+            return `"${cleanVal}"`;
+          }).join(";")
+        )
+      ].join("\n");
+
+      const blob = new Blob(["\uFEFF" + csvContent], {
+        type: "text/csv;charset=utf-8;"
+      });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = historyExportAll
+        ? `historico_movimentacoes_completo_${getTodayIsoDate()}.csv`
+        : `historico_movimentacoes_${histDateStart}_a_${histDateEnd}.csv`;
+
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+    } catch (error) {
+      console.error("Erro ao exportar histórico:", error);
+      alert("Não foi possível exportar o histórico. Verifique a conexão com o Supabase.");
+    } finally {
+      setHistoryExportLoading(false);
+    }
   };
 
   const handleClearAllOperationalData = () => {
@@ -3388,6 +3614,15 @@ const canExecuteBatchLaunch =
                     >
                       Lançar Lote Completo
                     </button>
+                    {lancamentoRows.length > 0 && (
+                      <button
+                        onClick={clearLancamentoDraft}
+                        className="bg-white hover:bg-red-50 text-red-600 border border-red-200 rounded-lg px-3.5 py-2 text-xs font-bold transition flex items-center gap-1.5 cursor-pointer"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                        Limpar rascunho
+                      </button>
+                    )}
                   </div>
                 </div>
 
@@ -3689,7 +3924,11 @@ const canExecuteBatchLaunch =
 
           {/* TAB 4: HISTÓRICO */}
           {activeTab === "histórico" && (() => {
-            const filteredHistory = history.filter((h) => {
+            const historyForView = historyQueryRows ?? history.filter(
+              h => h.data >= histDateStart && h.data <= histDateEnd
+            );
+
+            const filteredHistory = historyForView.filter((h) => {
 
                 if (histSearchSku.trim()) {
                   let cleanIn = histSearchSku.trim().toUpperCase();
@@ -3752,19 +3991,6 @@ const canExecuteBatchLaunch =
                 return true;
               });
 
-            console.log("TOTAL HISTORY:", history.length);
-
-            console.log("FILTRADOS:", filteredHistory.length);
-
-            console.log(
-            "RENDERIZA TABELA?",
-            filteredHistory.length > 0
-          );
-            
-            console.log("PRIMEIRO REGISTRO:", history[0]);
-
-            console.log("ANTES DO MAP:", filteredHistory.length);
-      
             return (
               <div className="space-y-6">
                 <div className="bg-white border border-slate-200 rounded-xl p-6 shadow-xs">
@@ -3775,13 +4001,73 @@ const canExecuteBatchLaunch =
                         Registro contínuo e ordenado para auditoria e controle de estoque do galpão Porto Brasil.
                       </p>
                     </div>
-                    <button
-                      onClick={handleExportarHistorico}
-                      className="bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 text-indigo-700 rounded-lg px-4 py-2 text-xs font-bold transition flex items-center gap-1.5 cursor-pointer uppercase tracking-wider font-sans whitespace-nowrap"
-                    >
-                      <Download className="w-3.5 h-3.5 text-indigo-600" />
-                      Exportar Histórico
-                    </button>
+                    <div className="flex items-center gap-2">
+                      <label className="flex items-center gap-1.5 text-[10px] font-bold text-slate-500 uppercase cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={historyExportAll}
+                          onChange={(e) => setHistoryExportAll(e.target.checked)}
+                          className="rounded border-slate-300"
+                        />
+                        Todo histórico
+                      </label>
+                      <button
+                        onClick={handleExportarHistorico}
+                        disabled={historyExportLoading}
+                        className="bg-indigo-50 hover:bg-indigo-100 disabled:opacity-60 border border-indigo-200 text-indigo-700 rounded-lg px-4 py-2 text-xs font-bold transition flex items-center gap-1.5 cursor-pointer uppercase tracking-wider font-sans whitespace-nowrap"
+                      >
+                        <Download className="w-3.5 h-3.5 text-indigo-600" />
+                        {historyExportLoading ? "Exportando..." : "Exportar Histórico"}
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Período da consulta */}
+                  <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 mb-3 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3 text-xs font-sans">
+                    <div>
+                      <label className="text-[10px] text-slate-400 block font-bold mb-1 uppercase">De</label>
+                      <input
+                        type="date"
+                        value={histDateStart}
+                        onChange={(e) => {
+                          setHistDateStart(e.target.value);
+                          setHistoryQueryRows(null);
+                        }}
+                        className="w-full bg-white border border-slate-300 rounded p-1.5 font-bold text-slate-800 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[10px] text-slate-400 block font-bold mb-1 uppercase">Até</label>
+                      <input
+                        type="date"
+                        value={histDateEnd}
+                        onChange={(e) => {
+                          setHistDateEnd(e.target.value);
+                          setHistoryQueryRows(null);
+                        }}
+                        className="w-full bg-white border border-slate-300 rounded p-1.5 font-bold text-slate-800 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                      />
+                    </div>
+                    <div className="flex items-end gap-2 lg:col-span-2">
+                      <button
+                        onClick={handleHistoryPeriodSearch}
+                        disabled={historyQueryLoading}
+                        className="bg-slate-900 hover:bg-slate-800 disabled:opacity-60 text-white rounded-lg px-4 py-2 text-[10px] font-bold uppercase tracking-wider"
+                      >
+                        {historyQueryLoading ? "Consultando..." : "Consultar período"}
+                      </button>
+                      <button
+                        onClick={clearHistoryPeriodQuery}
+                        className="border border-slate-300 bg-white hover:bg-slate-50 text-slate-600 rounded-lg px-4 py-2 text-[10px] font-bold uppercase tracking-wider"
+                      >
+                        Hoje
+                      </button>
+                    </div>
+                    <div className="flex items-end">
+                      <span className="text-[10px] text-slate-400 font-semibold leading-tight">
+                        A tela carrega somente o período consultado. O exportador consulta o Supabase diretamente.
+                      </span>
+                    </div>
                   </div>
 
                   {/* Filtros de Pesquisa */}
@@ -3897,7 +4183,7 @@ const canExecuteBatchLaunch =
                         ) : (
                           <tr>
                             <td colSpan={currentUser?.role === "administrador" ? 13 : 12} className="py-20 text-center text-slate-400 font-semibold bg-slate-50">
-                              Nenhuma movimentação registrada no histórico local correspondendo aos filtros.
+                              Nenhuma movimentação registrada no Supabase corresponde aos filtros selecionados.
                             </td>
                           </tr>
                         )}
@@ -3918,9 +4204,9 @@ const canExecuteBatchLaunch =
               currentUser={currentUser}
               operator={operator}
               launchDate={launchDate}
-              onUpdateDivergencias={setDivergencias}
-              onUpdateSlots={setSlots}
-              onAddHistory={(newHist) => setHistory([...newHist, ...history])}
+              onUpdateDivergencias={persistDivergenciasUpdate}
+              onUpdateSlots={persistSlotsUpdate}
+              onAddHistory={appendHistory}
               hasAccess={hasAccess}
             />
           )}
@@ -3946,8 +4232,8 @@ const canExecuteBatchLaunch =
               currentUser={currentUser}
               operator={operator}
               launchDate={launchDate}
-              onUpdateSlots={setSlots}
-              onAddHistory={(newHist) => setHistory([...newHist, ...history])}
+              onUpdateSlots={persistSlotsUpdate}
+              onAddHistory={appendHistory}
               hasAccess={hasAccess}
             />
           )}
@@ -3958,16 +4244,23 @@ const canExecuteBatchLaunch =
               
           <InteractiveMapa
             slots={slots}
-            onQuickUpdateSlot={(updated) => {
-              setSlots(slots.map(s => s.id === updated.id ? updated : s));
-              
+            onQuickUpdateSlot={async (updated) => {
+              const slotsSaved = await persistSlotsUpdate(
+                slots.map(s => s.id === updated.id ? updated : s)
+              );
+
+              if (!slotsSaved) {
+                alert("Não foi possível salvar a alteração do endereço no Supabase.");
+                return;
+              }
+
                   // Keep history
                   const logId = `MOV-${generateId()}`;
                   const updateHistory: HistoricoMov = {
                     id: logId,
-                    dataLancamento: new Date().toLocaleDateString("pt-BR"),
+                    dataLancamento: getTodayIsoDate(),
                     quemLancou: operator,
-                    data: new Date().toLocaleDateString("pt-BR"),
+                    data: getTodayIsoDate(),
                     estoque: updated.estoque,
                     modulo: updated.modulo,
                     posicao: updated.posicao,
@@ -3975,10 +4268,13 @@ const canExecuteBatchLaunch =
                     quantidade: updated.saldo,
                     tipo: "Entrada",
                     dataChacote: updated.dataChacote,
-                    hora: updated.ultimaHour || new Date().toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" }),
+                    hora: updated.ultimaHora || new Date().toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" }),
                     responsavel: updated.ultimoResponsavel
                   };
-                  setHistory([updateHistory, ...history]);
+                  const historySaved = await appendHistory([updateHistory]);
+                  if (!historySaved) {
+                    alert("O endereço foi salvo, mas o registro de reconciliação não pôde ser gravado no histórico.");
+                  }
                 }}
               productsList={productsList}
               currentUser={currentUser}
