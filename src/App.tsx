@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, FormEvent } from "react";
+import { useState, useEffect, useMemo, useRef, FormEvent, KeyboardEvent } from "react";
 import { calcularPaletes } from "./lib/palletUtils";
 import { jsPDF } from "jspdf";
 import autoTable from "jspdf-autotable";
@@ -736,26 +736,92 @@ const deleteProduct = async (
     return prod ? prod.descricao : "";
   };
 
-const addLancamentoRow = () => {
-  const defaultRow: LancamentoRow = {
-    id: `ROW-${generateId()}`,
-    data: launchDate,
-    estoque: "1",
-    modulo: "",
-    posicao: "",
-    referencia: "",
-    quantidade: "",
-    tipo: "Entrada",
-    dataChacote: "",
-    hora: new Date().toLocaleTimeString("pt-BR", {
-      hour: "2-digit",
-      minute: "2-digit"
-    }),
-    responsavel: operator
+const lancamentoInputRefs = useRef<Record<string, HTMLInputElement | null>>({});
+  const responsavelInputRefs = useRef<Record<string, HTMLInputElement | null>>({});
+
+  const addLancamentoRow = () => {
+    const rowId = `ROW-${generateId()}`;
+    const defaultRow: LancamentoRow = {
+      id: rowId,
+      data: launchDate,
+      estoque: "1",
+      modulo: "",
+      posicao: "",
+      referencia: "",
+      quantidade: "",
+      tipo: "Entrada",
+      dataChacote: "",
+      hora: "",
+      responsavel: ""
+    };
+
+    setLancamentoRows(prev => [...prev, defaultRow]);
+
+    // Aguarda a nova linha ser renderizada antes de devolver o foco ao primeiro campo.
+    window.setTimeout(() => {
+      lancamentoInputRefs.current[rowId]?.focus();
+    }, 0);
+
+    return rowId;
   };
 
-  setLancamentoRows(prev => [...prev, defaultRow]);
-};
+  const handleLancamentoInputKeyDown = (
+    event: KeyboardEvent<HTMLInputElement>
+  ) => {
+    if (event.key !== "Enter") return;
+
+    event.preventDefault();
+    event.stopPropagation();
+    addLancamentoRow();
+  };
+
+  const getPreviousResponsaveis = (rowId: string): string[] => {
+    const rowIndex = lancamentoRows.findIndex(row => row.id === rowId);
+    if (rowIndex <= 0) return [];
+
+    return Array.from(
+      new Set(
+        lancamentoRows
+          .slice(0, rowIndex)
+          .map(row => row.responsavel.trim())
+          .filter(Boolean)
+      )
+    );
+  };
+
+  const handleResponsavelChange = (rowId: string, value: string) => {
+    const previousResponsaveis = getPreviousResponsaveis(rowId);
+    const normalizedValue = value.trim().toLocaleLowerCase("pt-BR");
+
+    if (normalizedValue) {
+      const matches = previousResponsaveis.filter(name =>
+        name.toLocaleLowerCase("pt-BR").startsWith(normalizedValue)
+      );
+
+      // Só completa automaticamente quando existe uma única correspondência.
+      // Assim, "Jo" não escolhe arbitrariamente entre "João" e "José".
+      if (
+        matches.length === 1 &&
+        matches[0].toLocaleLowerCase("pt-BR") !== normalizedValue
+      ) {
+        const completedValue = matches[0];
+        updateRowField(rowId, "responsavel", completedValue);
+
+        // Mantém o trecho digitado selecionado para que o próximo caractere
+        // possa continuar a edição normalmente.
+        window.setTimeout(() => {
+          const input = responsavelInputRefs.current[rowId];
+          if (input) {
+            input.focus();
+            input.setSelectionRange(value.length, completedValue.length);
+          }
+        }, 0);
+        return;
+      }
+    }
+
+    updateRowField(rowId, "responsavel", value);
+  };
   
   const removeLancamentoRow = (id: string) => {
     if (lancamentoRows.length === 1) {
@@ -866,6 +932,15 @@ if (
     activeData.forEach((row, index) => {
       const rowErrors = validateLancamentoRow(row, index + 1, productsList, appMode === "avancado");
       allErrors = [...allErrors, ...rowErrors];
+
+      // A hora pertence à movimentação registrada na folha.
+      // Ela pode ficar vazia durante o preenchimento, mas deve estar
+      // completa e válida no momento do lançamento do lote.
+      if (!/^(?:[01]\d|2[0-3]):[0-5]\d$/.test(row.hora.trim())) {
+        allErrors.push(
+          `Linha ${index + 1}: a hora da movimentação deve estar no formato HH:mm (ex.: 08:30).`
+        );
+      }
     });
 
     if (allErrors.length > 0) {
@@ -3751,9 +3826,11 @@ const canExecuteBatchLaunch =
                               {/* Data Lançamento */}
                               <td className="py-2 px-2.5">
                                 <input 
+                                  ref={(element) => { lancamentoInputRefs.current[row.id] = element; }}
                                   type="date" 
                                   value={row.data}
                                   onChange={(e) => updateRowField(row.id, "data", e.target.value)}
+                                  onKeyDown={handleLancamentoInputKeyDown}
                                   className="w-full border border-slate-300 rounded p-1 text-xs focus:ring-1 focus:ring-indigo-500 focus:outline-none"
                                 />
                               </td>
@@ -3778,6 +3855,7 @@ const canExecuteBatchLaunch =
                                   value={row.modulo}
                                   placeholder={isE1 ? "1 a 22" : "1 a 172"}
                                   onChange={(e) => updateRowField(row.id, "modulo", e.target.value)}
+                                  onKeyDown={handleLancamentoInputKeyDown}
                                   className="w-full border border-slate-300 rounded p-1 text-xs uppercase focus:ring-1 focus:ring-indigo-500 focus:outline-none font-bold font-mono"
                                 />
                               </td>
@@ -3790,6 +3868,7 @@ const canExecuteBatchLaunch =
                                   disabled={isE1}
                                   placeholder={isE1 ? "SEM POSI" : "Ex: A1, B1"}
                                   onChange={(e) => updateRowField(row.id, "posicao", e.target.value)}
+                                  onKeyDown={handleLancamentoInputKeyDown}
                                   className={`w-full border rounded p-1 text-xs uppercase focus:ring-1 focus:ring-indigo-500 focus:outline-none font-bold font-mono ${
                                     isE1 ? "bg-slate-105 border-slate-200 text-slate-400" : "bg-white border-slate-300"
                                   }`}
@@ -3804,6 +3883,7 @@ const canExecuteBatchLaunch =
                                     value={row.referencia}
                                     placeholder="SKU"
                                     onChange={(e) => updateRowField(row.id, "referencia", e.target.value)}
+                                    onKeyDown={handleLancamentoInputKeyDown}
                                     className="w-full border border-slate-300 rounded p-1 text-xs uppercase focus:ring-1 focus:ring-indigo-500 focus:outline-none pr-6 font-bold font-mono"
                                   />
                                   {row.referencia.trim() !== "" && (
@@ -3831,6 +3911,7 @@ const canExecuteBatchLaunch =
                                   type="number" 
                                   value={row.quantidade}
                                   onChange={(e) => updateRowField(row.id, "quantidade", e.target.value === "" ? "" : parseInt(e.target.value))}
+                                  onKeyDown={handleLancamentoInputKeyDown}
                                   className="w-full border border-slate-300 rounded p-1 text-xs text-right pr-0.5 font-bold focus:ring-1 focus:ring-indigo-500 focus:outline-none"
                                 />
                               </td>
@@ -3858,6 +3939,7 @@ const canExecuteBatchLaunch =
                                   value={row.dataChacote}
                                   placeholder="opcional / NT"
                                   onChange={(e) => updateRowField(row.id, "dataChacote", e.target.value)}
+                                  onKeyDown={handleLancamentoInputKeyDown}
                                   className="w-full border border-slate-300 rounded p-1 text-xs focus:ring-1 focus:ring-indigo-500 focus:outline-none"
                                 />
                               </td>
@@ -3867,19 +3949,41 @@ const canExecuteBatchLaunch =
                                 <input 
                                   type="text" 
                                   value={row.hora}
-                                  onChange={(e) => updateRowField(row.id, "hora", e.target.value)}
+                                  placeholder="HH:mm"
+                                  maxLength={5}
+                                  inputMode="numeric"
+                                  pattern="(?:[01]\\d|2[0-3]):[0-5]\\d"
+                                  onChange={(e) => {
+                                    const digits = e.target.value.replace(/\D/g, "").slice(0, 4);
+                                    const formattedHora =
+                                      digits.length > 2
+                                        ? `${digits.slice(0, 2)}:${digits.slice(2)}`
+                                        : digits;
+                                    updateRowField(row.id, "hora", formattedHora);
+                                  }}
+                                  onKeyDown={handleLancamentoInputKeyDown}
                                   className="w-full border border-slate-300 rounded p-1 text-xs focus:ring-1 focus:ring-indigo-500 focus:outline-none font-mono text-center"
                                 />
                               </td>
 
-                              {/* Responsável log */}
+                              {/* Responsável da movimentação */}
                               <td className="py-2 px-2.5">
-                                <input 
-                                  type="text" 
+                                <input
+                                  ref={(element) => { responsavelInputRefs.current[row.id] = element; }}
+                                  type="text"
                                   value={row.responsavel}
-                                  onChange={(e) => updateRowField(row.id, "responsavel", e.target.value)}
+                                  placeholder="Responsável"
+                                  list={`responsaveis-${row.id}`}
+                                  autoComplete="off"
+                                  onChange={(e) => handleResponsavelChange(row.id, e.target.value)}
+                                  onKeyDown={handleLancamentoInputKeyDown}
                                   className="w-full border border-slate-300 rounded p-1 text-xs focus:ring-1 focus:ring-indigo-500 focus:outline-none"
                                 />
+                                <datalist id={`responsaveis-${row.id}`}>
+                                  {getPreviousResponsaveis(row.id).map((nome) => (
+                                    <option key={nome} value={nome} />
+                                  ))}
+                                </datalist>
                               </td>
 
                               {/* Remove button */}
