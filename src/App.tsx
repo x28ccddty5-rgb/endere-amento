@@ -5,9 +5,6 @@ import autoTable from "jspdf-autotable";
 import * as XLSX from "xlsx";
 import { supabase } from './lib/supabase';
 import { 
-  getInitialWarehouseSlots, 
-  getInitialHistory, 
-  getInitialDivergencias,
   processLancamentosInSequence,
   validateLancamentoRow,
   generateId
@@ -21,6 +18,7 @@ import {
   Product 
 } from "./types";
 import { PRODUCT_CATALOG, findProductInList } from "./data/products";
+import { normalizeRole, canExecuteOperations, isAdmin, isReadOnlyRole } from "./constants/permissions";
 import { DashboardCards } from "./components/DashboardCards";
 import { InteractiveMapa } from "./components/InteractiveMapa";
 import { AdminUsersManagement, AppUser } from "./components/AdminUsersManagement";
@@ -53,7 +51,8 @@ import {
 } from "lucide-react";
 
 const HISTORY_PAGE_SIZE = 1000;
-const HISTORY_DASHBOARD_DAYS = 30;
+const HISTORY_DASHBOARD_DAYS = 60;
+const PRODUCT_SEARCH_PAGE_SIZE = 100;
 
 const getTodayIsoDate = (): string => new Date().toISOString().slice(0, 10);
 
@@ -63,31 +62,48 @@ const getIsoDateDaysAgo = (days: number): string => {
   return date.toISOString().slice(0, 10);
 };
 
-const loadSlotsFromSupabase = async (): Promise<WarehouseSlot[]> => {
-  let allData: any[] = [];
-  let from = 0;
+let slotsLoadPromise: Promise<WarehouseSlot[]> | null = null;
 
-  while (true) {
-    const { data, error } = await supabase
-      .from("slots")
-      .select("id,estoque,modulo,posicao,referencia,descricao,saldo,dataChacote,ultimaData,ultimaHora,ultimoResponsavel")
-      .range(from, from + HISTORY_PAGE_SIZE - 1);
+const loadSlotsFromSupabase = (): Promise<WarehouseSlot[]> => {
+  if (slotsLoadPromise) return slotsLoadPromise;
 
-    if (error) {
-      console.error("Erro ao carregar slots:", error);
-      return [];
+  slotsLoadPromise = (async (): Promise<WarehouseSlot[]> => {
+    let allData: any[] = [];
+    let from = 0;
+
+    while (true) {
+      const { data, error } = await supabase
+        .from("slots")
+        .select("id,estoque,modulo,posicao,referencia,descricao,saldo,dataChacote,ultimaData,ultimaHora,ultimoResponsavel")
+        .range(from, from + HISTORY_PAGE_SIZE - 1);
+
+      if (error) {
+        console.error("Erro ao carregar slots:", error);
+        return [];
+      }
+
+      if (!data || data.length === 0) break;
+
+      allData = [...allData, ...data];
+
+      if (data.length < HISTORY_PAGE_SIZE) break;
+
+      from += HISTORY_PAGE_SIZE;
     }
 
-    if (!data || data.length === 0) break;
+    return allData as WarehouseSlot[];
+  })();
 
-    allData = [...allData, ...data];
+  slotsLoadPromise.then(
+    () => {
+      slotsLoadPromise = null;
+    },
+    () => {
+      slotsLoadPromise = null;
+    }
+  );
 
-    if (data.length < HISTORY_PAGE_SIZE) break;
-
-    from += HISTORY_PAGE_SIZE;
-  }
-
-  return allData as WarehouseSlot[];
+  return slotsLoadPromise;
 };
 
 /**
@@ -96,6 +112,8 @@ const loadSlotsFromSupabase = async (): Promise<WarehouseSlot[]> => {
  */
 const saveSlotsToSupabase = async (slotsData: WarehouseSlot[]): Promise<boolean> => {
   if (slotsData.length === 0) return true;
+
+  slotsLoadPromise = null;
 
   const { error } = await supabase
     .from("slots")
@@ -119,7 +137,7 @@ interface HistoryLoadOptions {
  * Sem período, mantém o comportamento de buscar todos os registros apenas quando isso
  * for explicitamente necessário (ex.: exportação "Tudo").
  */
-const loadHistoryFromSupabase = async (
+const loadHistoryFromSupabaseUncached = async (
   options: HistoryLoadOptions = {}
 ): Promise<HistoricoMov[]> => {
   let allData: any[] = [];
@@ -163,21 +181,67 @@ const loadHistoryFromSupabase = async (
 /**
  * Histórico é append-only. Nunca reenviamos o histórico inteiro para o banco.
  */
-const loadLatestHistoryRecord = async (): Promise<HistoricoMov | null> => {
-  const { data, error } = await supabase
-    .from("history")
-    .select("id,dataLancamento,quemLancou,data,estoque,modulo,posicao,referencia,quantidade,tipo,dataChacote,hora,responsavel")
-    .order("data", { ascending: false })
-    .order("hora", { ascending: false })
-    .limit(1)
-    .maybeSingle();
+const historyLoadPromises = new globalThis.Map<string, Promise<HistoricoMov[]>>();
 
-  if (error) {
-    console.error("Erro ao carregar última movimentação:", error);
-    return null;
-  }
+const loadHistoryFromSupabase = (
+  options: HistoryLoadOptions = {}
+): Promise<HistoricoMov[]> => {
+  const key = `${options.startDate ?? ""}|${options.endDate ?? ""}`;
+  const existing = historyLoadPromises.get(key);
+  if (existing) return existing;
 
-  return (data as HistoricoMov | null) || null;
+  const promise = loadHistoryFromSupabaseUncached(options);
+  historyLoadPromises.set(key, promise);
+
+  promise.then(
+    () => {
+      if (historyLoadPromises.get(key) === promise) {
+        historyLoadPromises.delete(key);
+      }
+    },
+    () => {
+      if (historyLoadPromises.get(key) === promise) {
+        historyLoadPromises.delete(key);
+      }
+    }
+  );
+
+  return promise;
+};
+
+let latestHistoryLoadPromise: Promise<HistoricoMov | null> | null = null;
+
+const loadLatestHistoryRecord = (): Promise<HistoricoMov | null> => {
+  if (latestHistoryLoadPromise) return latestHistoryLoadPromise;
+
+  latestHistoryLoadPromise = (async (): Promise<HistoricoMov | null> => {
+    const { data, error } = await supabase
+      .from("history")
+      .select("id,dataLancamento,quemLancou,data,estoque,modulo,posicao,referencia,quantidade,tipo,dataChacote,hora,responsavel")
+      .lte("data", getTodayIsoDate())
+      .order("data", { ascending: false })
+      .order("hora", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (error) {
+      console.error("Erro ao carregar última movimentação:", error);
+      return null;
+    }
+
+    return (data as HistoricoMov | null) || null;
+  })();
+
+  latestHistoryLoadPromise.then(
+    () => {
+      latestHistoryLoadPromise = null;
+    },
+    () => {
+      latestHistoryLoadPromise = null;
+    }
+  );
+
+  return latestHistoryLoadPromise;
 };
 
 const appendHistoryToSupabase = async (
@@ -197,23 +261,42 @@ const appendHistoryToSupabase = async (
   return true;
 };
 
-const loadDivergenciasFromSupabase = async (): Promise<Divergencia[]> => {
-  const { data, error } = await supabase
-    .from("divergencias")
-    .select("*");
+let divergenciasLoadPromise: Promise<Divergencia[]> | null = null;
 
-  if (error) {
-    console.error("Erro ao carregar divergências:", error);
-    return [];
-  }
+const loadDivergenciasFromSupabase = (): Promise<Divergencia[]> => {
+  if (divergenciasLoadPromise) return divergenciasLoadPromise;
 
-  return (data as Divergencia[]) || [];
+  divergenciasLoadPromise = (async (): Promise<Divergencia[]> => {
+    const { data, error } = await supabase
+      .from("divergencias")
+      .select("*");
+
+    if (error) {
+      console.error("Erro ao carregar divergências:", error);
+      return [];
+    }
+
+    return (data as Divergencia[]) || [];
+  })();
+
+  divergenciasLoadPromise.then(
+    () => {
+      divergenciasLoadPromise = null;
+    },
+    () => {
+      divergenciasLoadPromise = null;
+    }
+  );
+
+  return divergenciasLoadPromise;
 };
 
 const saveDivergenciasToSupabase = async (
   divergenciasData: Divergencia[]
 ): Promise<boolean> => {
   if (divergenciasData.length === 0) return true;
+
+  divergenciasLoadPromise = null;
 
   const { error } = await supabase
     .from("divergencias")
@@ -230,77 +313,279 @@ const saveDivergenciasToSupabase = async (
 
 export default function App() {
   // --- USER AUTHENTICATION & SECURITY STATE ---
-  const [users, setUsers] = useState<AppUser[]>(() => {
-    const saved = localStorage.getItem("eb_users");
-    if (saved) return JSON.parse(saved);
-    const initial: AppUser[] = [
-      { username: "adm", password: "math2308", name: "Administrador Geral", role: "administrador" }
-    ];
-    localStorage.setItem("eb_users", JSON.stringify(initial));
-    return initial;
-  });
+  const [users, setUsers] = useState<AppUser[]>([]);
 
-  const [currentUser, setCurrentUser] = useState<AppUser | null>(() => {
-    const saved = sessionStorage.getItem("eb_current_user");
-    if (saved) return JSON.parse(saved);
-    return null;
-  });
+  const [currentUser, setCurrentUser] = useState<AppUser | null>(null);
 
   // Login Form input state
   const [loginUsername, setLoginUsername] = useState("");
   const [loginPassword, setLoginPassword] = useState("");
   const [loginError, setLoginError] = useState("");
+  const [authLoading, setAuthLoading] = useState(true);
+  const [usersLoading, setUsersLoading] = useState(false);
 
-  const handleLoginSubmit = (e: FormEvent) => {
-    e.preventDefault();
-    setLoginError("");
+  const [activeTab, setActiveTab] = useState<string>("endereçamento");
 
-    const matched = users.find(
-      u => u.username.toLowerCase() === loginUsername.trim().toLowerCase() && u.password === loginPassword
-    );
-
-    if (matched) {
-      const sessUser = { username: matched.username, name: matched.name, role: matched.role };
-      setCurrentUser(sessUser);
-      sessionStorage.setItem("eb_current_user", JSON.stringify(sessUser));
-      setLoginUsername("");
-      setLoginPassword("");
-    } else {
-      setLoginError("Usuário ou senha incorretos.");
+  const getAppRole = (role: string): AppUser["role"] => {
+    switch (role.trim().toLowerCase()) {
+      case "administrador":
+        return "Administrador";
+      case "lideranca":
+      case "liderança":
+        return "Liderança";
+      case "apoio":
+        return "Apoio";
+      case "producao":
+      case "produção":
+        return "Produção";
+      case "visualizador":
+        return "Visualizador";
+      default:
+        throw new Error(`Role de perfil inválida: ${role}`);
     }
   };
 
-  const handleLogout = () => {
+  const loadCurrentAuthUser = async () => {
+    if (authLoadPromiseRef.current) {
+      await authLoadPromiseRef.current;
+      return;
+    }
+
+    const promise = (async () => {
+      setAuthLoading(true);
+
+      const { data: sessionData, error: sessionError } =
+        await supabase.auth.getSession();
+
+      if (sessionError || !sessionData.session) {
+        setCurrentUser(null);
+        setAuthLoading(false);
+        return;
+      }
+
+      const userId = sessionData.session.user.id;
+
+      const { data: profile, error: profileError } = await supabase
+        .from("profiles")
+        .select("username,name,role")
+        .eq("id", userId)
+        .single();
+
+      if (profileError || !profile) {
+        console.error("Erro ao carregar perfil autenticado:", profileError);
+        await supabase.auth.signOut();
+        setCurrentUser(null);
+        setAuthLoading(false);
+        return;
+      }
+
+      try {
+        const sessUser: AppUser = {
+          username: profile.username,
+          name: profile.name,
+          role: getAppRole(profile.role)
+        };
+
+        setCurrentUser(sessUser);
+      } catch (error) {
+        console.error("Perfil autenticado possui role inválida:", error);
+        await supabase.auth.signOut();
+        setCurrentUser(null);
+      }
+
+      setAuthLoading(false);
+    })();
+
+    authLoadPromiseRef.current = promise;
+
+    try {
+      await promise;
+    } finally {
+      if (authLoadPromiseRef.current === promise) {
+        authLoadPromiseRef.current = null;
+      }
+    }
+  };
+
+  const handleLoginSubmit = async (e: FormEvent) => {
+    e.preventDefault();
+    setLoginError("");
+
+    const identifier = loginUsername.trim();
+
+    if (!identifier || !loginPassword) {
+      setLoginError("Informe o e-mail, usuário ou nome e a senha.");
+      return;
+    }
+
+    setAuthLoading(true);
+
+    try {
+      let authUserId: string | null = null;
+
+      if (identifier.includes("@")) {
+        const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
+          email: identifier,
+          password: loginPassword
+        });
+
+        if (authError || !authData.user) {
+          console.error("Erro no login Supabase Auth:", authError);
+          setLoginError("Usuário ou senha incorretos.");
+          return;
+        }
+
+        authUserId = authData.user.id;
+      } else {
+        const { data, error } = await supabase.functions.invoke("login-by-identifier", {
+          body: {
+            identifier,
+            password: loginPassword
+          },
+          headers: {
+            Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`
+          }
+        });
+
+        if (error || !data?.session || !data?.user?.id) {
+          console.error("Erro no login por usuário/nome:", error);
+          setLoginError(
+            data?.error || "Usuário ou senha incorretos."
+          );
+          return;
+        }
+
+        const { error: sessionError } = await supabase.auth.setSession({
+          access_token: data.session.access_token,
+          refresh_token: data.session.refresh_token
+        });
+
+        if (sessionError) {
+          console.error("Erro ao estabelecer sessão do login:", sessionError);
+          setLoginError("Não foi possível estabelecer a sessão.");
+          return;
+        }
+
+        authUserId = data.user.id;
+      }
+
+      if (!authUserId) {
+        setLoginError("Não foi possível identificar a conta autenticada.");
+        return;
+      }
+
+      const { data: profile, error: profileError } = await supabase
+        .from("profiles")
+        .select("username,name,role")
+        .eq("id", authUserId)
+        .single();
+
+      if (profileError || !profile) {
+        console.error("Erro ao carregar perfil após login:", profileError);
+        await supabase.auth.signOut();
+        setCurrentUser(null);
+        setLoginError("A conta foi autenticada, mas o perfil de acesso não foi encontrado.");
+        return;
+      }
+
+      const sessUser: AppUser = {
+        username: profile.username,
+        name: profile.name,
+        role: getAppRole(profile.role)
+      };
+
+      setCurrentUser(sessUser);
+      setLoginUsername("");
+      setLoginPassword("");
+    } catch (error) {
+      console.error("Erro inesperado durante o login:", error);
+      await supabase.auth.signOut();
+      setCurrentUser(null);
+      setLoginError("Não foi possível concluir o login.");
+    } finally {
+      setAuthLoading(false);
+    }
+  };
+
+  const handleLogout = async () => {
+    const { error } = await supabase.auth.signOut();
+
+    if (error) {
+      console.error("Erro ao encerrar sessão:", error);
+    }
+
     setCurrentUser(null);
-    sessionStorage.removeItem("eb_current_user");
     setActiveTab("dashboard");
   };
-  const loadUsersFromSupabase = async () => {
-  const { data, error } = await supabase
-    .from('users')
-    .select('*');
+  const authLoadPromiseRef = useRef<Promise<void> | null>(null);
+  const usersLoadPromiseRef = useRef<Promise<AppUser[]> | null>(null);
+  const productsLoadPromiseRef = useRef<Promise<Product[] | null> | null>(null);
 
-  if (error) {
-    console.error('Erro ao carregar usuários:', error);
+  const loadUsersFromSupabase = async () => {
+    if (!isAdmin(currentUser?.role)) {
+      setUsers([]);
+      setUsersLoading(false);
+      return;
+    }
+
+    if (usersLoadPromiseRef.current) {
+      const cachedUsers = await usersLoadPromiseRef.current;
+      setUsers(cachedUsers);
+      setUsersLoading(false);
+      return;
+    }
+
+    setUsersLoading(true);
+
+    const promise = (async (): Promise<AppUser[]> => {
+      const { error, data } = await supabase.functions.invoke("admin-users", {
+        body: { operation: "list" }
+      });
+
+      if (error || !data?.users) {
+        console.error("Erro ao carregar usuários administrativos:", error);
+        return [];
+      }
+
+      return data.users.map((user: {
+        email?: string;
+        username: string;
+        name: string;
+        role: string;
+      }) => ({
+        email: user.email,
+        username: user.username,
+        name: user.name,
+        role: getAppRole(user.role)
+      }));
+    })();
+
+    usersLoadPromiseRef.current = promise;
+
+    try {
+      const formattedUsers = await promise;
+      setUsers(formattedUsers);
+    } finally {
+      if (usersLoadPromiseRef.current === promise) {
+        usersLoadPromiseRef.current = null;
+      }
+      setUsersLoading(false);
+    }
+  };
+
+useEffect(() => {
+  loadCurrentAuthUser();
+}, []);
+
+useEffect(() => {
+  if (!currentUser || !isAdmin(currentUser.role)) {
+    setUsers([]);
+    setUsersLoading(false);
     return;
   }
 
-  if (data && data.length > 0) {
-    const formattedUsers = data.map(user => ({
-      username: user.username,
-      password: user.password,
-      name: user.name,
-      role: user.role
-    }));
-
-    setUsers(formattedUsers);
-  }
-};
-
-useEffect(() => {
   loadUsersFromSupabase();
-  loadProductsFromSupabase();
-}, []);
+}, [currentUser]);
 
 useEffect(() => {
   const loadSlots = async () => {
@@ -308,10 +593,14 @@ useEffect(() => {
     setSlots(data);
   };
 
-    loadSlots();
+  loadSlots();
 }, []);
-  
-  useEffect(() => {
+
+useEffect(() => {
+  if (activeTab !== "dashboard" && activeTab !== "histórico") {
+    return;
+  }
+
   const loadHistory = async () => {
     const data = await loadHistoryFromSupabase({
       startDate: getIsoDateDaysAgo(HISTORY_DASHBOARD_DAYS),
@@ -329,41 +618,87 @@ useEffect(() => {
   };
 
   loadHistory();
-  }, []);
+}, [activeTab]);
 
 useEffect(() => {
+  if (activeTab !== "dashboard" && activeTab !== "divergências") {
+    return;
+  }
+
   const loadDivergencias = async () => {
     const data = await loadDivergenciasFromSupabase();
     setDivergencias(data);
   };
 
   loadDivergencias();
-}, []);
-  
+}, [activeTab]);
+
   // --- DYNAMIC REGISTERED CUSTOM PRODUCTS STATE ---
   const [productsList, setProductsList] = useState<Product[]>([]);
 
   const loadProductsFromSupabase = async () => {
-  const { data, error } = await supabase
-    .from("products")
-    .select("*");
+    if (productsLoadPromiseRef.current) {
+      const cachedProducts = await productsLoadPromiseRef.current;
+      if (cachedProducts) {
+        setProductsList(cachedProducts);
+      }
+      return;
+    }
 
-  if (error) {
-    console.error("Erro ao carregar produtos:", error);
-    return;
-  }
+    const promise = (async (): Promise<Product[]> => {
+      const { data, error } = await supabase
+        .from("products")
+        .select("referencia,descricao,paletizacao");
 
-  if (data) {
-    setProductsList(
-      data.map((p: any) => ({
+      if (error) {
+        console.error("Erro ao carregar produtos:", error);
+        return null;
+      }
+
+      return (data ?? []).map((p: any) => ({
         referencia: p.referencia,
         descricao: p.descricao,
         paletizacao: Number(p.paletizacao || 0)
-      }))
-    );
-  }
-};
-  
+      }));
+    })();
+
+    productsLoadPromiseRef.current = promise;
+
+    try {
+      const loadedProducts = await promise;
+      if (loadedProducts) {
+        setProductsList(loadedProducts);
+      }
+    } finally {
+      if (productsLoadPromiseRef.current === promise) {
+        productsLoadPromiseRef.current = null;
+      }
+    }
+  };
+
+  // Carrega o catálogo somente nas telas que realmente dependem dele.
+  // Isso preserva a otimização de carregamento sem deixar Base de Dados,
+  // Pesquisa, Lançamento ou as telas operacionais sem as referências.
+  useEffect(() => {
+    if (!currentUser) {
+      return;
+    }
+
+    const tabsRequiringProducts = [
+      "dashboard",
+      "endereçamento",
+      "lançamento",
+      "divergências",
+      "base",
+      "corredor",
+      "mapa"
+    ];
+
+    if (tabsRequiringProducts.includes(activeTab)) {
+      loadProductsFromSupabase();
+    }
+  }, [activeTab, currentUser]);
+
   // Save changes to custom references list
   const registerNewProduct = async (
     ref: string,
@@ -456,46 +791,82 @@ const deleteProduct = async (
 };
   
   // User Administration callbacks
-  const handleRegisterUser = async (newUser: AppUser) => {
+  const handleRegisterUser = async (newUser: AppUser): Promise<boolean> => {
+    if (!isAdmin(currentUser?.role)) {
+      alert("Apenas o Administrador pode cadastrar usuários.");
+      return false;
+    }
 
-  const { error } = await supabase
-    .from("users")
-    .insert([
-      {
+    if (!newUser.email?.trim()) {
+      alert("Informe o e-mail do usuário.");
+      return false;
+    }
+
+    const roleMap: Record<AppUser["role"], string> = {
+      Administrador: "administrador",
+      Liderança: "lideranca",
+      Apoio: "apoio",
+      Produção: "producao",
+      Visualizador: "visualizador"
+    };
+
+    const { error, data } = await supabase.functions.invoke("admin-users", {
+      body: {
+        operation: "create",
+        email: newUser.email.trim().toLowerCase(),
         username: newUser.username,
-        password: newUser.password,
         name: newUser.name,
-        role: newUser.role
+        password: newUser.password,
+        role: roleMap[newUser.role]
       }
-    ]);
+    });
 
-  if (error) {
-    console.error(error);
-    alert("Erro ao salvar usuário.");
-    return;
-  }
+    if (error || !data?.user) {
+      console.error("Erro ao criar usuário administrativo:", error);
+      alert(data?.error || "Erro ao salvar usuário.");
+      return false;
+    }
 
-  loadUsersFromSupabase();
+    await loadUsersFromSupabase();
+    return true;
+  };
 
-  alert("Usuário cadastrado com sucesso!");
-};
+  const handleDeleteUser = async (username: string): Promise<boolean> => {
+    if (!isAdmin(currentUser?.role)) {
+      alert("Apenas o Administrador pode excluir usuários.");
+      return false;
+    }
 
-  const handleDeleteUser = async (username: string) => {
+    if (username === currentUser?.username) {
+      alert("A conta atualmente conectada não pode ser excluída.");
+      return false;
+    }
 
-  const { error } = await supabase
-    .from("users")
-    .delete()
-    .eq("username", username);
+    if (username === "adm") {
+      alert("A conta administrativa principal é protegida.");
+      return false;
+    }
 
-  if (error) {
-    alert("Erro ao excluir usuário.");
-    return;
-  }
+    if (!window.confirm(`Excluir o perfil "${username}"? Esta ação não pode ser desfeita pela interface.`)) {
+      return false;
+    }
 
-  await loadUsersFromSupabase();
+    const { error, data } = await supabase.functions.invoke("admin-users", {
+      body: {
+        operation: "delete",
+        username
+      }
+    });
 
-  alert("Usuário excluído com sucesso!");
-};
+    if (error || !data?.success) {
+      console.error("Erro ao excluir usuário administrativo:", error);
+      alert(data?.error || "Erro ao excluir usuário.");
+      return false;
+    }
+
+    await loadUsersFromSupabase();
+    return true;
+  };
 
   // --- CORE SYSTEM DATA PERSISTENCE ---
   const [slots, setSlots] = useState<WarehouseSlot[]>([]);
@@ -592,7 +963,6 @@ const deleteProduct = async (
     return (saved as AppMode) || "basico";
   });
 
-  const [activeTab, setActiveTab] = useState<string>("endereçamento");
   
   // Persistência explícita: evita gravar listas inteiras a cada render/alteração de estado.
 
@@ -611,6 +981,7 @@ const deleteProduct = async (
   const [filterEstoque, setFilterEstoque] = useState("");
   const [searchModulo, setSearchModulo] = useState("");
   const [searchPosicao, setSearchPosicao] = useState("");
+  const [searchPage, setSearchPage] = useState(1);
 
   const [somenteAcimaPaletizacao, setSomenteAcimaPaletizacao] = useState(false);
 
@@ -866,13 +1237,6 @@ if (
   return false;
 }  
   if (filtroSkuLote) {
-  console.log(
-    "Filtro:",
-    filtroSkuLote,
-    "Linha:",
-    row.referencia
-  );
-
   if (
     row.referencia.toUpperCase() !== filtroSkuLote.toUpperCase()
   ) {
@@ -930,7 +1294,7 @@ if (
     // Capture errors
     let allErrors: string[] = [];
     activeData.forEach((row, index) => {
-      const rowErrors = validateLancamentoRow(row, index + 1, productsList, appMode === "avancado");
+      const rowErrors = validateLancamentoRow(row, index + 1, productsList, appMode === "avancado", slots);
       allErrors = [...allErrors, ...rowErrors];
 
       // A hora pertence à movimentação registrada na folha.
@@ -985,114 +1349,70 @@ if (
     setLancamentoRows([]);
   };
   const handleUnitaryLaunch = async (type: "Entrada" | "Saída") => {
-    if (!hasAccess("Operador")) {
-      alert("Seu nível de permissão jurídica (Consulta) não permite efetuar lançamentos lógicos.");
+    if (!hasAccess("operador")) {
+      alert("Seu perfil não possui permissão para efetuar lançamentos.");
       return;
     }
 
-    const estVal = unitEstoque;
+    const estVal = unitEstoque.trim().toUpperCase().replace(/^E/, "");
     const cleanCorredor = unitCorredor.trim().toUpperCase().replace(/^[RM]/i, "");
     let cleanSku = unitSku.trim().toUpperCase();
     if (cleanSku.startsWith("S")) cleanSku = cleanSku.slice(1);
 
-    if (!cleanCorredor || !cleanSku || !unitQuantidade || Number(unitQuantidade) <= 0) {
-      alert("Por favor, preencha corretamente o Estoque, Nº Corredor, Referência SKU e Quantidade.");
-      return;
-    }
+    const hora = new Date().toLocaleTimeString("pt-BR", {
+      hour: "2-digit",
+      minute: "2-digit"
+    });
+    const posVal =
+      estVal === "1" || !unitPosicao || unitPosicao.trim() === ""
+        ? ""
+        : unitPosicao.trim().toUpperCase();
 
-    const product = productsList.find(p => p.referencia.toUpperCase() === cleanSku);
-    if (!product) {
-      alert(`Código SKU "${cleanSku}" não está registrado na Base de dados.`);
-      return;
-    }
+    const row: LancamentoRow = {
+      id: `UNIT-${generateId()}`,
+      data: launchDate,
+      estoque: estVal,
+      modulo: cleanCorredor,
+      posicao: posVal,
+      referencia: cleanSku,
+      quantidade: Number(unitQuantidade),
+      tipo: type,
+      dataChacote: unitChacote,
+      hora,
+      responsavel: operator
+    };
 
-    const qty = Number(unitQuantidade);
-    const posVal = (estVal === "1" || !unitPosicao || unitPosicao.trim() === "") ? "" : unitPosicao.trim().toUpperCase();
-
-    // Locate existing slot matching estoque, modulo, and posicao
-    const slotIdx = slots.findIndex((s) => {
-    if (estVal === "1") {
-      return (
-        s.estoque === estVal &&
-        s.modulo === cleanCorredor &&
-        s.referencia === cleanSku
-      );
-    }
-  
-    return (
-      s.estoque === estVal &&
-      s.modulo === cleanCorredor &&
-      s.posicao === posVal
+    const errors = validateLancamentoRow(
+      row,
+      1,
+      productsList,
+      appMode === "avancado",
+      slots
     );
-  });
 
-    let updatedSlots = [...slots];
-    let targetSlot: WarehouseSlot;
+    if (errors.length > 0) {
+      alert(`O lançamento não pôde ser realizado:\n\n${errors.join("\n")}`);
+      return;
+    }
 
-    if (slotIdx === -1) {
-      if (type === "Saída") {
-        alert("Não é possível realizar saída de um endereço vazio ou inexistente.");
-        return;
-      }
-      targetSlot = {
-        id: `${estVal}-${cleanCorredor}-${posVal}`,
-        estoque: estVal,
-        modulo: cleanCorredor,
-        posicao: posVal,
-        referencia: product.referencia,
-        descricao: product.descricao,
-        saldo: qty,
-        dataChacote: unitChacote || (posVal === "" ? "Corredor" : ""),
-        ultimaData: launchDate,
-        ultimaHora: new Date().toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" }),
-        ultimoResponsavel: operator,
-      };
-      updatedSlots.push(targetSlot);
-    } else {
-      targetSlot = { ...slots[slotIdx] };
+    const {
+      updatedSlots,
+      newHistory,
+      newDivergencias,
+      processedCount
+    } = processLancamentosInSequence(
+      [row],
+      slots,
+      operator,
+      launchDate,
+      divergencias,
+      productsList,
+      appMode === "avancado"
+    );
 
-      if (type === "Entrada") {
-        if (targetSlot.referencia !== "" && targetSlot.referencia.toUpperCase() !== cleanSku) {
-          // If occupied by a different SKU, ask for overwrite confirm
-          const overwrite = confirm(
-            `O endereço ${cleanCorredor} [Posição: ${posVal || "Corredor"}] do Estoque ${estVal} está ocupado por ${targetSlot.referencia} (${targetSlot.descricao}). Deseja sobrescrever para o novo SKU "${cleanSku}"?`
-          );
-          if (!overwrite) return;
-          targetSlot.referencia = product.referencia;
-          targetSlot.descricao = product.descricao;
-          targetSlot.saldo = qty;
-        } else {
-          targetSlot.referencia = product.referencia;
-          targetSlot.descricao = product.descricao;
-          targetSlot.saldo += qty;
-        }
-      } else {
-        // Saída
-        if (targetSlot.referencia !== cleanSku) {
-          alert(`Tentativa de saída do item "${cleanSku}" em posição ocupada por "${targetSlot.referencia}".`);
-          return;
-        }
-        if (targetSlot.saldo < qty) {
-          alert(`Saldo de estoque insuficiente! Saldo atual: ${targetSlot.saldo} pçs.`);
-          return;
-        }
-        targetSlot.saldo -= qty;
-        if (targetSlot.saldo === 0) {
-          targetSlot.referencia = "";
-          targetSlot.descricao = "";
-        }
-      }
-
-      if (unitChacote) {
-        targetSlot.dataChacote = unitChacote;
-      } else if (posVal === "" && !targetSlot.dataChacote) {
-        targetSlot.dataChacote = "Corredor";
-      }
-
-      targetSlot.ultimaData = launchDate;
-      targetSlot.ultimaHora = new Date().toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
-      targetSlot.ultimoResponsavel = operator;
-      updatedSlots = updatedSlots.map((s) => (s.id === targetSlot.id ? targetSlot : s));
+    if (processedCount === 0 && newDivergencias.length === 0) {
+      alert("O lançamento não gerou nenhuma alteração. Verifique os dados informados.");
+      return;
     }
 
     const slotsSaved = await persistSlotsUpdate(updatedSlots);
@@ -1101,40 +1421,48 @@ if (
       return;
     }
 
-    // Create history record
-    const newMovement: HistoricoMov = {
-      id: `MOV-${generateId()}`,
-      dataLancamento: launchDate,
-      quemLancou: currentUser?.name || "Sistema",
-      data: launchDate,
-      estoque: estVal,
-      modulo: cleanCorredor,
-      posicao: posVal,
-      referencia: product.referencia,
-      quantidade: qty,
-      tipo: type,
-      dataChacote: unitChacote || (posVal === "" ? "Corredor" : ""),
-      hora: new Date().toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" }),
-      responsavel: operator,
-    };
+    if (newHistory.length > 0) {
+      const historySaved = await appendHistory(newHistory);
+      if (!historySaved) {
+        const latestSlots = await loadSlotsFromSupabase();
+        setSlots(latestSlots);
+        alert(
+          "O endereço foi salvo, mas o histórico não pôde ser registrado. " +
+          "Não repita a operação antes de verificar a conexão com o Supabase."
+        );
+        return;
+      }
+    }
 
-    const historySaved = await appendHistory([newMovement]);
-    if (!historySaved) {
-      // O endereço já foi salvo. Recarregamos para evitar divergência entre tela e banco.
-      const latestSlots = await loadSlotsFromSupabase();
-      setSlots(latestSlots);
-      alert("O endereço foi salvo, mas o histórico não pôde ser registrado. Verifique a conexão antes de repetir a operação.");
+    if (newDivergencias.length > 0) {
+      const updatedDivergencias = [...newDivergencias, ...divergencias];
+      const divergenciasSaved = await persistDivergenciasUpdate(updatedDivergencias);
+      if (!divergenciasSaved) {
+        alert(
+          "A divergência foi identificada, mas não pôde ser registrada no Supabase. " +
+          "Verifique a conexão antes de repetir a operação."
+        );
+        return;
+      }
+
+      setUnitQuantidade("");
+      alert(
+        `A movimentação gerou ${newDivergencias.length} divergência(s) para revisão. ` +
+        "O saldo do endereço não foi alterado."
+      );
       return;
     }
 
-    // Clear inputs
     setUnitCorredor("");
     setUnitPosicao("");
     setUnitSku("");
     setUnitQuantidade("");
     setUnitChacote("");
 
-    alert(`Lançamento de ${type} consolidado no endereço ${cleanCorredor}${posVal ? ` (Posição ${posVal})` : " (Corredor)"} do Estoque ${estVal}.`);
+    alert(
+      `Lançamento de ${type} consolidado no endereço ` +
+      `${cleanCorredor}${posVal ? ` (Posição ${posVal})` : " (Corredor)"}.`
+    );
   };
 
   // Manual Excel paste parser updated to handle E1, E2, E3
@@ -1506,42 +1834,6 @@ if (refRaw) {
     }
   };
 
-  const handleClearAllOperationalData = () => {
-    if (confirm("Tem certeza que deseja apagar todo o endereçamento, histórico de movimentações e divergências? Os usuários cadastrados e base de produtos catalogados permanecerão intactos.")) {
-      setSlots([]);
-      setHistory([]);
-      setDivergencias([]);
-      localStorage.setItem("eb_slots_clean_v1", JSON.stringify([]));
-      localStorage.setItem("eb_history_clean_v1", JSON.stringify([]));
-      localStorage.setItem("eb_divergencias_clean_v1", JSON.stringify([]));
-      alert("Todos os dados operacionais foram limpos!");
-    }
-  };
-
-  const handleLimparPlanilhasZerarEnderecamento = () => {
-    // Primeira de duas confirmações
-    if (confirm("Confirmação 1 de 2: Tem certeza de que deseja LIMPAR A PLANILHA e resetar todo o endereçamento dos estoques? Todos os saldos e localizações serão esvaziados.")) {
-      // Segunda de duas confirmações
-      if (confirm("Confirmação 2 de 2 (CRÍTICA): Esta ação é definitiva e removerá todos os paletes e registros operacionais cadastrados no sistema. Deseja prosseguir com o reset total dos estoques?")) {
-        setSlots([]);
-        setHistory([]);
-        setDivergencias([]);
-        localStorage.setItem("eb_slots_clean_v1", JSON.stringify([]));
-        localStorage.setItem("eb_history_clean_v1", JSON.stringify([]));
-        localStorage.setItem("eb_divergencias_clean_v1", JSON.stringify([]));
-        alert("O endereçamento foi completamente zerado!");
-      }
-    }
-  };
-
-  const handleDeleteHistoryItem = (id: string) => {
-    if (confirm(`Tem certeza que deseja apagar permanentemente o registro de movimentação ${id} do histórico?`)) {
-      const updated = history.filter(h => h.id !== id);
-      setHistory(updated);
-      localStorage.setItem("eb_history_clean_v1", JSON.stringify(updated));
-    }
-  };
-
   // --- DIVERGÊNCIAS CORRECTION ---
   const [selectedDivergênciaId, setSelectedDivergênciaId] = useState<string | null>(null);
   const [resolveAction, setResolveAction] = useState<string>("sobrescrever");
@@ -1680,50 +1972,92 @@ if (refRaw) {
     setFilterEstoque("");
     setSearchModulo("");
     setSearchPosicao("");
+    setSearchPage(1);
   };
 
   // --- COMPILATING SYSTEM VIEWS ---
-  const filteredSlots = slots.filter(s => {
-    
-    const matchesRef = searchRef
-  ? s.referencia.toLowerCase() === searchRef.toLowerCase()
-  : true;
-    const matchesDesc = searchDesc ? s.descricao.toLowerCase().includes(searchDesc.toLowerCase()) : true;
-    
-    // Normalize both for flawless comparison
+  const productsByReference = useMemo(
+    () => new globalThis.Map(productsList.map(product => [product.referencia, product])),
+    [productsList]
+  );
+
+  const filteredSlots = useMemo(() => {
+    const normalizedSearchRef = searchRef.trim().toLowerCase();
+    const normalizedSearchDesc = searchDesc.trim().toLowerCase();
     const normFilterEst = filterEstoque ? filterEstoque.replace("E", "") : "";
-    const matchesEstoque = normFilterEst ? s.estoque.replace("E", "") === normFilterEst : true;
+    const normalizedSearchModulo = searchModulo.replace(/^[RM]/i, "");
+    const normalizedSearchPosicao = searchPosicao.replace(/^[RMG]/i, "").toUpperCase();
+    const normalizedSearchPosicaoText = searchPosicao.trim().toLowerCase();
 
-    const matchesModulo = searchModulo 
-      ? s.modulo.replace(/^[RM]/i, "").includes(searchModulo.replace(/^[RM]/i, "")) 
-      : true;
+    return slots.filter(s => {
+      const matchesRef = normalizedSearchRef
+        ? s.referencia.toLowerCase() === normalizedSearchRef
+        : true;
 
-    const matchesPosicao = searchPosicao 
-      ? (
-          s.posicao.replace(/^[RMG]/i, "").toUpperCase().includes(searchPosicao.replace(/^[RMG]/i, "").toUpperCase()) ||
-          (searchPosicao.trim().toLowerCase() === "corredor" && s.posicao === "") ||
-          (s.posicao === "" && "corredor".includes(searchPosicao.trim().toLowerCase()))
-        )
-      : true;
+      const matchesDesc = normalizedSearchDesc
+        ? s.descricao.toLowerCase().includes(normalizedSearchDesc)
+        : true;
+
+      const matchesEstoque = normFilterEst
+        ? s.estoque.replace("E", "") === normFilterEst
+        : true;
+
+      const matchesModulo = normalizedSearchModulo
+        ? s.modulo.replace(/^[RM]/i, "").includes(normalizedSearchModulo)
+        : true;
+
+      const matchesPosicao = normalizedSearchPosicao
+        ? (
+            s.posicao.replace(/^[RMG]/i, "").toUpperCase().includes(normalizedSearchPosicao) ||
+            (normalizedSearchPosicaoText === "corredor" && s.posicao === "") ||
+            (s.posicao === "" && "corredor".includes(normalizedSearchPosicaoText))
+          )
+        : true;
 
       if (somenteAcimaPaletizacao) {
+        const produto = productsByReference.get(s.referencia);
 
-        const produto = productsList.find(
-          p => p.referencia === s.referencia
-        );
-      
-        if (
-          !produto?.paletizacao ||
-          s.saldo <= produto.paletizacao
-        ) {
+        if (!produto?.paletizacao || s.saldo <= produto.paletizacao) {
           return false;
         }
-      
       }
-    
-    return matchesRef && matchesDesc && matchesEstoque && matchesModulo && matchesPosicao;
-  });
-  
+
+      return (
+        matchesRef &&
+        matchesDesc &&
+        matchesEstoque &&
+        matchesModulo &&
+        matchesPosicao
+      );
+    });
+  }, [
+    slots,
+    productsByReference,
+    searchRef,
+    searchDesc,
+    filterEstoque,
+    searchModulo,
+    searchPosicao,
+    somenteAcimaPaletizacao
+  ]);
+
+  const filteredSlotsTotalSaldo = useMemo(
+    () => filteredSlots.reduce((acc, s) => acc + s.saldo, 0),
+    [filteredSlots]
+  );
+
+  const totalSearchPages = Math.max(
+    1,
+    Math.ceil(filteredSlots.length / PRODUCT_SEARCH_PAGE_SIZE)
+  );
+
+  const effectiveSearchPage = Math.min(searchPage, totalSearchPages);
+
+  const paginatedFilteredSlots = useMemo(() => {
+    const start = (effectiveSearchPage - 1) * PRODUCT_SEARCH_PAGE_SIZE;
+    return filteredSlots.slice(start, start + PRODUCT_SEARCH_PAGE_SIZE);
+  }, [filteredSlots, effectiveSearchPage]);
+
   const filteredBaseProducts = productsList.filter(p => 
     p.referencia.toLowerCase().includes(baseSearch.toLowerCase()) ||
     p.descricao.toLowerCase().includes(baseSearch.toLowerCase())
@@ -2616,7 +2950,7 @@ if (refRaw) {
                   type="text" 
                   value={loginUsername}
                   onChange={(e) => setLoginUsername(e.target.value)}
-                  placeholder="Ex: adm"
+                  placeholder="E-mail, usuário ou nome"
                   required
                   className="w-full bg-slate-950 text-white border border-slate-700 rounded-lg p-3 text-xs pl-9 focus:outline-none focus:ring-1 focus:ring-blue-500 font-medium"
                 />
@@ -2646,10 +2980,11 @@ if (refRaw) {
             )}
 
             <button 
-              type="submit" 
-              className="w-full bg-blue-600 hover:bg-blue-700 text-white rounded-lg p-3 text-xs font-bold transition shadow shadow-blue-600/20 uppercase"
+              type="submit"
+              disabled={authLoading}
+              className="w-full bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed hover:bg-blue-700 text-white rounded-lg p-3 text-xs font-bold transition shadow shadow-blue-600/20 uppercase"
             >
-              Acessar Painel
+              {authLoading ? "Autenticando..." : "Acessar Painel"}
             </button>
           </form>
         </div>
@@ -2658,94 +2993,46 @@ if (refRaw) {
     );
   }
 
-  const role =
-      currentUser.role
-        ?.toLowerCase()
-        .normalize("NFD")
-        .replace(/[\u0300-\u036f]/g, "");
-  
-      const normalizedRole =
-  currentUser?.role
-    ?.toLowerCase()
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "") || "";
+  const role = normalizeRole(currentUser.role);
+  const isReadOnly = isReadOnlyRole(currentUser.role);
+  const canAccessBatchLaunch = canExecuteOperations(currentUser.role);
+  const canExecuteBatchLaunch = canExecuteOperations(currentUser.role);
 
-const isReadOnly = normalizedRole !== "administrador";
-
-const canAccessBatchLaunch =
-  ["administrador", "lideranca", "apoio"].includes(normalizedRole);
-const canExecuteBatchLaunch =
-  ["administrador", "lideranca", "apoio"].includes(normalizedRole);
-  
-  // Helper validation roles and permissions check
   const hasAccess = (requiredLevel: "administrador" | "operador" | "consulta"): boolean => {
     if (!currentUser) return false;
-    const role =
-      currentUser.role
-        ?.toLowerCase()
-        .normalize("NFD")
-        .replace(/[\u0300-\u036f]/g, "");
-
-    if (role === "administrador") return true;
 
     if (requiredLevel === "administrador") {
-      // Only Admin can manage users or perform administrative overrides
-      return false;
+      return isAdmin(currentUser.role);
     }
 
     if (requiredLevel === "operador") {
-      return [
-        "administrador",
-        "lideranca",
-        "apoio"
-      ].includes(role);
+      return canExecuteOperations(currentUser.role);
     }
 
-    if (requiredLevel === "consulta") {
-      // Everyone else has at least viewing access
-      return true;
-    }
-
-    return false;
+    return true;
   };
 
   const canAccessTab = (tab: string): boolean => {
     if (!currentUser) return false;
 
-    // Endereço Corredor is restricted to Advanced Mode only
     if (tab === "corredor" && appMode !== "avancado") {
       return false;
     }
 
-    // Admin has access to everything
-    if (role === "administrador") return true;
-
-    // Produção only searches items
-    if (role === "producao") {
-      return tab === "endereçamento";
+    switch (role) {
+      case "administrador":
+        return true;
+      case "lideranca":
+        return ["dashboard", "endereçamento", "lançamento", "histórico", "divergências", "base"].includes(tab);
+      case "apoio":
+        return ["endereçamento", "lançamento", "histórico", "divergências"].includes(tab);
+      case "producao":
+        return ["endereçamento", "lançamento", "histórico", "divergências"].includes(tab);
+      case "visualizador":
+        return ["dashboard", "endereçamento", "lançamento", "histórico", "divergências", "base"].includes(tab);
+      default:
+        return false;
     }
-
-    // Lideranca sees all except user administration & advanced twins/AI mode
-    if (role === "lideranca") {
-    return tab !== "users";
-  }
-
-    // Apoio sees all except user administration & advanced twins/AI mode
-    if (role === "apoio") {
-      return [
-        "endereçamento",
-        "lançamento",
-        "histórico",
-        "divergências"
-      ].includes(tab);
-    }
-
-    // Visualizador can see all tabs except user administration, but edit fields are locked or read-only
-    if (role === "visualizador") {
-      return tab !== "users";
-    }
-
-    return false;
   };
 
   return (
@@ -3038,7 +3325,7 @@ const canExecuteBatchLaunch =
                 <div className="flex gap-2 shrink-0">
                   <button
                     onClick={() => {
-                      if (!hasAccess("Operador")) {
+                      if (!hasAccess("operador")) {
                         alert("Permissão necessária. Sendo conta 'Consulta' você não pode lançar registros.");
                         return;
                       }
@@ -3065,6 +3352,7 @@ const canExecuteBatchLaunch =
                 productsList={productsList}
                 occupiedPalletsE1={occupiedPalletsE1}
                 appMode={appMode}
+                canPerformActions={canExecuteOperations(currentUser?.role)}
               />
 
               {/* Graphic indicators */}
@@ -3173,19 +3461,9 @@ const canExecuteBatchLaunch =
                 <div className="flex items-center justify-between pb-3 border-b border-slate-100">
                   <h3 className="text-xs font-bold text-slate-700 uppercase tracking-wider block">Filtro de Logística e Endereçamento</h3>
                   <div className="flex items-center gap-4">
-                    {currentUser?.role === "administrador" && (
-                      <button 
-                        onClick={handleLimparPlanilhasZerarEnderecamento}
-                        className="text-xs text-red-650 text-red-700 hover:text-red-850 bg-red-50 hover:bg-red-100 border border-red-200 transition font-black cursor-pointer flex items-center gap-1.5 px-3 py-1.5 rounded-lg uppercase tracking-wider font-sans whitespace-nowrap"
-                        title="Zerar todo o endereçamento físico (Requer 2 confirmações)"
-                      >
-                        <Trash2 className="w-3.5 h-3.5 text-red-600 animate-pulse" />
-                        Limpar Planilha
-                      </button>
-                    )}
                     {(
-                      currentUser?.role === "administrador" ||
-                      currentUser?.role === "lideranca"
+                      isAdmin(currentUser?.role) ||
+                      normalizeRole(currentUser?.role) === "lideranca"
                     ) && (
                     <button 
                       onClick={handleExportarEnderecamento}
@@ -3218,7 +3496,7 @@ const canExecuteBatchLaunch =
                         <input 
                           type="text" 
                           value={searchRef}
-                          onChange={(e) => setSearchRef(e.target.value)}
+                          onChange={(e) => { setSearchRef(e.target.value); setSearchPage(1); }}
                           placeholder="EX: 092"
                           className="w-full border border-slate-300 rounded-lg p-2 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500 uppercase font-mono font-bold"
                         />
@@ -3228,7 +3506,7 @@ const canExecuteBatchLaunch =
                         <label className="text-[10px] text-slate-450 font-bold block uppercase mb-1">Estoque</label>
                         <select
                           value={filterEstoque}
-                          onChange={(e) => setFilterEstoque(e.target.value)}
+                          onChange={(e) => { setFilterEstoque(e.target.value); setSearchPage(1); }}
                           className="w-full border border-slate-300 bg-white rounded-lg p-2 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500 font-bold"
                         >
                           <option value="">Todos</option>
@@ -3242,9 +3520,10 @@ const canExecuteBatchLaunch =
                         <input
                           type="checkbox"
                           checked={somenteAcimaPaletizacao}
-                          onChange={(e) =>
-                            setSomenteAcimaPaletizacao(e.target.checked)
-                          }
+                          onChange={(e) => {
+                            setSomenteAcimaPaletizacao(e.target.checked);
+                            setSearchPage(1);
+                          }}
                         />
                       
                         <label className="text-xs font-bold text-indigo-600">
@@ -3257,7 +3536,7 @@ const canExecuteBatchLaunch =
                         <input 
                           type="text" 
                           value={searchModulo}
-                          onChange={(e) => setSearchModulo(e.target.value)}
+                          onChange={(e) => { setSearchModulo(e.target.value); setSearchPage(1); }}
                           placeholder="Ex: 11"
                           className="w-full border border-slate-300 rounded-lg p-2 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500 uppercase font-mono font-bold"
                         />
@@ -3268,7 +3547,7 @@ const canExecuteBatchLaunch =
                         <input 
                           type="text" 
                           value={searchPosicao}
-                          onChange={(e) => setSearchPosicao(e.target.value)}
+                          onChange={(e) => { setSearchPosicao(e.target.value); setSearchPage(1); }}
                           placeholder="Ex: A1"
                           className="w-full border border-slate-300 rounded-lg p-2 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500 uppercase font-mono font-bold"
                         />
@@ -3291,7 +3570,7 @@ const canExecuteBatchLaunch =
                         <input 
                           type="text" 
                           value={searchRef}
-                          onChange={(e) => setSearchRef(e.target.value)}
+                          onChange={(e) => { setSearchRef(e.target.value); setSearchPage(1); }}
                           placeholder="Ex: 092, 132"
                           className="w-full border border-slate-300 rounded-lg p-2 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500 uppercase font-mono font-bold"
                         />
@@ -3302,7 +3581,7 @@ const canExecuteBatchLaunch =
                         <input 
                           type="text" 
                           value={searchDesc}
-                          onChange={(e) => setSearchDesc(e.target.value)}
+                          onChange={(e) => { setSearchDesc(e.target.value); setSearchPage(1); }}
                           placeholder="Ex: RASO, COUP, ETC"
                           className="w-full border border-slate-300 rounded-lg p-2 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500"
                         />
@@ -3312,7 +3591,7 @@ const canExecuteBatchLaunch =
                         <label className="text-[10px] text-slate-450 font-bold block uppercase mb-1">Estoque</label>
                         <select
                           value={filterEstoque}
-                          onChange={(e) => setFilterEstoque(e.target.value)}
+                          onChange={(e) => { setFilterEstoque(e.target.value); setSearchPage(1); }}
                           className="w-full border border-slate-300 bg-white rounded-lg p-2 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500 font-bold"
                         >
                           <option value="">Todos (E1, E2, E3)</option>
@@ -3329,7 +3608,7 @@ const canExecuteBatchLaunch =
               {/* Stats header */}
               <div className="flex justify-between items-center bg-slate-100 text-slate-600 text-xs px-4 py-2 border border-slate-200 rounded-lg font-medium">
                 <span>Total de <strong>{filteredSlots.length}</strong> endereços correspondendo aos filtros inseridos.</span>
-                <span>Saldo físico total localizado: <strong>{filteredSlots.reduce((acc, s) => acc + s.saldo, 0).toLocaleString()} pçs</strong></span>
+                <span>Saldo físico total localizado: <strong>{filteredSlotsTotalSaldo.toLocaleString()} pçs</strong></span>
               </div>
 
               {/* Data Table */}
@@ -3352,12 +3631,10 @@ const canExecuteBatchLaunch =
                     </thead>
                     <tbody className="divide-y divide-slate-100 font-medium text-slate-700">
                       {filteredSlots.length > 0 ? (
-                        filteredSlots.map((s) => {
+                        paginatedFilteredSlots.map((s) => {
                           const isOccupied = s.saldo > 0;
                         
-                          const produto = productsList.find(
-                            p => p.referencia === s.referencia
-                          );
+                          const produto = productsByReference.get(s.referencia);
                         
                           const acimaPaletizacao =
                             produto?.paletizacao &&
@@ -3413,6 +3690,79 @@ const canExecuteBatchLaunch =
                   </table>
                 </div>
               </div>
+
+              {filteredSlots.length > 0 && (
+                <div className="flex flex-col gap-3 border border-slate-200 rounded-xl bg-white px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="text-xs font-medium text-slate-500">
+                    Mostrando{" "}
+                    <strong className="text-slate-700">
+                      {(effectiveSearchPage - 1) * PRODUCT_SEARCH_PAGE_SIZE + 1}
+                    </strong>
+                    {" "}a{" "}
+                    <strong className="text-slate-700">
+                      {Math.min(
+                        effectiveSearchPage * PRODUCT_SEARCH_PAGE_SIZE,
+                        filteredSlots.length
+                      )}
+                    </strong>
+                    {" "}de{" "}
+                    <strong className="text-slate-700">{filteredSlots.length}</strong>
+                    {" "}endereços
+                  </div>
+
+                  <div className="flex items-center gap-1 self-end sm:self-auto">
+                    <button
+                      type="button"
+                      onClick={() => setSearchPage(page => Math.max(1, page - 1))}
+                      disabled={effectiveSearchPage === 1}
+                      className="rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-bold text-slate-600 disabled:cursor-not-allowed disabled:opacity-40 hover:bg-slate-50"
+                    >
+                      Anterior
+                    </button>
+
+                    {Array.from({ length: totalSearchPages }, (_, index) => index + 1)
+                      .filter(page =>
+                        page === 1 ||
+                        page === totalSearchPages ||
+                        Math.abs(page - effectiveSearchPage) <= 2
+                      )
+                      .map((page, index, visiblePages) => {
+                        const previousPage = visiblePages[index - 1];
+                        const showEllipsis = previousPage && page - previousPage > 1;
+
+                        return (
+                          <span key={page} className="flex items-center gap-1">
+                            {showEllipsis && (
+                              <span className="px-1 text-xs text-slate-400">…</span>
+                            )}
+                            <button
+                              type="button"
+                              onClick={() => setSearchPage(page)}
+                              className={`min-w-8 rounded-lg border px-2 py-1.5 text-xs font-bold ${
+                                page === effectiveSearchPage
+                                  ? "border-indigo-600 bg-indigo-600 text-white"
+                                  : "border-slate-200 text-slate-600 hover:bg-slate-50"
+                              }`}
+                            >
+                              {page}
+                            </button>
+                          </span>
+                        );
+                      })}
+
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setSearchPage(page => Math.min(totalSearchPages, page + 1))
+                      }
+                      disabled={effectiveSearchPage === totalSearchPages}
+                      className="rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-bold text-slate-600 disabled:cursor-not-allowed disabled:opacity-40 hover:bg-slate-50"
+                    >
+                      Próxima
+                    </button>
+                  </div>
+                </div>
+              )}
 
             </div>
           )}
@@ -4237,9 +4587,7 @@ const canExecuteBatchLaunch =
                           <th className="py-3.5 px-4 font-mono">Data Chacote</th>
                           <th className="py-3.5 px-4">Responsável Físico</th>
                           <th className="py-3.5 px-4">Hora</th>
-                          {currentUser?.role === "administrador" && (
-                            <th className="py-3.5 px-4 text-center text-red-605 font-bold font-sans">Ações</th>
-                          )}
+
                         </tr>
                       </thead>
 
@@ -4271,22 +4619,12 @@ const canExecuteBatchLaunch =
                               <td className="py-3 px-4 font-mono text-slate-500">{h.dataChacote || "—"}</td>
                               <td className="py-3 px-4 font-bold text-slate-650">{h.responsavel}</td>
                               <td className="py-3 px-4 font-mono text-slate-500">{h.hora}</td>
-                              {currentUser?.role === "administrador" && (
-                                <td className="py-3 px-4 text-center">
-                                  <button
-                                    onClick={() => handleDeleteHistoryItem(h.id)}
-                                    className="text-red-500 hover:text-red-700 hover:bg-red-50 p-1.5 rounded transition cursor-pointer flex items-center justify-center mx-auto"
-                                    title="Excluir esta linha do histórico"
-                                  >
-                                    <Trash2 className="w-3.5 h-3.5" />
-                                  </button>
-                                </td>
-                              )}
+
                             </tr>
                           ))
                         ) : (
                           <tr>
-                            <td colSpan={currentUser?.role === "administrador" ? 13 : 12} className="py-20 text-center text-slate-400 font-semibold bg-slate-50">
+                            <td colSpan={12} className="py-20 text-center text-slate-400 font-semibold bg-slate-50">
                               Nenhuma movimentação registrada no Supabase corresponde aos filtros selecionados.
                             </td>
                           </tr>
@@ -4491,25 +4829,6 @@ const canExecuteBatchLaunch =
                 onDeleteUser={handleDeleteUser}
               />
 
-              {currentUser?.role === "administrador" && (
-                <div className="bg-red-50 border border-red-250 rounded-xl p-5 shadow-xs flex flex-col md:flex-row justify-between items-start md:items-center gap-4 font-sans">
-                  <div className="space-y-1">
-                    <h4 className="text-sm font-bold text-red-800 flex items-center gap-1.5 uppercase tracking-wider">
-                      <ShieldAlert className="w-4 h-4 text-red-600" />
-                      Manutenção do Sistema (Limpar Dados Operacionais)
-                    </h4>
-                    <p className="text-xs text-red-600 font-medium leading-relaxed max-w-2xl">
-                      Esvazie completamente os estoques endereçados, o log de histórico de movimentações lógicas e todos os relatórios de divergências abertos ou fechados. O cadastro de usuários e a base de produtos continuarão intactos. Utilizado para reiniciar o ciclo operacional com saldo zerado.
-                    </p>
-                  </div>
-                  <button
-                    onClick={handleClearAllOperationalData}
-                    className="bg-red-600 hover:bg-red-700 text-white rounded-lg px-4.5 py-2.5 text-xs font-bold transition shadow-sm cursor-pointer uppercase font-extrabold text-center border border-red-600 hover:border-red-700 whitespace-nowrap"
-                  >
-                    Excluir todos os registros
-                  </button>
-                </div>
-              )}
             </div>
           )}
 

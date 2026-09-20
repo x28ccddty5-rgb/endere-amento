@@ -9,9 +9,9 @@ interface AisleStoragePanelProps {
   currentUser: any;
   operator: string;
   launchDate: string;
-  onUpdateSlots: (updated: WarehouseSlot[]) => void;
-  onAddHistory: (movs: HistoricoMov[]) => void;
-  hasAccess: (level: "Administrador" | "Operador" | "Consulta") => boolean;
+  onUpdateSlots: (updated: WarehouseSlot[]) => Promise<boolean>;
+  onAddHistory: (movs: HistoricoMov[]) => Promise<boolean>;
+  hasAccess: (level: "administrador" | "operador" | "consulta") => boolean;
 }
 
 export const AisleStoragePanel: React.FC<AisleStoragePanelProps> = ({
@@ -42,7 +42,7 @@ export const AisleStoragePanel: React.FC<AisleStoragePanelProps> = ({
     : null;
 
   // Corredor items are characterized by posicao === "" (no specific pallet slot height position)
-  const isReadOnly = !hasAccess("Operador");
+  const isReadOnly = !hasAccess("operador");
 
   // Filter slots to only show those that are Corredor slots (posicao is empty)
   // E1 slots are natively floor-based (posicao === ""). We also support E2 and E3 having aisle placements!

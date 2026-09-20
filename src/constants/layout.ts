@@ -1,5 +1,5 @@
 
-export const E1_CAPACITY = {
+export const E1_CAPACITY: Record<string, number> = {
   "1": 27,
   "2": 27,
   "3": 30,

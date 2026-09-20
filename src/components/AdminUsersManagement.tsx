@@ -1,7 +1,8 @@
 import React, { useState, FormEvent } from "react";
-import { UserPlus, Users, Trash2, ShieldAlert } from "lucide-react";
+import { UserPlus, Users, Trash2 } from "lucide-react";
 
 export interface AppUser {
+  email?: string;
   username: string;
   name: string;
   password?: string;
@@ -11,8 +12,8 @@ export interface AppUser {
 interface AdminUsersManagementProps {
   users: AppUser[];
   currentUser: AppUser | null;
-  onRegisterUser: (newUser: AppUser) => void;
-  onDeleteUser: (username: string) => void;
+  onRegisterUser: (newUser: AppUser) => Promise<boolean>;
+  onDeleteUser: (username: string) => Promise<boolean>;
 }
 
 export const AdminUsersManagement: React.FC<AdminUsersManagementProps> = ({
@@ -21,18 +22,21 @@ export const AdminUsersManagement: React.FC<AdminUsersManagementProps> = ({
   onRegisterUser,
   onDeleteUser,
 }) => {
+  const [newUserEmail, setNewUserEmail] = useState("");
   const [newUserUsername, setNewUserUsername] = useState("");
   const [newUserName, setNewUserName] = useState("");
   const [newUserPassword, setNewUserPassword] = useState("");
   const [newUserRole, setNewUserRole] = useState<AppUser["role"]>("Apoio");
 
-  const handleSubmit = (e: FormEvent) => {
+  const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
+
+    const email = newUserEmail.trim().toLowerCase();
     const username = newUserUsername.trim().toLowerCase();
     const name = newUserName.trim();
     const password = newUserPassword;
 
-    if (!username || !name || !password) {
+    if (!email || !username || !name || !password) {
       alert("Por favor, preencha todos os campos do cadastro.");
       return;
     }
@@ -42,13 +46,17 @@ export const AdminUsersManagement: React.FC<AdminUsersManagementProps> = ({
       return;
     }
 
-    onRegisterUser({
+    const success = await onRegisterUser({
+      email,
       username,
       name,
       password,
       role: newUserRole,
     });
 
+    if (!success) return;
+
+    setNewUserEmail("");
     setNewUserUsername("");
     setNewUserName("");
     setNewUserPassword("");
@@ -68,13 +76,23 @@ export const AdminUsersManagement: React.FC<AdminUsersManagementProps> = ({
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
-        
-        {/* Register Form */}
         <form onSubmit={handleSubmit} className="lg:col-span-1 bg-slate-50 border border-slate-200 p-5 rounded-xl space-y-4 font-sans h-fit">
           <span className="text-xs font-black uppercase tracking-wider text-slate-700 flex items-center gap-1.5 mb-2">
             <UserPlus className="w-4 h-4 text-blue-600 font-bold" />
             Novo Perfil Funcional
           </span>
+
+          <div>
+            <label className="text-[10px] text-slate-500 block font-bold mb-1 uppercase">E-mail de Acesso</label>
+            <input
+              type="email"
+              value={newUserEmail}
+              onChange={(e) => setNewUserEmail(e.target.value)}
+              placeholder="Ex: usuario@portobrasil.com.br"
+              required
+              className="w-full bg-white border border-slate-300 rounded p-2 text-xs focus:ring-1 focus:ring-blue-500 focus:outline-none"
+            />
+          </div>
 
           <div>
             <label className="text-[10px] text-slate-500 block font-bold mb-1 uppercase">Login de Usuário</label>
@@ -116,7 +134,7 @@ export const AdminUsersManagement: React.FC<AdminUsersManagementProps> = ({
             <label className="text-[10px] text-slate-500 block font-bold mb-1 uppercase">Nível / Papel (Permissões)</label>
             <select
               value={newUserRole}
-              onChange={(e) => setNewUserRole(e.target.value as any)}
+              onChange={(e) => setNewUserRole(e.target.value as AppUser["role"])}
               className="w-full bg-white border border-slate-300 rounded p-2 text-xs font-bold focus:outline-none text-slate-800"
             >
               <option value="Administrador">Administrador (Total + Moderação)</option>
@@ -135,10 +153,11 @@ export const AdminUsersManagement: React.FC<AdminUsersManagementProps> = ({
           </button>
         </form>
 
-        {/* Users Listing */}
         <div className="lg:col-span-3 space-y-3 font-sans">
-          <span className="text-xs font-bold text-slate-500 block">Usuários Cadastrados ({users.length}):</span>
-          
+          <span className="text-xs font-bold text-slate-500 block">
+            Usuários Cadastrados ({users.length}):
+          </span>
+
           <div className="bg-white border border-slate-200 rounded-xl overflow-hidden shadow-xs">
             <div className="overflow-x-auto">
               <table className="w-full text-left text-xs border-collapse">
@@ -146,6 +165,7 @@ export const AdminUsersManagement: React.FC<AdminUsersManagementProps> = ({
                   <tr className="bg-slate-50 border-b border-slate-200 text-slate-500 font-bold uppercase text-[9px] tracking-wider">
                     <th className="p-3.5 px-4">Usuário / Login</th>
                     <th className="p-3.5 px-4">Nome de Operação</th>
+                    <th className="p-3.5 px-4">E-mail</th>
                     <th className="p-3.5 px-4 text-center">Nível Logístico</th>
                     <th className="p-3.5 px-4 text-center">Ação</th>
                   </tr>
@@ -155,6 +175,7 @@ export const AdminUsersManagement: React.FC<AdminUsersManagementProps> = ({
                     <tr key={u.username} className="hover:bg-slate-50">
                       <td className="p-3 px-4 font-mono font-bold text-slate-850">{u.username}</td>
                       <td className="p-3 px-4 text-slate-600 font-bold">{u.name}</td>
+                      <td className="p-3 px-4 text-slate-500">{u.email || "-"}</td>
                       <td className="p-3 px-4 text-center">
                         <span className={`text-[9px] font-black px-2 py-0.5 border rounded-full uppercase ${
                           u.role === "Administrador"
@@ -191,7 +212,6 @@ export const AdminUsersManagement: React.FC<AdminUsersManagementProps> = ({
             </div>
           </div>
 
-          {/* Description of permission bounds */}
           <div className="grid grid-cols-1 md:grid-cols-5 gap-3 pt-3">
             {[
               { r: "Administrador", desc: "Acesso irrestrito a todos os recursos, controle avançado de rede e aprovação de divergências." },
@@ -199,16 +219,14 @@ export const AdminUsersManagement: React.FC<AdminUsersManagementProps> = ({
               { r: "Apoio", desc: "Foco integral no abastecimento e baixas lógicas (Lançamento, Pesquisa, Histórico e divergência)." },
               { r: "Produção", desc: "Permissões restritas unicamente à aba de Pesquisa de Referências para suporte físico." },
               { r: "Visualizador", desc: "Visualiza de forma estática quase todas as abas. Bloqueado para alterar ou lançar qualquer dado." }
-            ].map(rules => (
+            ].map((rules) => (
               <div key={rules.r} className="bg-slate-50 border border-slate-200 p-2.5 rounded-lg text-[10px] leading-relaxed">
-                <span className="font-extrabold text-slate-755 text-slate-800 block mb-1 underline">{rules.r}</span>
+                <span className="font-extrabold text-slate-800 block mb-1 underline">{rules.r}</span>
                 <span className="text-slate-450 font-medium block">{rules.desc}</span>
               </div>
             ))}
           </div>
-
         </div>
-
       </div>
     </div>
   );

@@ -5,6 +5,7 @@ import { jsPDF } from "jspdf";
 import { WarehouseSlot, Product } from "../types";
 import { Map, Info, User, Calendar, Sliders, Check, Hammer, Package } from "lucide-react";
 import { VerticalModuleMap } from "./VerticalModuleMap";
+import { isAdmin } from "../constants/permissions";
 
 import {
   E1_CAPACITY,
@@ -27,13 +28,7 @@ export const InteractiveMapa: React.FC<InteractiveMapaProps> = ({
   currentUser
 }) => {
 
-  const role =
-  currentUser?.role
-    ?.toLowerCase()
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "");
-  
-  const isReadOnly = role !== "administrador";
+  const isReadOnly = !isAdmin(currentUser?.role);
   
   const [selectedEstoque, setSelectedEstoque] = useState<string>("1");
 

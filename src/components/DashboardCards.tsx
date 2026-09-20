@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useMemo, useState } from "react";
 import { OccupancyAnalysisDrawer } from "./OccupancyAnalysisDrawer";
 import { FreeCapacityDrawer } from "./FreeCapacityDrawer";
 import { OccupationRateDrawer } from "./OccupationRateDrawer";
@@ -23,6 +23,56 @@ import {
 } from "lucide-react";
 import { WarehouseSlot, HistoricoMov, Divergencia } from "../types";
 
+const normalizeReferencia = (value: string | null | undefined): string =>
+  (value || "").trim().toUpperCase();
+
+const getDateOnlyTimestamp = (value: string | null | undefined): number | null => {
+  if (!value) return null;
+  const raw = String(value).trim();
+
+  let match = raw.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+  if (match) {
+    return Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
+  }
+
+  match = raw.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (match) {
+    return Date.UTC(Number(match[3]), Number(match[2]) - 1, Number(match[1]));
+  }
+
+  return null;
+};
+
+const getMovementTimestamp = (movement: HistoricoMov): number | null => {
+  const dateTimestamp = getDateOnlyTimestamp(movement.data);
+  if (dateTimestamp === null) return null;
+
+  const timeMatch = String(movement.hora || "").match(/^(\d{1,2}):(\d{2})/);
+  const hours = timeMatch ? Number(timeMatch[1]) : 0;
+  const minutes = timeMatch ? Number(timeMatch[2]) : 0;
+
+  return dateTimestamp + ((hours * 60 + minutes) * 60 * 1000);
+};
+
+const hojeData = new Date();
+const hojeTimestamp = Date.UTC(
+  hojeData.getFullYear(),
+  hojeData.getMonth(),
+  hojeData.getDate()
+);
+
+const getDiasDesdeMovimentacao = (data: string | null | undefined): number | null => {
+  const dataTimestamp = getDateOnlyTimestamp(data);
+  if (dataTimestamp === null) return null;
+
+  const diff = Math.floor(
+    (hojeTimestamp - dataTimestamp) / (1000 * 60 * 60 * 24)
+  );
+
+  return diff >= 0 ? diff : null;
+};
+
+
 interface DashboardCardsProps {
   slots: WarehouseSlot[];
   history: HistoricoMov[];
@@ -30,6 +80,7 @@ interface DashboardCardsProps {
   productsList: any[];
   occupiedPalletsE1: number;
   appMode?: string;
+  canPerformActions?: boolean;
 }
 
 export const DashboardCards: React.FC<DashboardCardsProps> = ({
@@ -38,7 +89,8 @@ export const DashboardCards: React.FC<DashboardCardsProps> = ({
   divergencias,
   productsList,
   occupiedPalletsE1,
-  appMode
+  appMode,
+  canPerformActions = false
 }) => {
 
   const [showOccupancyAnalysis, setShowOccupancyAnalysis] = useState(false);
@@ -54,40 +106,70 @@ export const DashboardCards: React.FC<DashboardCardsProps> = ({
   const [selectedDays, setSelectedDays] = useState(7);
   
   // 1. Calculate slot statuses
-  const totalSlots = 657 + 1373 + 1288;
+  const totalSlotsE1 = 657;
+  const totalSlotsE2 = 1373;
+  const totalSlotsE3 = 1288;
+  const totalSlots = totalSlotsE1 + totalSlotsE2 + totalSlotsE3;
 
-const occupiedSlotsE2 = slots.filter(
-  s => s.estoque === "2" && s.saldo > 0
-).length;
+  const slotSummary = useMemo(() => {
+    let occupiedE2 = 0;
+    let occupiedE3 = 0;
+    let storedQuantity = 0;
+    const activeReferences = new Set<string>();
+    const quantityByReference = new Map<string, number>();
+    const descriptionByReference = new Map<string, string>();
 
-const occupiedSlotsE3 = slots.filter(
-  s => s.estoque === "3" && s.saldo > 0
-).length;
+    for (const slot of slots) {
+      if (slot.saldo <= 0) continue;
 
-const totalSlotsE1 = 657;
-const totalSlotsE2 = 1373;
-const totalSlotsE3 = 1288;
+      storedQuantity += slot.saldo;
 
-const freeSlotsE1 =
-  totalSlotsE1 - occupiedPalletsE1;
+      if (slot.estoque === "2") occupiedE2++;
+      if (slot.estoque === "3") occupiedE3++;
 
-const freeSlotsE2 =
-  totalSlotsE2 - occupiedSlotsE2;
+      const referencia = normalizeReferencia(slot.referencia);
+      if (!referencia) continue;
 
-const freeSlotsE3 =
-  totalSlotsE3 - occupiedSlotsE3;
-  
-const occupiedSlots =
-  occupiedPalletsE1 +
-  occupiedSlotsE2 +
-  occupiedSlotsE3;
+      activeReferences.add(referencia);
+      quantityByReference.set(
+        referencia,
+        (quantityByReference.get(referencia) || 0) + slot.saldo
+      );
 
-const freeSlots = totalSlots - occupiedSlots;
+      if (!descriptionByReference.has(referencia) && slot.descricao) {
+        descriptionByReference.set(referencia, slot.descricao);
+      }
+    }
 
-const occupationRate =
-  totalSlots > 0
-    ? (occupiedSlots / totalSlots) * 100
-    : 0;
+    return {
+      occupiedE2,
+      occupiedE3,
+      storedQuantity,
+      uniqueSKUs: activeReferences.size,
+      activeReferences,
+      quantityByReference,
+      descriptionByReference,
+    };
+  }, [slots]);
+
+  const occupiedSlotsE2 = slotSummary.occupiedE2;
+  const occupiedSlotsE3 = slotSummary.occupiedE3;
+
+  const freeSlotsE1 = totalSlotsE1 - occupiedPalletsE1;
+  const freeSlotsE2 = totalSlotsE2 - occupiedSlotsE2;
+  const freeSlotsE3 = totalSlotsE3 - occupiedSlotsE3;
+
+  const occupiedSlots =
+    occupiedPalletsE1 +
+    occupiedSlotsE2 +
+    occupiedSlotsE3;
+
+  const freeSlots = totalSlots - occupiedSlots;
+
+  const occupationRate =
+    totalSlots > 0
+      ? (occupiedSlots / totalSlots) * 100
+      : 0;
 
   const saveOccupancySnapshot = async () => {
   try {
@@ -116,157 +198,143 @@ const occupationRate =
 };
   
   // 2. SKUs & Total Quantities
- const uniqueSKUs = new Set(
-  slots
-    .filter(
-      s =>
-        s.referencia &&
-        s.referencia.trim() !== "" &&
-        s.saldo > 0
-    )
-    .map(s => s.referencia.trim())
-).size;
-  const totalStoredQuantity = slots.reduce((acc, s) => acc + s.saldo, 0);
+  const uniqueSKUs = slotSummary.uniqueSKUs;
+  const totalStoredQuantity = slotSummary.storedQuantity;
 
-// Última sincronização
-const lastSync = history.length > 0
-  ? [...history].sort((a, b) =>
-      `${b.data}T${b.hora}`.localeCompare(`${a.data}T${a.hora}`)
-    )[0]
-  : null;
-  
-// Movimentações da data da última sincronização
-const dataUltimaSincronia = lastSync?.data || "";
+const synchronizationSummary = useMemo(() => {
+  if (history.length === 0) {
+    return {
+      lastSync: null as HistoricoMov | null,
+      dataUltimaSincronia: "",
+      movementsToday: 0,
+      topOperator: ["Sem Registro", 0] as [string, number],
+    };
+  }
 
-const movementsToday = history.filter(
-  h => h.data === dataUltimaSincronia
-).length;
+  let lastSync = history[0];
 
-console.log("Data última sincronização:", dataUltimaSincronia);
-console.log("Movimentações:", movementsToday);
+  for (let i = 1; i < history.length; i++) {
+    const candidate = history[i];
+    const candidateTimestamp = getMovementTimestamp(candidate) ?? -1;
+    const currentTimestamp = getMovementTimestamp(lastSync) ?? -1;
 
-// Operador mais ativo da última sincronização
-const operatorCounter: Record<string, number> = {};
+    if (candidateTimestamp > currentTimestamp) {
+      lastSync = candidate;
+    }
+  }
 
-history
-  .filter(h => h.data === lastSync?.data)
-  .forEach(h => {
-    const operador = h.responsavel?.trim() || "Sem Registro";
+  const dataUltimaSincronia = lastSync.data;
+  let movementsToday = 0;
+  const operatorCounter: Record<string, number> = {};
 
-    operatorCounter[operador] =
-      (operatorCounter[operador] || 0) + 1;
-  });
+  for (const movement of history) {
+    if (movement.data !== dataUltimaSincronia) continue;
 
-const topOperator =
-  Object.entries(operatorCounter)
-    .sort((a, b) => b[1] - a[1])[0] || ["Sem Registro", 0];
+    movementsToday++;
+    const operador = movement.responsavel?.trim() || "Sem Registro";
+    operatorCounter[operador] = (operatorCounter[operador] || 0) + 1;
+  }
 
-console.log("Top Operator:", topOperator);
+  const topOperator =
+    (Object.entries(operatorCounter).sort((a, b) => b[1] - a[1])[0] as [string, number] | undefined)
+    || ["Sem Registro", 0];
 
-const hojeData = new Date();
+  return {
+    lastSync,
+    dataUltimaSincronia,
+    movementsToday,
+    topOperator,
+  };
+}, [history]);
 
-const skusMov7Dias = new Set(
-  history
-    .filter(h => {
-      const dataMov = new Date(h.data);
-      const diffDias =
-  (hojeData.getTime() - dataMov.getTime()) /
-  (1000 * 60 * 60 * 24);
+const lastSync = synchronizationSummary.lastSync;
+const dataUltimaSincronia = synchronizationSummary.dataUltimaSincronia;
+const movementsToday = synchronizationSummary.movementsToday;
+const topOperator = synchronizationSummary.topOperator;
 
-      return diffDias <= 7;
-    })
-    .map(h => h.referencia)
-);
+const latestMovementBySku = useMemo(() => {
+  const latest = new Map<string, HistoricoMov>();
 
-const skusMov30Dias = new Set(
-  history
-    .filter(h => {
-      const dataMov = new Date(h.data);
-      const diffDias =
-  (hojeData.getTime() - dataMov.getTime()) /
-  (1000 * 60 * 60 * 24);
+  for (const movement of history) {
+    const referencia = normalizeReferencia(movement.referencia);
+    const timestamp = getMovementTimestamp(movement);
 
-      return diffDias <= 30;
-    })
-    .map(h => h.referencia)
-);
+    // Movimentações futuras não representam o estado atual do estoque.
+    if (!referencia || timestamp === null || timestamp > Date.now()) continue;
 
-const skusAtivos = new Set(
-  slots
-    .filter(
-      s =>
-        s.saldo > 0 &&
-        s.referencia &&
-        s.referencia.trim() !== ""
-    )
-    .map(s => s.referencia.trim())
-);
+    const previous = latest.get(referencia);
+    if (!previous || (getMovementTimestamp(previous) ?? -1) < timestamp) {
+      latest.set(referencia, movement);
+    }
+  }
 
-const skusParados7Dias =
-  [...skusAtivos].filter(
-    sku => !skusMov7Dias.has(sku)
-  ).length;
+  return latest;
+}, [history]);
 
-const skusParados30Dias =
-  [...skusAtivos].filter(
-    sku => !skusMov30Dias.has(sku)
-  ).length;
-
-    const skusParados7DiasLista = [...skusAtivos]
-    .filter(sku => !skusMov7Dias.has(sku))
-    .map(referencia => {
-  
-      const skuSlots = slots.filter(
-        s =>
-          s.referencia?.trim() === referencia &&
-          s.saldo > 0
-      );
-  
-      const saldoTotal = skuSlots.reduce(
-        (acc, s) => acc + s.saldo,
-        0
-      );
-  
-      const produto = productsList.find(
-        p => p.referencia?.trim() === referencia
-      );
-  
-      const ultimaMovimentacao = history
-        .filter(h => h.referencia === referencia)
-        .sort((a, b) =>
-          `${b.data} ${b.hora}`.localeCompare(
-            `${a.data} ${a.hora}`
-          )
-        )[0];
-  
-      const custoUnitario =
-      produto?.custoUnitario || 0;
-    
-      const valorTotal =
-        saldoTotal * custoUnitario;
-
-      const diasParado = ultimaMovimentacao
-      ? Math.floor(
-          (Date.now() -
-            new Date(
-              ultimaMovimentacao.data
-            ).getTime()) /
-          (1000 * 60 * 60 * 24)
+const skusAtivos = useMemo(
+  () =>
+    new Set<string>(
+      slots
+        .filter(
+          s =>
+            s.saldo > 0 &&
+            s.referencia &&
+            s.referencia.trim() !== ""
         )
-      : 999;
-      
-      return {
-        referencia,
-        descricao: produto?.descricao || "-",
-        saldo: saldoTotal,
-        custoUnitario,
-        valorTotal,
-        ultimaMovimentacao:
-          ultimaMovimentacao?.data || "-",
-        diasParado
-      };
-    });
-  
+        .map(s => normalizeReferencia(s.referencia))
+    ),
+  [slots]
+);
+
+const getParadosCount = (threshold: number): number =>
+  [...skusAtivos].filter((sku) => {
+    const latest = latestMovementBySku.get(sku);
+    const days = getDiasDesdeMovimentacao(latest?.data);
+    return days === null || days > threshold;
+  }).length;
+
+const skusParados7Dias = getParadosCount(7);
+const skusParados30Dias = getParadosCount(30);
+
+const skusParadosLista = useMemo(() => {
+  const productByReference = new Map<string, (typeof productsList)[number]>();
+
+  for (const product of productsList) {
+    productByReference.set(
+      normalizeReferencia(product.referencia),
+      product
+    );
+  }
+
+  return [...skusAtivos].map(referencia => {
+    const produto = productByReference.get(referencia);
+    const ultimaMovimentacao = latestMovementBySku.get(referencia);
+    const custoUnitario = Number(produto?.custoUnitario || 0);
+    const saldoTotal = slotSummary.quantityByReference.get(referencia) || 0;
+    const valorTotal = saldoTotal * custoUnitario;
+    const diasParado = getDiasDesdeMovimentacao(ultimaMovimentacao?.data);
+
+    return {
+      referencia,
+      descricao:
+        produto?.descricao ||
+        slotSummary.descriptionByReference.get(referencia) ||
+        "-",
+      saldo: saldoTotal,
+      custoUnitario,
+      valorTotal,
+      ultimaMovimentacao: ultimaMovimentacao?.data || "-",
+      diasParado
+    };
+  });
+}, [
+  skusAtivos,
+  productsList,
+  latestMovementBySku,
+  slotSummary.quantityByReference,
+  slotSummary.descriptionByReference
+]);
+
   // 4. Divergencias
   const divAbertas = divergencias.filter(d => d.status === "Aberta").length;
   const divCorrigidas = divergencias.filter(d => d.status === "Corrigida").length;
@@ -292,24 +360,22 @@ const tempoMedio =
       ).toFixed(1)
     : "0.0";
 
-    const filteredSkus = skusParados7DiasLista.filter((sku) => {
+    const filteredSkus = skusParadosLista.filter((sku) => {
+      const term = searchTerm.trim().toLowerCase();
 
       const matchBusca =
-        sku.referencia
-          .toLowerCase()
-          .includes(searchTerm.toLowerCase()) ||
-    
-        sku.descricao
-          .toLowerCase()
-          .includes(searchTerm.toLowerCase());
-    
+        !term ||
+        sku.referencia.toLowerCase().includes(term) ||
+        sku.descricao.toLowerCase().includes(term);
+
       const matchPeriodo =
-        selectedDays === 60
-          ? sku.diasParado >= 60
-          : sku.diasParado >= selectedDays;
-    
+        sku.diasParado === null
+          ? selectedDays === 60
+          : selectedDays === 60
+            ? sku.diasParado >= 60
+            : sku.diasParado > selectedDays;
+
       return matchBusca && matchPeriodo;
-    
     });
 
     const exportarCSV = () => {
@@ -382,15 +448,17 @@ const tempoMedio =
   return (
     <div className="space-y-5" id="dashboard-container">
       
-     <div className="mt-4 pt-4 border-t">
-  <button
-    onClick={saveOccupancySnapshot}
-    className="text-xs text-slate-500 hover:text-slate-700"
-  >
-    Registrar Ocupação
-  </button>
-</div>
-      
+      {canPerformActions && (
+        <div className="mt-4 pt-4 border-t">
+          <button
+            onClick={saveOccupancySnapshot}
+            className="text-xs text-slate-500 hover:text-slate-700"
+          >
+            Registrar Ocupação
+          </button>
+        </div>
+      )}
+
       {/* SECTION 1: ENDEREÇAMENTO */}
       <div>
         <h3 className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-2 flex items-center gap-1.5">
@@ -951,7 +1019,7 @@ const tempoMedio =
             <div className="max-h-[500px] overflow-auto">
           
               {filteredSkus
-                .sort((a, b) => b.diasParado - a.diasParado)
+                .sort((a, b) => (b.diasParado ?? 60) - (a.diasParado ?? 60))
                 .slice(0, 50)
                 .map((sku) => (
           
@@ -1010,7 +1078,7 @@ const tempoMedio =
                             font-semibold
                       
                             ${
-                              sku.diasParado >= 60
+                              (sku.diasParado === null || sku.diasParado >= 60)
                                 ? "bg-red-100 text-red-700"
                                 : sku.diasParado >= 30
                                 ? "bg-orange-100 text-orange-700"
@@ -1020,7 +1088,7 @@ const tempoMedio =
                             }
                           `}
                         >
-                          {sku.diasParado}
+                          {sku.diasParado === null ? "60+" : sku.diasParado}
                         </span>
                       </div>
           
