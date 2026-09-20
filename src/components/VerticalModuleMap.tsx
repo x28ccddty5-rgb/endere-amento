@@ -28,8 +28,7 @@ interface VerticalModuleMapProps {
   };
 
 onSelectSlot: (slot: any) => void;
-  
-  onSelectSlot: (slot: any) => void;
+
 
   selectedSlotId: string | null;
 }

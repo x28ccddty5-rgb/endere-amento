@@ -1,10 +1,19 @@
 import { Product, WarehouseSlot, LancamentoRow, HistoricoMov, Divergencia } from "../types";
-import { PRODUCT_CATALOG, findProductInList } from "./products";
+import { findProductInList } from "./products";
+import { E1_CAPACITY } from "../constants/layout";
 
 // Helper to generate a unique ID
 export function generateId(): string {
   return Math.random().toString(36).substring(2, 9).toUpperCase();
 }
+
+const sameNumericModule = (left: string, right: string): boolean => {
+  const leftNumber = Number(left);
+  const rightNumber = Number(right);
+  return Number.isFinite(leftNumber) &&
+    Number.isFinite(rightNumber) &&
+    leftNumber === rightNumber;
+};
 
 /**
  * Validates a single row of launch input:
@@ -30,7 +39,13 @@ export interface RowValidationError {
   message: string;
 }
 
-export function validateLancamentoRow(row: LancamentoRow, rowNumber: number, productsList: Product[], isAdvanced = false): string[] {
+export function validateLancamentoRow(
+  row: LancamentoRow,
+  rowNumber: number,
+  productsList: Product[],
+  isAdvanced = false,
+  currentSlots?: WarehouseSlot[]
+): string[] {
   const errors: string[] = [];
 
   // 1. Data
@@ -69,7 +84,7 @@ export function validateLancamentoRow(row: LancamentoRow, rowNumber: number, pro
   if (est === "2") {
     const validPositionsE2 = ["A1", "B1", "C1", "D1", "E1", "A2", "B2", "C2", "D2", "E2"];
     if (!pos) {
-      if (!isAdvanced) {
+      if (!isAdvanced || currentSlots) {
         errors.push(`Linha ${rowNumber}: Posição é obrigatória para o Estoque 2.`);
       }
     } else if (!validPositionsE2.includes(pos)) {
@@ -78,7 +93,7 @@ export function validateLancamentoRow(row: LancamentoRow, rowNumber: number, pro
   } else if (est === "3") {
     const validPositionsE3 = ["A1", "B1", "C1", "D1", "E1", "F1", "A2", "B2", "C2", "D2", "E2", "F2"];
     if (!pos) {
-      if (!isAdvanced) {
+      if (!isAdvanced || currentSlots) {
         errors.push(`Linha ${rowNumber}: Posição é obrigatória para o Estoque 3.`);
       }
     } else if (!validPositionsE3.includes(pos)) {
@@ -89,6 +104,29 @@ export function validateLancamentoRow(row: LancamentoRow, rowNumber: number, pro
     if (pos) {
       errors.push(`Linha ${rowNumber}: Estoque 1 não possui posições definidas. Deixe o campo Posição vazio.`);
     }
+  }
+
+  // The physical registry in slots is authoritative for E2/E3.
+  // Never allow a movement to silently create a physical position.
+  if (currentSlots && (est === "2" || est === "3") && pos) {
+    const physicalSlotExists = currentSlots.some(
+      slot =>
+        slot.estoque === est &&
+        sameNumericModule(slot.modulo, mod) &&
+        slot.posicao === pos
+    );
+
+    if (!physicalSlotExists) {
+      errors.push(
+        `Linha ${rowNumber}: o endereço ${est}-${mod}-${pos} não está cadastrado como posição física válida.`
+      );
+    }
+  }
+
+  if (currentSlots && est === "1" && mod && !Object.prototype.hasOwnProperty.call(E1_CAPACITY, String(Number(mod)))) {
+    errors.push(
+      `Linha ${rowNumber}: o corredor ${mod} não está cadastrado no Estoque 1.`
+    );
   }
 
   // 5. Referência (SKU)
@@ -165,7 +203,7 @@ export function processLancamentosInSequence(
 
   // Filter out invalid rows of batch
   const validRows = rows.filter(row => {
-    const errors = validateLancamentoRow(row, 0, productsList, isAdvanced);
+    const errors = validateLancamentoRow(row, 0, productsList, isAdvanced, currentSlots);
     return errors.length === 0;
   });
 
@@ -205,18 +243,21 @@ export function processLancamentosInSequence(
 
   return (
     s.estoque === estVal &&
-    s.modulo === modVal &&
+    sameNumericModule(s.modulo, modVal) &&
     s.posicao === posVal
   );
 });
-// If slot doesn't exist, create it on the fly
+// E1 is a corridor ledger and can legitimately add a new SKU row.
+// E2/E3 are physical address registries and must never create positions implicitly.
 let slot: WarehouseSlot;
 if (slotIdx === -1) {
+  if (estVal !== "1") {
+    errorCount++;
+    continue;
+  }
+
   slot = {
-    id:
-      estVal === "1"
-        ? `${estVal}-${modVal}-${refUpper}`
-        : `${estVal}-${modVal}-${posVal}`,
+    id: `${estVal}-${modVal}-${refUpper}`,
     estoque: estVal,
     modulo: modVal,
     posicao: posVal,

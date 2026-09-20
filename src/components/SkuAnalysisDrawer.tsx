@@ -1,4 +1,5 @@
 import React, { useState } from "react";
+import { WarehouseSlot } from "../types";
 interface SkuAnalysisDrawerProps {
   isOpen: boolean;
   onClose: () => void;
