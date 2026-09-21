@@ -674,7 +674,7 @@ useEffect(() => {
   };
 
   loadSlots();
-}, []);
+}, [currentUser]);
 
 useEffect(() => {
   if (activeTab !== "dashboard" && activeTab !== "histórico" && activeTab !== "ai") {
