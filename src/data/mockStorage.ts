@@ -106,23 +106,6 @@ export function validateLancamentoRow(
     }
   }
 
-  // The physical registry in slots is authoritative for E2/E3.
-  // Never allow a movement to silently create a physical position.
-  if (currentSlots && (est === "2" || est === "3") && pos) {
-    const physicalSlotExists = currentSlots.some(
-      slot =>
-        slot.estoque === est &&
-        sameNumericModule(slot.modulo, mod) &&
-        slot.posicao === pos
-    );
-
-    if (!physicalSlotExists) {
-      errors.push(
-        `Linha ${rowNumber}: o endereço ${est}-${mod}-${pos} não está cadastrado como posição física válida.`
-      );
-    }
-  }
-
   if (currentSlots && est === "1" && mod && !Object.prototype.hasOwnProperty.call(E1_CAPACITY, String(Number(mod)))) {
     errors.push(
       `Linha ${rowNumber}: o corredor ${mod} não está cadastrado no Estoque 1.`
