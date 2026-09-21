@@ -593,7 +593,7 @@ export function MobileShell({
   ];
 
   return (
-    <div className="fixed inset-0 z-[100] flex h-[100dvh] w-full flex-col bg-slate-50 text-slate-800">
+    <div className="fixed inset-0 z-[100] flex h-[100dvh] w-full flex-col bg-slate-50 pt-[env(safe-area-inset-top)] text-slate-800">
       <header className="shrink-0 border-b border-slate-200 bg-slate-950 text-white">
         <div className="flex items-center justify-between px-4 py-3">
           <div className="min-w-0">
@@ -630,7 +630,7 @@ export function MobileShell({
 
       <main
         className={`min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 pt-4 ${
-          keyboardOpen ? "pb-6" : "pb-24"
+          keyboardOpen ? "pb-6" : "pb-20"
         }`}
       >
         {activeTab === "endereçamento" && (
@@ -1505,7 +1505,7 @@ export function MobileShell({
                 key={item.id}
                 type="button"
                 onClick={() => onTabChange(item.id)}
-                className={`relative flex min-h-16 flex-col items-center justify-center gap-1 text-[9px] font-black uppercase ${
+                className={`relative flex min-h-14 flex-col items-center justify-center gap-1 text-[9px] font-black uppercase ${
                   active ? "text-blue-600" : "text-slate-400"
                 }`}
               >
