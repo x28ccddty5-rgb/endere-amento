@@ -179,19 +179,20 @@ export function processLancamentosInSequence(
   productsList: Product[],
   isAdvanced = false
 ): ProcessResult {
-  // 1. Deep clone current slots and prepare history and divergence arrays
+  // The caller is responsible for validating the rows before processing.
+  // Do not validate the batch again here: the processor must operate on the
+  // already-approved rows while maintaining a progressively updated state.
   const slots = JSON.parse(JSON.stringify(currentSlots)) as WarehouseSlot[];
   const newHistory: HistoricoMov[] = [];
   const newDivergencias: Divergencia[] = [];
 
-  // Filter out invalid rows of batch
-  const validRows = rows.filter(row => {
-    const errors = validateLancamentoRow(row, 0, productsList, isAdvanced, currentSlots);
-    return errors.length === 0;
-  });
+  // Keep the parameter for API compatibility with the existing callers.
+  void allDivergencias;
+  void isAdvanced;
 
-  // 2. Sort chronologically by date and hour to process sequentially
-  const sortedRows = [...validRows].sort((a, b) => {
+  // Process chronologically so that each row sees the state produced by the
+  // previous successful row in the same batch.
+  const sortedRows = [...rows].sort((a, b) => {
     const dateTimeA = `${a.data}T${a.hora || "00:00"}`;
     const dateTimeB = `${b.data}T${b.hora || "00:00"}`;
     return dateTimeA.localeCompare(dateTimeB);
@@ -204,69 +205,93 @@ export function processLancamentosInSequence(
     const qty = Number(row.quantidade);
     const prod = findProductInList(row.referencia, productsList);
 
-    if (!prod) continue;
+    if (!prod || !Number.isInteger(qty) || qty <= 0) {
+      errorCount++;
+      continue;
+    }
+
     const refUpper = prod.referencia.toUpperCase();
 
-    // Normalizations for stockage references
+    // Normalizations for storage references.
     const estVal = row.estoque.trim().toUpperCase().replace("E", "");
     const modVal = row.modulo.trim().toUpperCase().replace(/^[RM]/i, "");
 
-    // If pos is omitted or empty, or stock is E1, it's a corridor slot (empty string position)
-    const posVal = (estVal === "1" || !row.posicao || row.posicao.trim() === "") ? "" : row.posicao.trim().toUpperCase();
+    // E1 is a corridor ledger and does not use a physical position.
+    // E2/E3 require the registered physical position.
+    const posVal =
+      estVal === "1" || !row.posicao || row.posicao.trim() === ""
+        ? ""
+        : row.posicao.trim().toUpperCase();
 
-    // Locate matching slot
-    let slotIdx = slots.findIndex(s => {
-  if (estVal === "1") {
-    return (
-      s.estoque === estVal &&
-      s.modulo === modVal &&
-      s.referencia.toUpperCase() === refUpper
-    );
-  }
+    let slotIdx = slots.findIndex((s) => {
+      if (estVal === "1") {
+        return (
+          s.estoque === estVal &&
+          s.modulo === modVal &&
+          s.referencia.toUpperCase() === refUpper
+        );
+      }
 
-  return (
-    s.estoque === estVal &&
-    sameNumericModule(s.modulo, modVal) &&
-    s.posicao === posVal
-  );
-});
-// E1 is a corridor ledger and can legitimately add a new SKU row.
-// E2/E3 are physical address registries and must never create positions implicitly.
-let slot: WarehouseSlot;
-if (slotIdx === -1) {
-  if (estVal !== "1") {
-    errorCount++;
-    continue;
-  }
+      return (
+        s.estoque === estVal &&
+        sameNumericModule(s.modulo, modVal) &&
+        s.posicao === posVal
+      );
+    });
 
-  slot = {
-    id: `${estVal}-${modVal}-${refUpper}`,
-    estoque: estVal,
-    modulo: modVal,
-    posicao: posVal,
-    referencia: "",
-    descricao: "",
-    saldo: 0,
-    dataChacote: "",
-    ultimaData: "",
-    ultimaHora: "",
-    ultimoResponsavel: "",
-  };
-  slots.push(slot);
-} else {
-  slot = slots[slotIdx];
-}
+    // E1 is a corridor ledger and can legitimately add a new SKU row.
+    // E2/E3 are physical address registries and must never create positions
+    // implicitly.
+    let slot: WarehouseSlot;
+
+    if (slotIdx === -1) {
+      if (estVal !== "1") {
+        errorCount++;
+        continue;
+      }
+
+      slot = {
+        id: `${estVal}-${modVal}-${refUpper}`,
+        estoque: estVal,
+        modulo: modVal,
+        posicao: posVal,
+        referencia: "",
+        descricao: "",
+        saldo: 0,
+        dataChacote: "",
+        ultimaData: "",
+        ultimaHora: "",
+        ultimoResponsavel: "",
+      };
+
+      slots.push(slot);
+      slotIdx = slots.length - 1;
+    } else {
+      slot = slots[slotIdx];
+    }
 
     const currentRef = slot.referencia;
     const currentSaldo = slot.saldo;
 
     if (row.tipo === "Entrada") {
-      // Slot is either empty OR occupied by the same reference
-      if (currentRef === "" || currentRef.trim().toUpperCase() === refUpper) {
+      // Slot is either empty or already contains the same reference.
+      if (
+        currentRef === "" ||
+        currentRef.trim().toUpperCase() === refUpper
+      ) {
+        const hadExistingStock = currentRef !== "" && currentSaldo > 0;
+
         slot.referencia = prod.referencia;
         slot.descricao = prod.descricao;
         slot.saldo += qty;
-        if (row.dataChacote) slot.dataChacote = row.dataChacote;
+
+        // The registered chacote date belongs to the physical position.
+        // Once the position already has stock, adding another mixed lot does
+        // not replace that registered date.
+        if (!hadExistingStock && row.dataChacote) {
+          slot.dataChacote = row.dataChacote;
+        }
+
         slot.ultimaData = row.data;
         slot.ultimaHora = row.hora || "00:00";
         slot.ultimoResponsavel = row.responsavel || batchOperator;
@@ -282,16 +307,19 @@ if (slotIdx === -1) {
           referencia: prod.referencia,
           quantidade: qty,
           tipo: "Entrada",
-          dataChacote: row.dataChacote,
+          // History records the chacote date actually registered on the slot.
+          dataChacote: slot.dataChacote,
           hora: row.hora || "00:00",
-          responsavel: row.responsavel || batchOperator
+          responsavel: row.responsavel || batchOperator,
         });
 
         processedCount++;
       } else {
-        // Slot is occupied by a DIFFERENT product reference (Divergence created)
+        // Slot is occupied by a different product reference.
         errorCount++;
+
         const divId = `DIV-${generateId()}`;
+
         newDivergencias.push({
           id: divId,
           dataDivergencia: batchDate,
@@ -303,17 +331,22 @@ if (slotIdx === -1) {
           refNova: prod.referencia,
           saldoAntes: currentSaldo,
           movimentacao: qty,
-          saldoFinal: currentSaldo, // unchanged
+          saldoFinal: currentSaldo,
           responsavel: row.responsavel || batchOperator,
           status: "Aberta",
-          observacao: `Posição já ocupada por ${currentRef} (${slot.descricao}). Tentativa de entrada de ${qty} pçs de ${prod.referencia}.`
+          observacao: `Posição já ocupada por ${currentRef} (${slot.descricao}). Tentativa de entrada de ${qty} pçs de ${prod.referencia}.`,
         });
       }
     } else {
-      // tipo === "Saída"
-      if (currentRef === "" || currentRef.trim().toUpperCase() !== refUpper) {
+      // Saída.
+      if (
+        currentRef === "" ||
+        currentRef.trim().toUpperCase() !== refUpper
+      ) {
         errorCount++;
+
         const divId = `DIV-${generateId()}`;
+
         newDivergencias.push({
           id: divId,
           dataDivergencia: batchDate,
@@ -328,11 +361,13 @@ if (slotIdx === -1) {
           saldoFinal: currentSaldo,
           responsavel: row.responsavel || batchOperator,
           status: "Aberta",
-          observacao: `Tentativa de saída do item ${prod.referencia} em posição ocupada por ${currentRef || "Vazio"}.`
+          observacao: `Tentativa de saída do item ${prod.referencia} em posição ocupada por ${currentRef || "Vazio"}.`,
         });
       } else if (currentSaldo < qty) {
         errorCount++;
+
         const divId = `DIV-${generateId()}`;
+
         newDivergencias.push({
           id: divId,
           dataDivergencia: batchDate,
@@ -347,14 +382,20 @@ if (slotIdx === -1) {
           saldoFinal: currentSaldo,
           responsavel: row.responsavel || batchOperator,
           status: "Aberta",
-          observacao: `Solicitada saída de ${qty} pçs de ${prod.referencia} mas o saldo atual é de apenas ${currentSaldo} pçs.`
+          observacao: `Solicitada saída de ${qty} pçs de ${prod.referencia} mas o saldo atual é de apenas ${currentSaldo} pçs.`,
         });
       } else {
+        // Capture the registered position chacote before the stock can become
+        // empty and clear the position.
+        const registeredChacote = slot.dataChacote;
+
         slot.saldo -= qty;
         slot.ultimaData = row.data;
         slot.ultimaHora = row.hora || "00:00";
         slot.ultimoResponsavel = row.responsavel || batchOperator;
 
+        // If the position becomes empty, its registered chacote is no longer
+        // applicable and the position becomes available for a new stock/date.
         if (slot.saldo === 0) {
           slot.referencia = "";
           slot.descricao = "";
@@ -372,9 +413,13 @@ if (slotIdx === -1) {
           referencia: prod.referencia,
           quantidade: qty,
           tipo: "Saída",
-          dataChacote: row.dataChacote,
+          // Preserve the date that was registered on the physical
+          // position before this movement. If the position is emptied,
+          // the slot itself is cleared, but the movement history keeps
+          // the date that was actually registered on that stock.
+          dataChacote: registeredChacote,
           hora: row.hora || "00:00",
-          responsavel: row.responsavel || batchOperator
+          responsavel: row.responsavel || batchOperator,
         });
 
         processedCount++;
@@ -387,6 +432,147 @@ if (slotIdx === -1) {
     newHistory,
     newDivergencias,
     processedCount,
-    errorCount
+    errorCount,
+  };
+}
+
+/**
+ * Transfers the complete registered stock from one physical position to
+ * another position without changing reference, quantity or registered
+ * chacote date. Only the location changes.
+ *
+ * The destination must already exist and be empty. E2/E3 positions are never
+ * created implicitly by this operation.
+ */
+export function processTransferenciaPosicao(
+  sourceId: string,
+  destinationId: string,
+  currentSlots: WarehouseSlot[],
+  operator: string,
+  movementDate: string
+): ProcessResult {
+  const slots = JSON.parse(JSON.stringify(currentSlots)) as WarehouseSlot[];
+  const newHistory: HistoricoMov[] = [];
+
+  const source = slots.find((slot) => slot.id === sourceId);
+  const destination = slots.find((slot) => slot.id === destinationId);
+
+  if (!source || !destination) {
+    return {
+      updatedSlots: currentSlots,
+      newHistory: [],
+      newDivergencias: [],
+      processedCount: 0,
+      errorCount: 1,
+    };
+  }
+
+  if (source.id === destination.id) {
+    return {
+      updatedSlots: currentSlots,
+      newHistory: [],
+      newDivergencias: [],
+      processedCount: 0,
+      errorCount: 1,
+    };
+  }
+
+  if (source.estoque !== destination.estoque) {
+    return {
+      updatedSlots: currentSlots,
+      newHistory: [],
+      newDivergencias: [],
+      processedCount: 0,
+      errorCount: 1,
+    };
+  }
+
+  if (!source.referencia || source.saldo <= 0) {
+    return {
+      updatedSlots: currentSlots,
+      newHistory: [],
+      newDivergencias: [],
+      processedCount: 0,
+      errorCount: 1,
+    };
+  }
+
+  if (destination.saldo !== 0 || destination.referencia) {
+    return {
+      updatedSlots: currentSlots,
+      newHistory: [],
+      newDivergencias: [],
+      processedCount: 0,
+      errorCount: 1,
+    };
+  }
+
+  const quantity = source.saldo;
+  const reference = source.referencia;
+  const description = source.descricao;
+  const chacote = source.dataChacote;
+  const hour = new Date().toLocaleTimeString("pt-BR", {
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+
+  destination.referencia = reference;
+  destination.descricao = description;
+  destination.saldo = quantity;
+  destination.dataChacote = chacote;
+  destination.ultimaData = movementDate;
+  destination.ultimaHora = hour;
+  destination.ultimoResponsavel = operator;
+
+  source.referencia = "";
+  source.descricao = "";
+  source.saldo = 0;
+  source.dataChacote = "";
+  source.ultimaData = movementDate;
+  source.ultimaHora = hour;
+  source.ultimoResponsavel = operator;
+
+  // The existing history schema only has Entrada/Saída. Represent the
+  // physical relocation as a paired saída/entrada while keeping the total
+  // stock unchanged and preserving the registered chacote date.
+  newHistory.push(
+    {
+      id: `MOV-${generateId()}`,
+      dataLancamento: movementDate,
+      quemLancou: operator,
+      data: movementDate,
+      estoque: source.estoque,
+      modulo: source.modulo,
+      posicao: source.posicao,
+      referencia: reference,
+      quantidade: quantity,
+      tipo: "Saída",
+      dataChacote: chacote,
+      hora: hour,
+      responsavel: operator,
+    },
+    {
+      id: `MOV-${generateId()}`,
+      dataLancamento: movementDate,
+      quemLancou: operator,
+      data: movementDate,
+      estoque: destination.estoque,
+      modulo: destination.modulo,
+      posicao: destination.posicao,
+      referencia: reference,
+      quantidade: quantity,
+      tipo: "Entrada",
+      dataChacote: chacote,
+      hora: hour,
+      responsavel: operator,
+    }
+  );
+
+  return {
+    updatedSlots: slots,
+    newHistory,
+    newDivergencias: [],
+    processedCount: 1,
+    errorCount: 0,
   };
 }
