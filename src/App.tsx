@@ -6,6 +6,7 @@ import * as XLSX from "xlsx";
 import { supabase } from './lib/supabase';
 import { 
   processLancamentosInSequence,
+  processTransferenciaPosicao,
   validateLancamentoRow,
   generateId
 } from "./data/mockStorage";
@@ -24,6 +25,8 @@ import { InteractiveMapa } from "./components/InteractiveMapa";
 import { AdminUsersManagement, AppUser } from "./components/AdminUsersManagement";
 import { AisleStoragePanel } from "./components/AisleStoragePanel";
 import { DivergenciasPanel } from "./components/DivergenciasPanel";
+import { MobileShell } from "./components/mobile/MobileShell";
+import { readOfflineSnapshot, saveOfflineSnapshot } from "./lib/offlineCache";
 import { BaseDeDadosPanel } from "./components/BaseDeDadosPanel";
 import { 
   LayoutDashboard, 
@@ -79,7 +82,8 @@ const loadSlotsFromSupabase = (): Promise<WarehouseSlot[]> => {
 
       if (error) {
         console.error("Erro ao carregar slots:", error);
-        return [];
+        const cached = await readOfflineSnapshot<WarehouseSlot[]>("slots");
+        return cached ?? [];
       }
 
       if (!data || data.length === 0) break;
@@ -91,7 +95,9 @@ const loadSlotsFromSupabase = (): Promise<WarehouseSlot[]> => {
       from += HISTORY_PAGE_SIZE;
     }
 
-    return allData as WarehouseSlot[];
+    const result = allData as WarehouseSlot[];
+    await saveOfflineSnapshot("slots", result);
+    return result;
   })();
 
   slotsLoadPromise.then(
@@ -163,7 +169,8 @@ const loadHistoryFromSupabaseUncached = async (
 
     if (error) {
       console.error("Erro ao carregar histórico:", error);
-      return [];
+      const cached = await readOfflineSnapshot<HistoricoMov[]>("history");
+      return cached ?? [];
     }
 
     if (!data || data.length === 0) break;
@@ -175,7 +182,9 @@ const loadHistoryFromSupabaseUncached = async (
     from += HISTORY_PAGE_SIZE;
   }
 
-  return allData as HistoricoMov[];
+  const result = allData as HistoricoMov[];
+  await saveOfflineSnapshot("history", result);
+  return result;
 };
 
 /**
@@ -263,20 +272,65 @@ const appendHistoryToSupabase = async (
 
 let divergenciasLoadPromise: Promise<Divergencia[]> | null = null;
 
+const normalizeDivergenciaRow = (row: any): Divergencia | null => {
+  const rawStatus = String(row?.status ?? "").trim().toLowerCase();
+
+  let status: Divergencia["status"];
+  if (rawStatus === "aberta") {
+    status = "Aberta";
+  } else if (rawStatus === "corrigida") {
+    status = "Corrigida";
+  } else {
+    console.warn("Divergência ignorada por status inválido:", row);
+    return null;
+  }
+
+  return {
+    ...row,
+    status,
+  } as Divergencia;
+};
+
 const loadDivergenciasFromSupabase = (): Promise<Divergencia[]> => {
   if (divergenciasLoadPromise) return divergenciasLoadPromise;
 
   divergenciasLoadPromise = (async (): Promise<Divergencia[]> => {
-    const { data, error } = await supabase
-      .from("divergencias")
-      .select("*");
+    let allData: any[] = [];
+    let from = 0;
 
-    if (error) {
-      console.error("Erro ao carregar divergências:", error);
-      return [];
+    while (true) {
+      // Carregamos todas as divergências, não somente "Aberta".
+      // Isso evita perder registros por diferença de caixa/espaços no status
+      // e também permite que o painel mostre o histórico de corrigidas.
+      const { data, error } = await supabase
+        .from("divergencias")
+        .select("*")
+        .range(from, from + HISTORY_PAGE_SIZE - 1);
+
+      if (error) {
+        console.error("Erro ao carregar divergências:", error);
+
+        const cached = await readOfflineSnapshot<Divergencia[]>("divergencias");
+        return (cached ?? [])
+          .map(normalizeDivergenciaRow)
+          .filter((div): div is Divergencia => Boolean(div));
+      }
+
+      if (!data || data.length === 0) break;
+
+      allData = [...allData, ...data];
+
+      if (data.length < HISTORY_PAGE_SIZE) break;
+
+      from += HISTORY_PAGE_SIZE;
     }
 
-    return (data as Divergencia[]) || [];
+    const result = allData
+      .map(normalizeDivergenciaRow)
+      .filter((div): div is Divergencia => Boolean(div));
+
+    await saveOfflineSnapshot("divergencias", result);
+    return result;
   })();
 
   divergenciasLoadPromise.then(
@@ -312,6 +366,32 @@ const saveDivergenciasToSupabase = async (
 
 
 export default function App() {
+  const [isOnline, setIsOnline] = useState(() => navigator.onLine);
+
+  useEffect(() => {
+    const handleOnline = () => setIsOnline(true);
+    const handleOffline = () => setIsOnline(false);
+    window.addEventListener("online", handleOnline);
+    window.addEventListener("offline", handleOffline);
+    return () => {
+      window.removeEventListener("online", handleOnline);
+      window.removeEventListener("offline", handleOffline);
+    };
+  }, []);
+
+  // Mobile é uma experiência própria da mesma aplicação, não um segundo sistema.
+  const [isMobileViewport, setIsMobileViewport] = useState(() =>
+    typeof window !== "undefined" ? window.matchMedia("(max-width: 767px)").matches : false
+  );
+
+  useEffect(() => {
+    const media = window.matchMedia("(max-width: 767px)");
+    const handleChange = (event: MediaQueryListEvent) => setIsMobileViewport(event.matches);
+    setIsMobileViewport(media.matches);
+    media.addEventListener("change", handleChange);
+    return () => media.removeEventListener("change", handleChange);
+  }, []);
+
   // --- USER AUTHENTICATION & SECURITY STATE ---
   const [users, setUsers] = useState<AppUser[]>([]);
 
@@ -597,7 +677,7 @@ useEffect(() => {
 }, []);
 
 useEffect(() => {
-  if (activeTab !== "dashboard" && activeTab !== "histórico") {
+  if (activeTab !== "dashboard" && activeTab !== "histórico" && activeTab !== "ai") {
     return;
   }
 
@@ -621,9 +701,7 @@ useEffect(() => {
 }, [activeTab]);
 
 useEffect(() => {
-  if (activeTab !== "dashboard" && activeTab !== "divergências") {
-    return;
-  }
+  if (!currentUser) return;
 
   const loadDivergencias = async () => {
     const data = await loadDivergenciasFromSupabase();
@@ -631,7 +709,7 @@ useEffect(() => {
   };
 
   loadDivergencias();
-}, [activeTab]);
+}, [currentUser]);
 
   // --- DYNAMIC REGISTERED CUSTOM PRODUCTS STATE ---
   const [productsList, setProductsList] = useState<Product[]>([]);
@@ -652,14 +730,17 @@ useEffect(() => {
 
       if (error) {
         console.error("Erro ao carregar produtos:", error);
-        return null;
+        const cached = await readOfflineSnapshot<Product[]>("products");
+        return cached ?? [];
       }
 
-      return (data ?? []).map((p: any) => ({
+      const result = (data ?? []).map((p: any) => ({
         referencia: p.referencia,
         descricao: p.descricao,
         paletizacao: Number(p.paletizacao || 0)
       }));
+      await saveOfflineSnapshot("products", result);
+      return result;
     })();
 
     productsLoadPromiseRef.current = promise;
@@ -691,7 +772,8 @@ useEffect(() => {
       "divergências",
       "base",
       "corredor",
-      "mapa"
+      "mapa",
+      "ai"
     ];
 
     if (tabsRequiringProducts.includes(activeTab)) {
@@ -890,6 +972,7 @@ const deleteProduct = async (
 
     if (saved) {
       setSlots(updatedSlots);
+      await saveOfflineSnapshot("slots", updatedSlots);
     }
 
     return saved;
@@ -901,7 +984,9 @@ const deleteProduct = async (
     const saved = await appendHistoryToSupabase(newMovements);
 
     if (saved) {
-      setHistory(prev => [...newMovements, ...prev]);
+      const nextHistory = [...newMovements, ...history];
+      setHistory(nextHistory);
+      await saveOfflineSnapshot("history", nextHistory);
 
       setHistoryQueryRows(prev => {
         if (!prev) return prev;
@@ -930,9 +1015,175 @@ const deleteProduct = async (
 
     if (saved) {
       setDivergencias(updatedDivergencias);
+      await saveOfflineSnapshot("divergencias", updatedDivergencias);
     }
 
     return saved;
+  };
+
+  const handleMobileResolveDivergencia = async (
+    div: Divergencia,
+    action: "sobrescrever" | "descartar",
+    skuValue: string,
+    quantity: number,
+    dataChacoteValue: string
+  ): Promise<boolean> => {
+    if (!currentUser || !canExecuteOperations(currentUser.role)) {
+      alert("Seu perfil não possui permissão para corrigir divergências.");
+      return false;
+    }
+
+    const currentDiv = divergencias.find(item => item.id === div.id);
+    if (!currentDiv || currentDiv.status !== "Aberta") {
+      alert("Esta divergência não está mais aberta. Atualize a tela antes de tentar novamente.");
+      return false;
+    }
+
+    const updatedSlots = [...slots];
+    const slotIdx = updatedSlots.findIndex(
+      slot =>
+        slot.estoque === currentDiv.estoque &&
+        slot.modulo === currentDiv.modulo &&
+        slot.posicao === currentDiv.posicao
+    );
+
+    if (slotIdx === -1) {
+      alert(
+        `A posição ${currentDiv.estoque}-${currentDiv.modulo}-${currentDiv.posicao || "Rua"} não está cadastrada. ` +
+        "A correção foi interrompida para evitar alteração em uma posição física inexistente."
+      );
+      return false;
+    }
+
+    let cleanSku = "";
+    let product: Product | undefined;
+
+    if (action === "sobrescrever") {
+      cleanSku = skuValue.trim().toUpperCase();
+      if (cleanSku.startsWith("S")) cleanSku = cleanSku.slice(1);
+
+      if (!cleanSku) {
+        alert("Informe o SKU que está fisicamente no endereço.");
+        return false;
+      }
+
+      if (!Number.isFinite(quantity) || quantity < 0) {
+        alert("Informe um saldo físico válido.");
+        return false;
+      }
+
+      product = productsList.find(item => {
+        const reference = item.referencia.trim().toUpperCase();
+        return reference === cleanSku || (reference.startsWith("S") && reference.slice(1) === cleanSku);
+      });
+
+      if (!product) {
+        alert(`Código SKU "${cleanSku}" não cadastrado na Base de Dados de Referências.`);
+        return false;
+      }
+
+      updatedSlots[slotIdx] = {
+        ...updatedSlots[slotIdx],
+        referencia: product.referencia,
+        descricao: product.descricao,
+        saldo: quantity,
+        dataChacote: dataChacoteValue.trim(),
+        ultimaData: getTodayIsoDate(),
+        ultimaHora: new Date().toLocaleTimeString("pt-BR", {
+          hour: "2-digit",
+          minute: "2-digit",
+        }),
+        ultimoResponsavel: currentUser.name || operator,
+      };
+    } else {
+      updatedSlots[slotIdx] = {
+        ...updatedSlots[slotIdx],
+        referencia: "",
+        descricao: "",
+        saldo: 0,
+        dataChacote: "",
+        ultimaData: getTodayIsoDate(),
+        ultimaHora: new Date().toLocaleTimeString("pt-BR", {
+          hour: "2-digit",
+          minute: "2-digit",
+        }),
+        ultimoResponsavel: currentUser.name || operator,
+      };
+    }
+
+    const targetDate = getTodayIsoDate();
+    const currentHour = new Date().toLocaleTimeString("pt-BR", {
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+    const correctedBy = currentUser.name || operator;
+
+    // Uma correção física do endereço resolve todas as ocorrências abertas
+    // daquele mesmo endereço, evitando que o operador precise repetir a tratativa.
+    const updatedDivergencias = divergencias.map(item => {
+      const sameOpenAddress =
+        item.status === "Aberta" &&
+        item.estoque === currentDiv.estoque &&
+        item.modulo === currentDiv.modulo &&
+        item.posicao === currentDiv.posicao;
+
+      if (!sameOpenAddress) return item;
+
+      return {
+        ...item,
+        status: "Corrigida" as const,
+        refNova: action === "descartar" ? "" : (product?.referencia || cleanSku),
+        saldoFinal: action === "descartar" ? 0 : quantity,
+        dataCorrecao: targetDate,
+        corrigidoPor: correctedBy,
+        observacao:
+          `${item.observacao || "Divergência gerada durante a operação."} ` +
+          `Correção física registrada por ${correctedBy}.`,
+      };
+    });
+
+    const slotsSaved = await persistSlotsUpdate(updatedSlots);
+    if (!slotsSaved) {
+      alert("Não foi possível salvar a correção do endereço.");
+      return false;
+    }
+
+    const newLog: HistoricoMov = {
+      id: `CORR-${generateId()}`,
+      dataLancamento: targetDate,
+      quemLancou: correctedBy,
+      data: targetDate,
+      estoque: currentDiv.estoque,
+      modulo: currentDiv.modulo,
+      posicao: currentDiv.posicao,
+      referencia: action === "descartar" ? "" : (product?.referencia || cleanSku),
+      quantidade: action === "descartar" ? 0 : quantity,
+      tipo: action === "descartar" ? "Saída" : "Entrada",
+      dataChacote: action === "descartar" ? "" : (dataChacoteValue.trim() || "Reconciliação"),
+      hora: currentHour,
+      responsavel: correctedBy,
+    };
+
+    const historySaved = await appendHistory([newLog]);
+    if (!historySaved) {
+      alert(
+        "O endereço foi corrigido, mas o registro de auditoria não pôde ser gravado. " +
+        "Verifique a conexão antes de repetir a operação."
+      );
+      return false;
+    }
+
+    const divergenciasSaved = await persistDivergenciasUpdate(updatedDivergencias);
+    if (!divergenciasSaved) {
+      alert(
+        "A correção e o histórico foram salvos, mas o status da divergência não pôde ser atualizado. " +
+        "Verifique a conexão antes de repetir a operação."
+      );
+      return false;
+    }
+
+    alert(`Divergência ${currentDiv.id} corrigida com sucesso.`);
+    return true;
   };
 
   const occupiedPalletsE1 = useMemo(() => {
@@ -1348,25 +1599,36 @@ if (
     // Clear grid only after the persistent writes succeeded.
     setLancamentoRows([]);
   };
-  const handleUnitaryLaunch = async (type: "Entrada" | "Saída") => {
+  const handleUnitaryLaunch = async (
+    type: "Entrada" | "Saída",
+    mobileData?: {
+      estoque: string;
+      modulo: string;
+      posicao: string;
+      sku: string;
+      quantidade: number;
+      dataChacote: string;
+    }
+  ): Promise<boolean> => {
     if (!hasAccess("operador")) {
       alert("Seu perfil não possui permissão para efetuar lançamentos.");
-      return;
+      return false;
     }
 
-    const estVal = unitEstoque.trim().toUpperCase().replace(/^E/, "");
-    const cleanCorredor = unitCorredor.trim().toUpperCase().replace(/^[RM]/i, "");
-    let cleanSku = unitSku.trim().toUpperCase();
+    const estVal = (mobileData?.estoque ?? unitEstoque).trim().toUpperCase().replace(/^E/, "");
+    const cleanCorredor = (mobileData?.modulo ?? unitCorredor).trim().toUpperCase().replace(/^[RM]/i, "");
+    let cleanSku = (mobileData?.sku ?? unitSku).trim().toUpperCase();
     if (cleanSku.startsWith("S")) cleanSku = cleanSku.slice(1);
 
     const hora = new Date().toLocaleTimeString("pt-BR", {
       hour: "2-digit",
       minute: "2-digit"
     });
+    const sourcePosition = mobileData?.posicao ?? unitPosicao;
     const posVal =
-      estVal === "1" || !unitPosicao || unitPosicao.trim() === ""
+      estVal === "1" || !sourcePosition || sourcePosition.trim() === ""
         ? ""
-        : unitPosicao.trim().toUpperCase();
+        : sourcePosition.trim().toUpperCase();
 
     const row: LancamentoRow = {
       id: `UNIT-${generateId()}`,
@@ -1375,9 +1637,9 @@ if (
       modulo: cleanCorredor,
       posicao: posVal,
       referencia: cleanSku,
-      quantidade: Number(unitQuantidade),
+      quantidade: mobileData?.quantidade ?? Number(unitQuantidade),
       tipo: type,
-      dataChacote: unitChacote,
+      dataChacote: mobileData?.dataChacote ?? unitChacote,
       hora,
       responsavel: operator
     };
@@ -1392,7 +1654,7 @@ if (
 
     if (errors.length > 0) {
       alert(`O lançamento não pôde ser realizado:\n\n${errors.join("\n")}`);
-      return;
+      return false;
     }
 
     const {
@@ -1412,13 +1674,13 @@ if (
 
     if (processedCount === 0 && newDivergencias.length === 0) {
       alert("O lançamento não gerou nenhuma alteração. Verifique os dados informados.");
-      return;
+      return false;
     }
 
     const slotsSaved = await persistSlotsUpdate(updatedSlots);
     if (!slotsSaved) {
       alert("O lançamento não foi concluído porque não foi possível salvar o endereço no Supabase.");
-      return;
+      return false;
     }
 
     if (newHistory.length > 0) {
@@ -1430,7 +1692,7 @@ if (
           "O endereço foi salvo, mas o histórico não pôde ser registrado. " +
           "Não repita a operação antes de verificar a conexão com o Supabase."
         );
-        return;
+        return false;
       }
     }
 
@@ -1442,7 +1704,7 @@ if (
           "A divergência foi identificada, mas não pôde ser registrada no Supabase. " +
           "Verifique a conexão antes de repetir a operação."
         );
-        return;
+        return false;
       }
 
       setUnitQuantidade("");
@@ -1450,7 +1712,7 @@ if (
         `A movimentação gerou ${newDivergencias.length} divergência(s) para revisão. ` +
         "O saldo do endereço não foi alterado."
       );
-      return;
+      return false;
     }
 
     setUnitCorredor("");
@@ -1463,6 +1725,59 @@ if (
       `Lançamento de ${type} consolidado no endereço ` +
       `${cleanCorredor}${posVal ? ` (Posição ${posVal})` : " (Corredor)"}.`
     );
+
+    return true;
+  };
+
+  const handleTransferPosition = async (
+    sourceId: string,
+    destinationId: string
+  ): Promise<boolean> => {
+    if (!hasAccess("operador")) {
+      alert("Seu perfil não possui permissão para transferir posições.");
+      return false;
+    }
+
+    if (!navigator.onLine) {
+      alert("A transferência exige conexão com o Supabase. A operação offline ainda não está habilitada para escrita.");
+      return false;
+    }
+
+    const result = processTransferenciaPosicao(
+      sourceId,
+      destinationId,
+      slots,
+      operator,
+      launchDate
+    );
+
+    if (result.processedCount === 0) {
+      alert(
+        "A transferência não pôde ser realizada. " +
+        "Verifique se a origem possui estoque e se o destino está vazio e cadastrado."
+      );
+      return false;
+    }
+
+    const slotsSaved = await persistSlotsUpdate(result.updatedSlots);
+    if (!slotsSaved) {
+      alert("A transferência não foi concluída porque não foi possível salvar as posições no Supabase.");
+      return false;
+    }
+
+    const historySaved = await appendHistory(result.newHistory);
+    if (!historySaved) {
+      const latestSlots = await loadSlotsFromSupabase();
+      setSlots(latestSlots);
+      alert(
+        "As posições foram atualizadas, mas o histórico não pôde ser registrado. " +
+        "Não repita a operação antes de verificar a conexão."
+      );
+      return false;
+    }
+
+    alert("Transferência concluída. SKU, saldo e data de chacote foram preservados.");
+    return true;
   };
 
   // Manual Excel paste parser updated to handle E1, E2, E3
@@ -2417,22 +2732,287 @@ if (refRaw) {
     }
   ]);
   const [chatInput, setChatInput] = useState("");
+  const [recommendationQueue, setRecommendationQueue] = useState<string[]>([]);
 
-  const handleSendChatMessage = () => {
-    if (!chatInput.trim()) return;
+  const formatMobileSlot = (slot: WarehouseSlot): string =>
+    `E${slot.estoque} • M${slot.modulo}${slot.posicao ? ` • ${slot.posicao}` : ""}`;
 
-    const userMessage = chatInput.trim();
+  const findSkuInChatText = (text: string): string | null => {
+    const normalizeReference = (value: string) => {
+      const clean = value.trim().toUpperCase();
+      return clean.startsWith("S") ? clean.slice(1) : clean;
+    };
+
+    const normalizedText = text.toUpperCase();
+    const normalizedReferences = productsList.map(product => ({
+      reference: product.referencia,
+      normalized: normalizeReference(product.referencia),
+    }));
+
+    const byReference = normalizedReferences.find(({ reference, normalized }) =>
+      normalizedText.includes(reference.toUpperCase()) ||
+      normalizedText.includes(normalized)
+    );
+    if (byReference) return byReference.reference;
+
+    const byDescription = productsList.find(product =>
+      product.descricao && normalizedText.includes(product.descricao.toUpperCase())
+    );
+    if (byDescription) return byDescription.referencia;
+
+    const tokens = normalizedText.match(/[A-Z0-9]{4,}/g) || [];
+    const byToken = tokens.find(token =>
+      normalizedReferences.some(({ normalized }) => normalized === normalizeReference(token))
+    );
+
+    return byToken
+      ? normalizedReferences.find(({ normalized }) => normalized === normalizeReference(byToken))?.reference || null
+      : null;
+  };
+
+  const handleNextRecommendation = () => {
+    const next = recommendationQueue[0];
+    if (!next) return;
+    setRecommendationQueue(prev => prev.slice(1));
+    setChatMessages(messages => [...messages, { sender: "system", text: next }]);
+  };
+
+  const handleSendChatMessage = (messageOverride?: string) => {
+    const userMessage = (messageOverride ?? chatInput).trim();
+    if (!userMessage) return;
     setChatMessages(prev => [...prev, { sender: "user", text: userMessage }]);
     setChatInput("");
 
     setTimeout(() => {
       let responseText = "";
       
-      const lower = userMessage.toLowerCase();
-    
-      if (
+      const lower = userMessage.toLowerCase().trim();
+
+      if (lower === "próximo" || lower === "proximo" || lower === "outra opção" || lower === "outra opcao") {
+        if (recommendationQueue.length > 0) {
+          const [next, ...rest] = recommendationQueue;
+          setRecommendationQueue(rest);
+          responseText = next;
+        } else {
+          responseText = "Não há outra recomendação pendente. Faça uma nova pergunta para recalcular as opções.";
+        }
+      } else if (
+        lower.includes("melhor local") ||
+        lower.includes("melhor posição") ||
+        lower.includes("melhor posicao") ||
+        lower.includes("onde armazenar") ||
+        lower.includes("onde devo armazenar") ||
+        lower.includes("local para armazenar") ||
+        Boolean(findSkuInChatText(userMessage) && (
+          /^s?[a-z0-9-]{4,}$/i.test(userMessage.replace(/\s+/g, "")) ||
+          lower.includes("onde fica") ||
+          lower.includes("posição") ||
+          lower.includes("posicao")
+        ))
+      ) {
+        const skuRecommendation = findSkuInChatText(userMessage);
+
+        if (!skuRecommendation) {
+          responseText = "Informe o SKU ou a descrição do produto para eu calcular a melhor posição de armazenamento.";
+        } else {
+          const product = productsList.find(
+            item => item.referencia.toUpperCase() === skuRecommendation.toUpperCase()
+          );
+          const requestedQtyMatch = userMessage.match(/(\d[\d.]*)\s*(?:pç|pçs|peças|pecas|unidades|un)/i);
+          const requestedQty = requestedQtyMatch
+            ? Number(requestedQtyMatch[1].replace(/\./g, ""))
+            : 1;
+          const requestedType =
+            /gaiola|aranha/i.test(userMessage) ? "3" :
+            /palete/i.test(userMessage) ? "2" :
+            null;
+
+          const exitsLast7Days = history.filter(item => {
+            const movementDate = new Date(item.data);
+            const daysAgo = (Date.now() - movementDate.getTime()) / 86400000;
+            return (
+              item.referencia.toUpperCase() === skuRecommendation.toUpperCase() &&
+              item.tipo === "Saída" &&
+              daysAgo >= 0 &&
+              daysAgo <= 7
+            );
+          }).length;
+
+          const candidates = slots
+            .filter(slot => {
+              if (slot.estoque === "1") return false;
+              if (requestedType && slot.estoque !== requestedType) return false;
+              if (slot.saldo > 0 && slot.referencia.toUpperCase() !== skuRecommendation.toUpperCase()) return false;
+              if (product?.paletizacao && slot.saldo + requestedQty > product.paletizacao) return false;
+              return true;
+            })
+            .map(slot => {
+              const sameSku = slot.referencia.toUpperCase() === skuRecommendation.toUpperCase() && slot.saldo > 0;
+              const free = slot.saldo === 0;
+              let score = 0;
+              if (sameSku) score += 100;
+              if (free) score += 35;
+              if (product?.paletizacao) {
+                const remaining = product.paletizacao - slot.saldo - requestedQty;
+                score += Math.max(0, 25 - Math.min(25, Math.abs(remaining)));
+              }
+              score += Math.min(20, exitsLast7Days * 2);
+              if (requestedType === slot.estoque) score += 20;
+              return { slot, score, sameSku, free };
+            })
+            .sort((a, b) => {
+              if (b.score !== a.score) return b.score - a.score;
+              return Number(a.slot.modulo) - Number(b.slot.modulo);
+            });
+
+          if (candidates.length === 0) {
+            responseText = `Não encontrei uma posição válida para ${skuRecommendation} com os critérios atuais.`;
+          } else {
+            const [best, ...alternatives] = candidates;
+            const reasons = [
+              best.sameSku ? "consolida o SKU em uma posição que já possui o item" : "posição disponível para receber o item",
+              product?.paletizacao ? `respeita a paletização cadastrada de ${product.paletizacao} pçs` : "não há paletização cadastrada para limitar a capacidade",
+              exitsLast7Days > 0 ? `${exitsLast7Days} saída(s) do SKU nos últimos 7 dias` : "não há saídas recentes registradas para o SKU",
+              best.slot.estoque === "2" ? "estrutura de palete (Estoque 2)" : "estrutura de gaiola/aranha (Estoque 3)",
+            ];
+
+            responseText =
+              `MELHOR POSIÇÃO PARA ${skuRecommendation}\n\n` +
+              `${formatMobileSlot(best.slot)}\n` +
+              `${best.slot.descricao || product?.descricao || "Produto"}\n\n` +
+              `Critérios considerados:\n• ${reasons.join("\n• ")}\n\n` +
+              `A recomendação usa somente o estado registrado do estoque.`;
+
+            setRecommendationQueue(
+              alternatives.slice(0, 4).map((candidate, index) =>
+                `PRÓXIMA OPÇÃO ${index + 2}\n\n${formatMobileSlot(candidate.slot)}\n${candidate.slot.descricao || product?.descricao || "Produto"}\n\nSaldo atual: ${candidate.slot.saldo.toLocaleString("pt-BR")} pçs.`
+              )
+            );
+          }
+        }
+      } else if (
+        lower.includes("melhor palete") ||
+        lower.includes("melhor palete para separ") ||
+        lower.includes("qual palete") ||
+        lower.includes("separação") ||
+        lower.includes("separacao")
+      ) {
+        const skuRecommendation = findSkuInChatText(userMessage);
+
+        if (!skuRecommendation) {
+          responseText = "Informe o SKU ou a descrição do produto para eu selecionar o melhor palete.";
+        } else {
+          const requestedQtyMatch = userMessage.match(/(\d[\d.]*)\s*(?:pç|pçs|peças|pecas|unidades|un)/i);
+          const requestedQty = requestedQtyMatch
+            ? Number(requestedQtyMatch[1].replace(/\./g, ""))
+            : 1;
+
+          const candidates = slots
+            .filter(slot =>
+              slot.referencia.toUpperCase() === skuRecommendation.toUpperCase() &&
+              slot.saldo > 0 &&
+              slot.estoque === "2"
+            )
+            .map(slot => {
+              const chacoteTime = slot.dataChacote
+                ? new Date(slot.dataChacote).getTime()
+                : Number.MAX_SAFE_INTEGER;
+              return {
+                slot,
+                enough: slot.saldo >= requestedQty,
+                chacoteTime: Number.isFinite(chacoteTime) ? chacoteTime : Number.MAX_SAFE_INTEGER,
+              };
+            })
+            .sort((a, b) => {
+              if (a.enough !== b.enough) return a.enough ? -1 : 1;
+              if (a.chacoteTime !== b.chacoteTime) return a.chacoteTime - b.chacoteTime;
+              return b.slot.saldo - a.slot.saldo;
+            });
+
+          if (candidates.length === 0) {
+            responseText = `Não encontrei paletes com saldo do SKU ${skuRecommendation}.`;
+          } else {
+            const [best, ...alternatives] = candidates;
+            responseText =
+              `MELHOR PALETE PARA SEPARAÇÃO\n\n` +
+              `${formatMobileSlot(best.slot)}\n` +
+              `SKU ${best.slot.referencia} • ${best.slot.saldo.toLocaleString("pt-BR")} pçs\n` +
+              `Data de chacote: ${best.slot.dataChacote || "não registrada"}\n\n` +
+              `Critérios: FIFO pela data de chacote registrada + quantidade disponível.\n` +
+              `${best.enough ? "Atende a quantidade solicitada." : "Não atende integralmente a quantidade solicitada; veja a próxima opção."}\n\n` +
+              `Se a condição física estiver diferente do sistema, use Próximo.`;
+
+            setRecommendationQueue(
+              alternatives.slice(0, 4).map((candidate, index) =>
+                `PRÓXIMA OPÇÃO ${index + 2}\n\n${formatMobileSlot(candidate.slot)}\nSKU ${candidate.slot.referencia} • ${candidate.slot.saldo.toLocaleString("pt-BR")} pçs\nData de chacote: ${candidate.slot.dataChacote || "não registrada"}`
+              )
+            );
+          }
+        }
+      } else if (
+        lower.includes("remont") ||
+        lower.includes("consolidar") ||
+        lower.includes("liberar posição") ||
+        lower.includes("liberar posicao")
+      ) {
+        const requestedSku = findSkuInChatText(userMessage);
+        const grouped: Record<string, WarehouseSlot[]> = {};
+
+        slots.forEach(slot => {
+          if (
+            slot.referencia &&
+            slot.saldo > 0 &&
+            (!requestedSku || slot.referencia.toUpperCase() === requestedSku.toUpperCase())
+          ) {
+            if (!grouped[slot.referencia]) grouped[slot.referencia] = [];
+            grouped[slot.referencia].push(slot);
+          }
+        });
+
+        const candidates = Object.entries(grouped)
+          .filter(([, itemSlots]) => itemSlots.length > 1)
+          .map(([skuKey, itemSlots]) => {
+            const product = productsList.find(p => p.referencia.toUpperCase() === skuKey.toUpperCase());
+            const capacity = product?.paletizacao || 0;
+            const total = itemSlots.reduce((sum, slot) => sum + slot.saldo, 0);
+            const required = capacity > 0 ? Math.ceil(total / capacity) : itemSlots.length;
+            return {
+              sku: skuKey,
+              slots: itemSlots,
+              gain: Math.max(0, itemSlots.length - required),
+              capacity,
+            };
+          })
+          .filter(item => item.gain > 0 || Boolean(requestedSku))
+          .sort((a, b) => b.gain - a.gain);
+
+        if (candidates.length === 0) {
+          responseText = "Não encontrei uma oportunidade clara de remontagem/consolidação com os dados registrados.";
+        } else {
+          const best = candidates[0];
+          const ordered = [...best.slots].sort((a, b) => b.saldo - a.saldo);
+          const destinationCount = best.capacity > 0
+            ? Math.max(1, Math.ceil(ordered.reduce((sum, slot) => sum + slot.saldo, 0) / best.capacity))
+            : Math.max(1, ordered.length - best.gain);
+          const destinations = ordered.slice(0, destinationCount);
+          const origins = ordered.slice(destinationCount);
+
+          responseText =
+            `MELHOR OPORTUNIDADE DE REMONTAGEM\n\n` +
+            `SKU ${best.sku}\n` +
+            `${best.slots[0].descricao}\n\n` +
+            `Posições atuais: ${best.slots.length}\n` +
+            `Posições necessárias: ${destinations.length}\n` +
+            `Potencial de liberação: ${best.gain} posição(ões)\n\n` +
+            `Priorize manter:\n${destinations.map(slot => `• ${formatMobileSlot(slot)} — ${slot.saldo.toLocaleString("pt-BR")} pçs`).join("\n")}\n\n` +
+            `Candidatas à liberação:\n${origins.length > 0 ? origins.map(slot => `• ${formatMobileSlot(slot)} — ${slot.saldo.toLocaleString("pt-BR")} pçs`).join("\n") : "Nenhuma posição adicional foi calculada."}`;
+
+          setRecommendationQueue([]);
+        }
+      } else if (
       lower.includes("pulverizado")
     ) {
+
 
   const skuMap: Record<
     string,
@@ -3034,6 +3614,39 @@ if (refRaw) {
         return false;
     }
   };
+
+  const mobileActiveTab = (
+    ["endereçamento", "lançamento", "divergências", "histórico", "ai"] as const
+  ).includes(activeTab as any)
+    ? activeTab
+    : "endereçamento";
+
+  if (isMobileViewport) {
+    return (
+      <MobileShell
+        currentUser={currentUser}
+        operator={operator}
+        slots={slots}
+        productsList={productsList}
+        history={historyQueryRows ?? history}
+        divergencias={divergencias}
+        online={isOnline}
+        canExecute={canExecuteOperations(currentUser.role)}
+        activeTab={mobileActiveTab}
+        onTabChange={tab => setActiveTab(tab)}
+        onUnitaryLaunch={handleUnitaryLaunch}
+        onTransferPosition={handleTransferPosition}
+        onResolveDivergencia={handleMobileResolveDivergencia}
+        chatMessages={chatMessages}
+        chatInput={chatInput}
+        onChatInputChange={setChatInput}
+        onSendChatMessage={handleSendChatMessage}
+        recommendationAvailable={recommendationQueue.length > 0}
+        onNextRecommendation={handleNextRecommendation}
+        onLogout={handleLogout}
+      />
+    );
+  }
 
   return (
     <div className="h-screen w-full bg-[#f8fafc] text-slate-800 font-sans overflow-hidden border-8 border-slate-200 flex flex-col md:flex-row antialiased">
