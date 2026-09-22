@@ -84,6 +84,55 @@ const formatAddress = (slot: WarehouseSlot) =>
 const normalizeAddressSearch = (value: string) =>
   value.trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
 
+const parseChacoteDate = (value: string): number | null => {
+  const clean = value.trim();
+  if (!clean) return null;
+
+  let year: number;
+  let month: number;
+  let day: number;
+
+  const isoMatch = /^(\d{4})[-/](\d{1,2})[-/](\d{1,2})$/.exec(clean);
+  if (isoMatch) {
+    year = Number(isoMatch[1]);
+    month = Number(isoMatch[2]);
+    day = Number(isoMatch[3]);
+  } else {
+    const brMatch = /^(\d{1,2})[\/-](\d{1,2})[\/-](\d{2}|\d{4})$/.exec(clean);
+    if (!brMatch) return null;
+
+    day = Number(brMatch[1]);
+    month = Number(brMatch[2]);
+    year = Number(brMatch[3]);
+    if (year < 100) year += 2000;
+  }
+
+  if (
+    !Number.isInteger(year) ||
+    !Number.isInteger(month) ||
+    !Number.isInteger(day) ||
+    month < 1 ||
+    month > 12 ||
+    day < 1 ||
+    day > 31
+  ) {
+    return null;
+  }
+
+  const timestamp = Date.UTC(year, month - 1, day);
+  const date = new Date(timestamp);
+
+  if (
+    date.getUTCFullYear() !== year ||
+    date.getUTCMonth() !== month - 1 ||
+    date.getUTCDate() !== day
+  ) {
+    return null;
+  }
+
+  return timestamp;
+};
+
 export function MobileShell({
   currentUser,
   operator,
@@ -112,6 +161,7 @@ export function MobileShell({
   const [searchChacoteTo, setSearchChacoteTo] = useState("");
   const [searchQtyMin, setSearchQtyMin] = useState("");
   const [searchQtyMax, setSearchQtyMax] = useState("");
+  const [searchSort, setSearchSort] = useState<"address" | "chacoteAsc" | "chacoteDesc" | "qtyAsc" | "qtyDesc">("address");
   const [launchType, setLaunchType] = useState<"Entrada" | "Saída" | "Transferência">("Entrada");
   const [estoque, setEstoque] = useState("2");
   const [modulo, setModulo] = useState("");
@@ -161,7 +211,7 @@ export function MobileShell({
     const from = searchChacoteFrom ? new Date(`${searchChacoteFrom}T00:00:00`).getTime() : null;
     const to = searchChacoteTo ? new Date(`${searchChacoteTo}T23:59:59`).getTime() : null;
 
-    return slots
+    const filtered = slots
       .filter(slot => slot.saldo > 0 && slot.referencia)
       .filter(slot => {
         const product = productMap.get(normalizeSku(slot.referencia));
@@ -180,15 +230,50 @@ export function MobileShell({
 
         if (from !== null || to !== null) {
           if (!slot.dataChacote) return false;
-          const chacoteTime = new Date(`${slot.dataChacote}T12:00:00`).getTime();
+          const chacoteTime = parseChacoteDate(slot.dataChacote);
+          if (chacoteTime === null) return false;
           if (from !== null && chacoteTime < from) return false;
           if (to !== null && chacoteTime > to) return false;
         }
 
         return true;
+      });
+
+    return filtered
+      .sort((a, b) => {
+        if (searchSort === "qtyAsc") return a.saldo - b.saldo;
+        if (searchSort === "qtyDesc") return b.saldo - a.saldo;
+
+        if (searchSort === "chacoteAsc" || searchSort === "chacoteDesc") {
+          const aTime = a.dataChacote ? parseChacoteDate(a.dataChacote) : null;
+          const bTime = b.dataChacote ? parseChacoteDate(b.dataChacote) : null;
+
+          // Paletes sem data devem sempre aparecer primeiro.
+          // Depois deles, a ordenação segue a data escolhida.
+          if (aTime === null && bTime === null) return 0;
+          if (aTime === null) return -1;
+          if (bTime === null) return 1;
+
+          return searchSort === "chacoteAsc" ? aTime - bTime : bTime - aTime;
+        }
+
+        return (
+          a.estoque.localeCompare(b.estoque, "pt-BR", { numeric: true }) ||
+          a.modulo.localeCompare(b.modulo, "pt-BR", { numeric: true }) ||
+          a.posicao.localeCompare(b.posicao, "pt-BR", { numeric: true })
+        );
       })
       .slice(0, 50);
-  }, [slots, search, productMap, searchQtyMin, searchQtyMax, searchChacoteFrom, searchChacoteTo]);
+  }, [
+    slots,
+    search,
+    productMap,
+    searchQtyMin,
+    searchQtyMax,
+    searchChacoteFrom,
+    searchChacoteTo,
+    searchSort,
+  ]);
 
   const transferSources = useMemo(() => {
     const query = transferSourceSearch.trim().toLowerCase();
@@ -286,6 +371,32 @@ export function MobileShell({
     () => divergencias.filter(div => div.status === "Aberta"),
     [divergencias]
   );
+
+  const groupedOpenDivergencias = useMemo(() => {
+    const groups = new Map<string, Divergencia[]>();
+
+    openDivergencias.forEach(div => {
+      const key = `${div.estoque}|${div.modulo}|${div.posicao || ""}`;
+      const group = groups.get(key);
+
+      if (group) {
+        group.push(div);
+      } else {
+        groups.set(key, [div]);
+      }
+    });
+
+    return Array.from(groups.values()).sort((a, b) => {
+      const firstA = a[0];
+      const firstB = b[0];
+
+      return (
+        firstA.estoque.localeCompare(firstB.estoque, "pt-BR", { numeric: true }) ||
+        firstA.modulo.localeCompare(firstB.modulo, "pt-BR", { numeric: true }) ||
+        (firstA.posicao || "").localeCompare(firstB.posicao || "", "pt-BR", { numeric: true })
+      );
+    });
+  }, [openDivergencias]);
 
   const selectedDivergencia = selectedDivergenciaId
     ? divergencias.find(div => div.id === selectedDivergenciaId) ?? null
@@ -427,7 +538,21 @@ export function MobileShell({
           setModulo(normalizeModule(matchingSlot.modulo));
           setPosicao(matchingSlot.posicao);
         } else {
-          setSearch(cleanValue);
+          const compactAddress = normalized.replace(/[^A-Z0-9]/g, "");
+          const physicalAddressMatch = compactAddress.match(/^E?([23])M?(\d{1,3})([A-Z]\d{0,2})$/);
+          const e1AddressMatch = compactAddress.match(/^E?1M?(\d{1,3})$/);
+
+          if (physicalAddressMatch) {
+            setEstoque(physicalAddressMatch[1]);
+            setModulo(normalizeModule(physicalAddressMatch[2]));
+            setPosicao(physicalAddressMatch[3]);
+          } else if (e1AddressMatch) {
+            setEstoque("1");
+            setModulo(normalizeModule(e1AddressMatch[1]));
+            setPosicao("");
+          } else {
+            setSearch(cleanValue);
+          }
         }
       }
 
@@ -682,26 +807,48 @@ export function MobileShell({
                   <label className="text-[10px] font-black uppercase text-slate-400">
                     Chacote desde
                     <input type="date" value={searchChacoteFrom} onChange={event => setSearchChacoteFrom(event.target.value)}
-                      className="mt-1 h-11 w-full rounded-xl border border-slate-200 px-2 text-xs font-bold text-slate-700" />
+                      className="mt-1 h-11 w-full rounded-xl border border-slate-200 px-2 text-base font-bold text-slate-700" />
                   </label>
                   <label className="text-[10px] font-black uppercase text-slate-400">
                     Chacote até
                     <input type="date" value={searchChacoteTo} onChange={event => setSearchChacoteTo(event.target.value)}
-                      className="mt-1 h-11 w-full rounded-xl border border-slate-200 px-2 text-xs font-bold text-slate-700" />
+                      className="mt-1 h-11 w-full rounded-xl border border-slate-200 px-2 text-base font-bold text-slate-700" />
                   </label>
                   <label className="text-[10px] font-black uppercase text-slate-400">
                     Quantidade mínima
                     <input type="number" min="0" step="1" value={searchQtyMin} onChange={event => setSearchQtyMin(event.target.value)}
-                      placeholder="0" className="mt-1 h-11 w-full rounded-xl border border-slate-200 px-3 text-xs font-bold text-slate-700" />
+                      placeholder="0" className="mt-1 h-11 w-full rounded-xl border border-slate-200 px-3 text-base font-bold text-slate-700" />
                   </label>
                   <label className="text-[10px] font-black uppercase text-slate-400">
                     Quantidade máxima
                     <input type="number" min="0" step="1" value={searchQtyMax} onChange={event => setSearchQtyMax(event.target.value)}
-                      placeholder="Ex.: 300" className="mt-1 h-11 w-full rounded-xl border border-slate-200 px-3 text-xs font-bold text-slate-700" />
+                      placeholder="Ex.: 300" className="mt-1 h-11 w-full rounded-xl border border-slate-200 px-3 text-base font-bold text-slate-700" />
                   </label>
                 </div>
+
+                <label className="mt-2 block text-[10px] font-black uppercase text-slate-400">
+                  Ordenar resultados
+                  <select
+                    value={searchSort}
+                    onChange={event => setSearchSort(event.target.value as typeof searchSort)}
+                    className="mt-1 h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-base font-bold text-slate-700 outline-none"
+                  >
+                    <option value="address">Endereço: E → M → posição</option>
+                    <option value="chacoteAsc">Chacote: mais antigo → mais novo</option>
+                    <option value="chacoteDesc">Chacote: mais novo → mais antigo</option>
+                    <option value="qtyAsc">Quantidade: menor → maior</option>
+                    <option value="qtyDesc">Quantidade: maior → menor</option>
+                  </select>
+                </label>
+
                 <button type="button"
-                  onClick={() => { setSearchChacoteFrom(""); setSearchChacoteTo(""); setSearchQtyMin(""); setSearchQtyMax(""); }}
+                  onClick={() => {
+                    setSearchChacoteFrom("");
+                    setSearchChacoteTo("");
+                    setSearchQtyMin("");
+                    setSearchQtyMax("");
+                    setSearchSort("address");
+                  }}
                   className="mt-3 text-[10px] font-black uppercase text-blue-600"
                 >
                   Limpar filtros
@@ -865,7 +1012,7 @@ export function MobileShell({
                     <select
                       value={estoque}
                       onChange={event => setEstoque(event.target.value)}
-                      className="h-12 rounded-xl border border-slate-200 bg-white px-3 text-sm font-black outline-none"
+                      className="h-12 rounded-xl border border-slate-200 bg-white px-3 text-base font-black outline-none"
                     >
                       <option value="1">E1</option>
                       <option value="2">E2</option>
@@ -876,7 +1023,7 @@ export function MobileShell({
                       value={modulo}
                       onChange={event => setModulo(event.target.value.replace(/\D/g, ""))}
                       placeholder="Módulo"
-                      className="h-12 rounded-xl border border-slate-200 px-3 text-sm font-black outline-none"
+                      className="h-12 rounded-xl border border-slate-200 px-3 text-base font-black outline-none"
                       inputMode="numeric"
                     />
 
@@ -884,7 +1031,7 @@ export function MobileShell({
                       value={posicao}
                       onChange={event => setPosicao(event.target.value.toUpperCase())}
                       placeholder="Pos."
-                      className="h-12 rounded-xl border border-slate-200 px-3 text-sm font-black uppercase outline-none"
+                      className="h-12 rounded-xl border border-slate-200 px-3 text-base font-black uppercase outline-none"
                     />
                   </div>
 
@@ -919,7 +1066,7 @@ export function MobileShell({
                       type="date"
                       value={dataChacote}
                       onChange={event => setDataChacote(event.target.value)}
-                      className="mt-3 h-10 w-full rounded-lg border border-slate-200 px-2 text-sm font-bold outline-none"
+                      className="mt-3 h-10 w-full rounded-lg border border-slate-200 px-2 text-base font-bold outline-none"
                     />
                     <span className="mt-1 block text-[9px] font-medium text-slate-400">
                       Referência FIFO registrada na posição.
@@ -968,7 +1115,7 @@ export function MobileShell({
                     onChange={event => setTransferSourceSearch(event.target.value)}
                     placeholder="Buscar posição, SKU ou descrição"
                     disabled={Boolean(sourceId)}
-                    className="mt-2 h-12 w-full rounded-xl border border-slate-200 px-3 text-sm font-semibold outline-none focus:border-blue-500 disabled:bg-slate-100"
+                    className="mt-2 h-12 w-full rounded-xl border border-slate-200 px-3 text-base font-semibold outline-none focus:border-blue-500 disabled:bg-slate-100"
                   />
                   {sourceId ? (() => {
                     const selected = slots.find(slot => slot.id === sourceId);
@@ -1013,7 +1160,7 @@ export function MobileShell({
                     onChange={event => setTransferDestinationSearch(event.target.value)}
                     placeholder={sourceId ? "Buscar posição vazia" : "Selecione a origem primeiro"}
                     disabled={!sourceId}
-                    className="mt-2 h-12 w-full rounded-xl border border-slate-200 px-3 text-sm font-semibold outline-none focus:border-blue-500 disabled:bg-slate-100"
+                    className="mt-2 h-12 w-full rounded-xl border border-slate-200 px-3 text-base font-semibold outline-none focus:border-blue-500 disabled:bg-slate-100"
                   />
                   {destinationId ? (() => {
                     const selected = slots.find(slot => slot.id === destinationId);
@@ -1076,17 +1223,27 @@ export function MobileShell({
               </div>
             </div>
 
-            {openDivergencias.map(div => (
-              <article key={div.id} className="rounded-2xl border border-red-100 bg-white p-4 shadow-sm">
-                <div className="flex items-start justify-between gap-3">
-                  <div>
-                    <div className="font-mono text-xs font-black text-red-700">{div.id}</div>
-                    <div className="mt-1 text-sm font-black text-slate-800">{div.tipoDivergencia}</div>
-                  </div>
+            {groupedOpenDivergencias.map(group => {
+              const div = group[0];
+              const divergenceCount = group.length;
+
+              return (
+                <article key={`${div.estoque}-${div.modulo}-${div.posicao || "RUA"}`} className="rounded-2xl border border-red-100 bg-white p-4 shadow-sm">
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <div className="font-mono text-xs font-black text-red-700">{div.id}</div>
+                      <div className="mt-1 text-sm font-black text-slate-800">{div.tipoDivergencia}</div>
+                    </div>
                   <span className="rounded-full bg-red-50 px-2 py-1 text-[9px] font-black uppercase text-red-700">
                     Aberta
                   </span>
                 </div>
+
+                {divergenceCount > 1 && (
+                  <div className="mt-2 rounded-xl bg-red-50 px-3 py-2 text-xs font-black text-red-700">
+                    {divergenceCount} divergências abertas nesta posição
+                  </div>
+                )}
 
                 <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
                   <div className="rounded-xl bg-slate-50 p-3">
@@ -1117,7 +1274,8 @@ export function MobileShell({
                   </button>
                 )}
               </article>
-            ))}
+              );
+            })}
 
             {selectedDivergencia && (
               <div className="fixed inset-0 z-50 flex items-end justify-center bg-slate-950/60 p-3">
@@ -1227,7 +1385,7 @@ export function MobileShell({
                           onChange={event => setDivergenciaResolveSku(event.target.value)}
                           disabled={resolvingDivergencia}
                           placeholder="Ex.: 601401G"
-                          className="min-h-12 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 text-sm font-black uppercase text-slate-800 outline-none focus:border-blue-400"
+                          className="min-h-12 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 text-base font-black uppercase text-slate-800 outline-none focus:border-blue-400"
                         />
                       </label>
 
@@ -1243,7 +1401,7 @@ export function MobileShell({
                           onChange={event => setDivergenciaResolveQty(event.target.value)}
                           disabled={resolvingDivergencia}
                           placeholder="Ex.: 325"
-                          className="min-h-12 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 text-sm font-black text-slate-800 outline-none focus:border-blue-400"
+                          className="min-h-12 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 text-base font-black text-slate-800 outline-none focus:border-blue-400"
                         />
                       </label>
 
@@ -1257,7 +1415,7 @@ export function MobileShell({
                           onChange={event => setDivergenciaResolveChacote(event.target.value)}
                           disabled={resolvingDivergencia}
                           placeholder="Ex.: 09/06/2026"
-                          className="min-h-12 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 text-sm font-bold text-slate-800 outline-none focus:border-blue-400"
+                          className="min-h-12 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 text-base font-bold text-slate-800 outline-none focus:border-blue-400"
                         />
                       </label>
                     </div>
@@ -1307,7 +1465,7 @@ export function MobileShell({
               value={historySearch}
               onChange={event => setHistorySearch(event.target.value)}
               placeholder="Filtrar SKU, posição, tipo ou responsável"
-              className="h-13 w-full rounded-2xl border border-slate-200 bg-white px-4 text-sm font-semibold outline-none focus:border-blue-500"
+              className="h-13 w-full rounded-2xl border border-slate-200 bg-white px-4 text-base font-semibold outline-none focus:border-blue-500"
             />
 
             <div className="flex items-center justify-between">
@@ -1327,24 +1485,24 @@ export function MobileShell({
                   <label className="text-[10px] font-black uppercase text-slate-400">
                     Responsável
                     <input value={historyResponsible} onChange={event => setHistoryResponsible(event.target.value)}
-                      placeholder="Nome" className="mt-1 h-11 w-full rounded-xl border border-slate-200 px-3 text-xs font-bold text-slate-700" />
+                      placeholder="Nome" className="mt-1 h-11 w-full rounded-xl border border-slate-200 px-3 text-base font-bold text-slate-700" />
                   </label>
                   <label className="text-[10px] font-black uppercase text-slate-400">
                     Tipo
                     <select value={historyType} onChange={event => setHistoryType(event.target.value)}
-                      className="mt-1 h-11 w-full rounded-xl border border-slate-200 bg-white px-2 text-xs font-bold text-slate-700">
+                      className="mt-1 h-11 w-full rounded-xl border border-slate-200 bg-white px-2 text-base font-bold text-slate-700">
                       <option value="">Todos</option><option value="Entrada">Entrada</option><option value="Saída">Saída</option>
                     </select>
                   </label>
                   <label className="text-[10px] font-black uppercase text-slate-400">
                     Data desde
                     <input type="date" value={historyDateFrom} onChange={event => setHistoryDateFrom(event.target.value)}
-                      className="mt-1 h-11 w-full rounded-xl border border-slate-200 px-2 text-xs font-bold text-slate-700" />
+                      className="mt-1 h-11 w-full rounded-xl border border-slate-200 px-2 text-base font-bold text-slate-700" />
                   </label>
                   <label className="text-[10px] font-black uppercase text-slate-400">
                     Data até
                     <input type="date" value={historyDateTo} onChange={event => setHistoryDateTo(event.target.value)}
-                      className="mt-1 h-11 w-full rounded-xl border border-slate-200 px-2 text-xs font-bold text-slate-700" />
+                      className="mt-1 h-11 w-full rounded-xl border border-slate-200 px-2 text-base font-bold text-slate-700" />
                   </label>
                 </div>
                 <button type="button"
@@ -1464,7 +1622,7 @@ export function MobileShell({
                 }}
                 placeholder="Pergunte ao Consultor..."
                 enterKeyHint="send"
-                className="h-12 min-w-0 flex-1 rounded-xl border border-slate-200 bg-white px-4 text-sm font-semibold outline-none focus:border-indigo-500"
+                className="h-12 min-w-0 flex-1 rounded-xl border border-slate-200 bg-white px-4 text-base font-semibold outline-none focus:border-indigo-500"
               />
               <button
                 type="submit"
@@ -1523,8 +1681,8 @@ export function MobileShell({
       </nav>
 
       {scannerTarget && (
-        <div className="fixed inset-0 z-[200] flex flex-col bg-slate-950">
-          <div className="flex items-center justify-between px-4 py-4 text-white">
+        <div className="fixed inset-0 z-[200] flex h-[100dvh] flex-col bg-slate-950 pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)]">
+          <div className="flex shrink-0 items-center justify-between px-4 py-3 text-white">
             <div>
               <div className="text-sm font-black">Escanear {scannerTarget === "sku" ? "SKU" : "posição"}</div>
               <div className="mt-0.5 text-[10px] font-medium text-slate-400">
@@ -1541,7 +1699,7 @@ export function MobileShell({
             </button>
           </div>
 
-          <div className="relative flex flex-1 items-center justify-center overflow-hidden">
+          <div className="relative min-h-0 flex-1 items-center justify-center overflow-hidden">
             <video
               ref={videoRef}
               muted

@@ -701,7 +701,7 @@ useEffect(() => {
 }, [activeTab]);
 
 useEffect(() => {
-  if (!currentUser) return;
+  if (!currentUser || activeTab !== "divergências") return;
 
   const loadDivergencias = async () => {
     const data = await loadDivergenciasFromSupabase();
@@ -709,7 +709,7 @@ useEffect(() => {
   };
 
   loadDivergencias();
-}, [currentUser]);
+}, [currentUser, activeTab]);
 
   // --- DYNAMIC REGISTERED CUSTOM PRODUCTS STATE ---
   const [productsList, setProductsList] = useState<Product[]>([]);
