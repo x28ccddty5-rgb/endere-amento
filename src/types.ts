@@ -1,3 +1,6 @@
+export type Galpao = "3" | "12";
+export type Restricao = "nenhuma" | "teste" | "autorizacao" | "outra";
+
 export interface Product {
   referencia: string;
   descricao: string;
@@ -16,6 +19,9 @@ export interface WarehouseSlot {
   ultimaData: string;
   ultimaHora: string;
   ultimoResponsavel: string;
+  galpao?: Galpao;
+  restricao?: Restricao;
+  observacao?: string;
 }
 
 export interface LancamentoRow {
@@ -30,6 +36,9 @@ export interface LancamentoRow {
   dataChacote: string;
   hora: string;
   responsavel: string;
+  galpao?: Galpao;
+  restricao?: Restricao;
+  observacao?: string;
 }
 
 export interface HistoricoMov {
@@ -46,6 +55,8 @@ export interface HistoricoMov {
   dataChacote: string;
   hora: string;
   responsavel: string;
+  galpao?: Galpao;
+  observacao?: string;
 }
 
 export interface Divergencia {

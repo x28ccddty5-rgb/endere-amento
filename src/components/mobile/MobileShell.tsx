@@ -17,7 +17,7 @@ import {
   WifiOff,
   X,
 } from "lucide-react";
-import type { Divergencia, HistoricoMov, Product, WarehouseSlot } from "../../types";
+import type { Divergencia, Galpao, HistoricoMov, Product, Restricao, WarehouseSlot } from "../../types";
 import type { AppUser } from "../AdminUsersManagement";
 
 type MobileTab = "endereçamento" | "lançamento" | "divergências" | "histórico" | "ai";
@@ -40,8 +40,11 @@ interface MobileShellProps {
     sku: string;
     quantidade: number;
     dataChacote: string;
+    galpao: Galpao;
+    restricao: Restricao;
+    observacao: string;
   }) => Promise<boolean>;
-  onTransferPosition: (sourceId: string, destinationId: string) => Promise<boolean>;
+  onTransferPosition: (sourceId: string, destinationId: string, observation: string) => Promise<boolean>;
   onResolveDivergencia: (
     divergence: Divergencia,
     action: "sobrescrever" | "descartar",
@@ -83,6 +86,32 @@ const formatAddress = (slot: WarehouseSlot) =>
 
 const normalizeAddressSearch = (value: string) =>
   value.trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
+
+const formatChacoteInput = (value: string): string => {
+  const digits = value.replace(/\D/g, "").slice(0, 8);
+  if (digits.length <= 2) return digits;
+  if (digits.length <= 4) return `${digits.slice(0, 2)}/${digits.slice(2)}`;
+  return `${digits.slice(0, 2)}/${digits.slice(2, 4)}/${digits.slice(4)}`;
+};
+
+const parseTypedChacoteDate = (value: string): number | null => {
+  const match = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(value.trim());
+  if (!match) return null;
+
+  const day = Number(match[1]);
+  const month = Number(match[2]);
+  const year = Number(match[3]);
+  const timestamp = Date.UTC(year, month - 1, day);
+  const date = new Date(timestamp);
+
+  return (
+    date.getUTCFullYear() === year &&
+    date.getUTCMonth() === month - 1 &&
+    date.getUTCDate() === day
+  )
+    ? timestamp
+    : null;
+};
 
 const parseChacoteDate = (value: string): number | null => {
   const clean = value.trim();
@@ -157,10 +186,8 @@ export function MobileShell({
 }: MobileShellProps) {
   const [search, setSearch] = useState("");
   const [searchFiltersOpen, setSearchFiltersOpen] = useState(false);
-  const [searchChacoteFrom, setSearchChacoteFrom] = useState("");
-  const [searchChacoteTo, setSearchChacoteTo] = useState("");
-  const [searchQtyMin, setSearchQtyMin] = useState("");
-  const [searchQtyMax, setSearchQtyMax] = useState("");
+  const [searchGalpao, setSearchGalpao] = useState("");
+  const [searchObservacao, setSearchObservacao] = useState("");
   const [searchSort, setSearchSort] = useState<"address" | "chacoteAsc" | "chacoteDesc" | "qtyAsc" | "qtyDesc">("address");
   const [launchType, setLaunchType] = useState<"Entrada" | "Saída" | "Transferência">("Entrada");
   const [estoque, setEstoque] = useState("2");
@@ -169,6 +196,10 @@ export function MobileShell({
   const [sku, setSku] = useState("");
   const [quantidade, setQuantidade] = useState("");
   const [dataChacote, setDataChacote] = useState("");
+  const [galpao, setGalpao] = useState<Galpao>("3");
+  const [restricao, setRestricao] = useState<Restricao>("nenhuma");
+  const [observacao, setObservacao] = useState("");
+  const [transferObservation, setTransferObservation] = useState("");
   const [sourceId, setSourceId] = useState("");
   const [destinationId, setDestinationId] = useState("");
   const [transferSourceSearch, setTransferSourceSearch] = useState("");
@@ -184,6 +215,8 @@ export function MobileShell({
   const [historyType, setHistoryType] = useState("");
   const [historyDateFrom, setHistoryDateFrom] = useState("");
   const [historyDateTo, setHistoryDateTo] = useState("");
+  const [historyGalpao, setHistoryGalpao] = useState("");
+  const [historyObservacao, setHistoryObservacao] = useState("");
   const [historyFiltersOpen, setHistoryFiltersOpen] = useState(false);
 
   const [selectedDivergenciaId, setSelectedDivergenciaId] = useState<string | null>(null);
@@ -206,10 +239,8 @@ export function MobileShell({
 
   const searchResults = useMemo(() => {
     const query = search.trim().toLowerCase();
-    const minQty = searchQtyMin ? Number(searchQtyMin) : null;
-    const maxQty = searchQtyMax ? Number(searchQtyMax) : null;
-    const from = searchChacoteFrom ? new Date(`${searchChacoteFrom}T00:00:00`).getTime() : null;
-    const to = searchChacoteTo ? new Date(`${searchChacoteTo}T23:59:59`).getTime() : null;
+    const galpaoFilter = searchGalpao.trim();
+    const observacaoFilter = searchObservacao.trim().toLowerCase();
 
     const filtered = slots
       .filter(slot => slot.saldo > 0 && slot.referencia)
@@ -225,15 +256,12 @@ export function MobileShell({
           product?.descricao.toLowerCase().includes(query);
 
         if (!matchesQuery) return false;
-        if (minQty !== null && Number.isFinite(minQty) && slot.saldo < minQty) return false;
-        if (maxQty !== null && Number.isFinite(maxQty) && slot.saldo > maxQty) return false;
-
-        if (from !== null || to !== null) {
-          if (!slot.dataChacote) return false;
-          const chacoteTime = parseChacoteDate(slot.dataChacote);
-          if (chacoteTime === null) return false;
-          if (from !== null && chacoteTime < from) return false;
-          if (to !== null && chacoteTime > to) return false;
+        if (galpaoFilter && String(slot.galpao || "3") !== galpaoFilter) return false;
+        if (
+          observacaoFilter &&
+          !String(slot.observacao || "").toLowerCase().includes(observacaoFilter)
+        ) {
+          return false;
         }
 
         return true;
@@ -268,10 +296,8 @@ export function MobileShell({
     slots,
     search,
     productMap,
-    searchQtyMin,
-    searchQtyMax,
-    searchChacoteFrom,
-    searchChacoteTo,
+    searchGalpao,
+    searchObservacao,
     searchSort,
   ]);
 
@@ -339,6 +365,7 @@ export function MobileShell({
   const filteredHistory = useMemo(() => {
     const query = historySearch.trim().toLowerCase();
     const responsible = historyResponsible.trim().toLowerCase();
+    const observacao = historyObservacao.trim().toLowerCase();
 
     return history
       .slice()
@@ -354,10 +381,21 @@ export function MobileShell({
         if (historyType && row.tipo !== historyType) return false;
         if (historyDateFrom && row.data < historyDateFrom) return false;
         if (historyDateTo && row.data > historyDateTo) return false;
+        if (historyGalpao && String(row.galpao || "3") !== historyGalpao) return false;
+        if (observacao && !String(row.observacao || "").toLowerCase().includes(observacao)) return false;
         return true;
       })
       .slice(0, 80);
-  }, [history, historySearch, historyResponsible, historyType, historyDateFrom, historyDateTo]);
+  }, [
+    history,
+    historySearch,
+    historyResponsible,
+    historyType,
+    historyDateFrom,
+    historyDateTo,
+    historyGalpao,
+    historyObservacao,
+  ]);
 
   const focusConsultorChat = (prompt: string) => {
     onChatInputChange(prompt);
@@ -419,6 +457,16 @@ export function MobileShell({
     if (!selectedDivergencia || !canExecute || resolvingDivergencia) return;
 
     const quantity = Number(divergenciaResolveQty);
+
+    if (
+      divergenciaResolveAction === "sobrescrever" &&
+      divergenciaResolveChacote &&
+      parseTypedChacoteDate(divergenciaResolveChacote) === null
+    ) {
+      alert("Informe o Chacote no formato DD/MM/AAAA.");
+      return;
+    }
+
     if (
       divergenciaResolveAction === "sobrescrever" &&
       (!Number.isFinite(quantity) || quantity < 0)
@@ -447,6 +495,16 @@ export function MobileShell({
   };
 
   const selectedSkuProduct = productMap.get(normalizeSku(sku));
+  const selectedLaunchSlot = useMemo(
+    () =>
+      slots.find(
+        slot =>
+          slot.estoque === estoque &&
+          slot.modulo === normalizeModule(modulo) &&
+          slot.posicao === (estoque === "1" ? "" : posicao.toUpperCase())
+      ) ?? null,
+    [slots, estoque, modulo, posicao]
+  );
 
   const stopScanner = () => {
     if (scannerFrameRef.current !== null) {
@@ -666,9 +724,21 @@ export function MobileShell({
       return;
     }
 
+    if (dataChacote && parseTypedChacoteDate(dataChacote) === null) {
+      window.alert("Informe o Chacote no formato DD/MM/AAAA.");
+      return;
+    }
+
+    if (launchType === "Entrada" && galpao === "12") {
+      setRestricao("autorizacao");
+    }
+
     setLaunching(true);
 
     try {
+      const effectiveRestricao =
+        launchType === "Entrada" && galpao === "12" ? "autorizacao" : restricao;
+
       const success = await onUnitaryLaunch(launchType as "Entrada" | "Saída", {
         estoque,
         modulo,
@@ -676,12 +746,18 @@ export function MobileShell({
         sku: normalizeSku(sku),
         quantidade: qty,
         dataChacote,
+        galpao,
+        restricao: effectiveRestricao,
+        observacao,
       });
 
       if (success) {
         setSku("");
         setQuantidade("");
         setDataChacote("");
+        setGalpao("3");
+        setRestricao("nenhuma");
+        setObservacao("");
       }
     } finally {
       setLaunching(false);
@@ -699,10 +775,11 @@ export function MobileShell({
     setLaunching(true);
 
     try {
-      const success = await onTransferPosition(sourceId, destinationId);
+      const success = await onTransferPosition(sourceId, destinationId, transferObservation);
       if (success) {
         setSourceId("");
         setDestinationId("");
+        setTransferObservation("");
       }
     } finally {
       setLaunching(false);
@@ -805,24 +882,26 @@ export function MobileShell({
                 <div className="mb-3 text-[10px] font-black uppercase tracking-wider text-slate-400">Refinar pesquisa</div>
                 <div className="grid grid-cols-2 gap-2">
                   <label className="text-[10px] font-black uppercase text-slate-400">
-                    Chacote desde
-                    <input type="date" value={searchChacoteFrom} onChange={event => setSearchChacoteFrom(event.target.value)}
-                      className="mt-1 h-11 w-full rounded-xl border border-slate-200 px-2 text-base font-bold text-slate-700" />
+                    Galpão
+                    <select
+                      value={searchGalpao}
+                      onChange={event => setSearchGalpao(event.target.value)}
+                      className="mt-1 h-11 w-full rounded-xl border border-slate-200 bg-white px-2 text-base font-bold text-slate-700"
+                    >
+                      <option value="">Todos</option>
+                      <option value="3">Galpão 3</option>
+                      <option value="12">Galpão 12</option>
+                    </select>
                   </label>
                   <label className="text-[10px] font-black uppercase text-slate-400">
-                    Chacote até
-                    <input type="date" value={searchChacoteTo} onChange={event => setSearchChacoteTo(event.target.value)}
-                      className="mt-1 h-11 w-full rounded-xl border border-slate-200 px-2 text-base font-bold text-slate-700" />
-                  </label>
-                  <label className="text-[10px] font-black uppercase text-slate-400">
-                    Quantidade mínima
-                    <input type="number" min="0" step="1" value={searchQtyMin} onChange={event => setSearchQtyMin(event.target.value)}
-                      placeholder="0" className="mt-1 h-11 w-full rounded-xl border border-slate-200 px-3 text-base font-bold text-slate-700" />
-                  </label>
-                  <label className="text-[10px] font-black uppercase text-slate-400">
-                    Quantidade máxima
-                    <input type="number" min="0" step="1" value={searchQtyMax} onChange={event => setSearchQtyMax(event.target.value)}
-                      placeholder="Ex.: 300" className="mt-1 h-11 w-full rounded-xl border border-slate-200 px-3 text-base font-bold text-slate-700" />
+                    Observação
+                    <input
+                      type="text"
+                      value={searchObservacao}
+                      onChange={event => setSearchObservacao(event.target.value)}
+                      placeholder="Buscar observação"
+                      className="mt-1 h-11 w-full rounded-xl border border-slate-200 px-3 text-base font-bold text-slate-700"
+                    />
                   </label>
                 </div>
 
@@ -843,10 +922,8 @@ export function MobileShell({
 
                 <button type="button"
                   onClick={() => {
-                    setSearchChacoteFrom("");
-                    setSearchChacoteTo("");
-                    setSearchQtyMin("");
-                    setSearchQtyMax("");
+                    setSearchGalpao("");
+                    setSearchObservacao("");
                     setSearchSort("address");
                   }}
                   className="mt-3 text-[10px] font-black uppercase text-blue-600"
@@ -896,9 +973,44 @@ export function MobileShell({
                       </div>
                     </div>
 
+                    <div className="mt-2 flex flex-wrap gap-1.5">
+                      <span className={`rounded-full px-2 py-1 text-[9px] font-black uppercase ${
+                        slot.galpao === "12"
+                          ? "bg-red-50 text-red-700"
+                          : "bg-slate-100 text-slate-600"
+                      }`}>
+                        GALPÃO {slot.galpao || "3"}
+                      </span>
+                      {slot.galpao === "12" && (
+                        <span className="rounded-full bg-red-50 px-2 py-1 text-[9px] font-black uppercase text-red-700">
+                          🔴 SOLICITAR AUTORIZAÇÃO
+                        </span>
+                      )}
+                      {slot.galpao !== "12" && slot.restricao === "teste" && (
+                        <span className="rounded-full bg-orange-50 px-2 py-1 text-[9px] font-black uppercase text-orange-700">
+                          🟠 TESTE — NÃO SEPARAR
+                        </span>
+                      )}
+                      {slot.galpao !== "12" && slot.restricao === "autorizacao" && (
+                        <span className="rounded-full bg-red-50 px-2 py-1 text-[9px] font-black uppercase text-red-700">
+                          🔴 SOLICITAR AUTORIZAÇÃO
+                        </span>
+                      )}
+                      {slot.galpao !== "12" && slot.restricao === "outra" && (
+                        <span className="rounded-full bg-purple-50 px-2 py-1 text-[9px] font-black uppercase text-purple-700">
+                          🟣 OUTRA RESTRIÇÃO
+                        </span>
+                      )}
+                    </div>
+
                     {slot.dataChacote && (
                       <div className="mt-2 text-[10px] font-semibold text-slate-400">
                         Chacote: {slot.dataChacote}
+                      </div>
+                    )}
+                    {slot.observacao && (
+                      <div className="mt-1 text-[10px] font-medium text-slate-500">
+                        Obs.: {slot.observacao}
                       </div>
                     )}
                   </button>
@@ -1063,9 +1175,12 @@ export function MobileShell({
                       Data chacote
                     </span>
                     <input
-                      type="date"
+                      type="text"
                       value={dataChacote}
-                      onChange={event => setDataChacote(event.target.value)}
+                      onChange={event => setDataChacote(formatChacoteInput(event.target.value))}
+                      placeholder="DD/MM/AAAA"
+                      inputMode="numeric"
+                      maxLength={10}
                       className="mt-3 h-10 w-full rounded-lg border border-slate-200 px-2 text-base font-bold outline-none"
                     />
                     <span className="mt-1 block text-[9px] font-medium text-slate-400">
@@ -1073,6 +1188,114 @@ export function MobileShell({
                     </span>
                   </label>
                 </div>
+
+                {launchType === "Entrada" ? (
+                  <div className="space-y-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+                    <div className="grid grid-cols-2 gap-3">
+                      <label>
+                        <span className="block text-[10px] font-black uppercase tracking-wider text-slate-400">
+                          Galpão
+                        </span>
+                        <select
+                          value={galpao}
+                          onChange={event => {
+                            const value = event.target.value as Galpao;
+                            setGalpao(value);
+                            if (value === "12") setRestricao("autorizacao");
+                          }}
+                          className="mt-2 h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-base font-black outline-none"
+                        >
+                          <option value="3">Galpão 3</option>
+                          <option value="12">Galpão 12</option>
+                        </select>
+                      </label>
+
+                      <label>
+                        <span className="block text-[10px] font-black uppercase tracking-wider text-slate-400">
+                          Restrição
+                        </span>
+                        <select
+                          value={galpao === "12" ? "autorizacao" : restricao}
+                          onChange={event => setRestricao(event.target.value as Restricao)}
+                          disabled={galpao === "12"}
+                          className="mt-2 h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-base font-black outline-none disabled:bg-slate-100"
+                        >
+                          <option value="nenhuma">Nenhuma</option>
+                          <option value="teste">Teste — não separar</option>
+                          <option value="autorizacao">Solicitar autorização</option>
+                          <option value="outra">Outra restrição</option>
+                        </select>
+                      </label>
+                    </div>
+
+                    {galpao === "12" && (
+                      <div className="rounded-xl bg-red-50 px-3 py-2 text-xs font-black uppercase text-red-700">
+                        GALPÃO 12 — 🔴 SOLICITAR AUTORIZAÇÃO
+                      </div>
+                    )}
+
+                    {galpao !== "12" && restricao === "teste" && (
+                      <div className="rounded-xl bg-orange-50 px-3 py-2 text-xs font-black uppercase text-orange-700">
+                        🟠 TESTE — NÃO SEPARAR
+                      </div>
+                    )}
+
+                    {galpao !== "12" && restricao === "outra" && (
+                      <div className="rounded-xl bg-purple-50 px-3 py-2 text-xs font-black uppercase text-purple-700">
+                        🟣 OUTRA RESTRIÇÃO
+                      </div>
+                    )}
+
+                    <label className="block">
+                      <span className="block text-[10px] font-black uppercase tracking-wider text-slate-400">
+                        Observação
+                      </span>
+                      <textarea
+                        value={observacao}
+                        onChange={event => setObservacao(event.target.value)}
+                        placeholder="Observação do palete ou movimentação"
+                        rows={2}
+                        className="mt-2 min-h-20 w-full resize-none rounded-xl border border-slate-200 px-3 py-2 text-base font-semibold outline-none"
+                      />
+                    </label>
+                  </div>
+                ) : (
+                  <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+                    <div className="flex flex-wrap gap-1.5">
+                      {selectedLaunchSlot?.galpao === "12" && (
+                        <>
+                          <span className="rounded-full bg-red-50 px-2 py-1 text-[9px] font-black uppercase text-red-700">GALPÃO 12</span>
+                          <span className="rounded-full bg-red-50 px-2 py-1 text-[9px] font-black uppercase text-red-700">🔴 SOLICITAR AUTORIZAÇÃO</span>
+                        </>
+                      )}
+                      {selectedLaunchSlot?.galpao !== "12" && selectedLaunchSlot?.restricao === "teste" && (
+                        <span className="rounded-full bg-orange-50 px-2 py-1 text-[9px] font-black uppercase text-orange-700">🟠 TESTE — NÃO SEPARAR</span>
+                      )}
+                      {selectedLaunchSlot?.galpao !== "12" && selectedLaunchSlot?.restricao === "autorizacao" && (
+                        <span className="rounded-full bg-red-50 px-2 py-1 text-[9px] font-black uppercase text-red-700">🔴 SOLICITAR AUTORIZAÇÃO</span>
+                      )}
+                      {selectedLaunchSlot?.galpao !== "12" && selectedLaunchSlot?.restricao === "outra" && (
+                        <span className="rounded-full bg-purple-50 px-2 py-1 text-[9px] font-black uppercase text-purple-700">🟣 OUTRA RESTRIÇÃO</span>
+                      )}
+                      {!selectedLaunchSlot && (
+                        <span className="text-xs font-semibold text-slate-400">Selecione um endereço para visualizar a classificação do palete.</span>
+                      )}
+                    </div>
+
+                    <label className="mt-3 block">
+                      <span className="block text-[10px] font-black uppercase tracking-wider text-slate-400">
+                        Observação da movimentação
+                      </span>
+                      <textarea
+                        value={observacao}
+                        onChange={event => setObservacao(event.target.value)}
+                        placeholder="Motivo ou autorização da saída"
+                        rows={2}
+                        className="mt-2 min-h-20 w-full resize-none rounded-xl border border-slate-200 px-3 py-2 text-base font-semibold outline-none"
+                      />
+                    </label>
+                  </div>
+                )}
 
                 <button
                   type="button"
@@ -1137,6 +1360,23 @@ export function MobileShell({
                             <X className="h-4 w-4" />
                           </button>
                         </div>
+                        <div className="mt-2 flex flex-wrap gap-1.5">
+                          {selected.galpao === "12" && (
+                            <>
+                              <span className="rounded-full bg-red-50 px-2 py-1 text-[9px] font-black uppercase text-red-700">GALPÃO 12</span>
+                              <span className="rounded-full bg-red-50 px-2 py-1 text-[9px] font-black uppercase text-red-700">🔴 SOLICITAR AUTORIZAÇÃO</span>
+                            </>
+                          )}
+                          {selected.galpao !== "12" && selected.restricao === "teste" && (
+                            <span className="rounded-full bg-orange-50 px-2 py-1 text-[9px] font-black uppercase text-orange-700">🟠 TESTE — NÃO SEPARAR</span>
+                          )}
+                          {selected.galpao !== "12" && selected.restricao === "autorizacao" && (
+                            <span className="rounded-full bg-red-50 px-2 py-1 text-[9px] font-black uppercase text-red-700">🔴 SOLICITAR AUTORIZAÇÃO</span>
+                          )}
+                          {selected.galpao !== "12" && selected.restricao === "outra" && (
+                            <span className="rounded-full bg-purple-50 px-2 py-1 text-[9px] font-black uppercase text-purple-700">🟣 OUTRA RESTRIÇÃO</span>
+                          )}
+                        </div>
                       </div>
                     ) : null;
                   })() : (
@@ -1148,6 +1388,23 @@ export function MobileShell({
                         >
                           <div className="font-mono text-xs font-black text-slate-800">{formatAddress(slot)}</div>
                           <div className="mt-1 text-[10px] font-semibold text-slate-500">{slot.referencia} • {slot.saldo.toLocaleString("pt-BR")} pçs</div>
+                          <div className="mt-1 flex flex-wrap gap-1.5">
+                            {slot.galpao === "12" && (
+                              <>
+                                <span className="rounded-full bg-red-50 px-2 py-1 text-[9px] font-black uppercase text-red-700">GALPÃO 12</span>
+                                <span className="rounded-full bg-red-50 px-2 py-1 text-[9px] font-black uppercase text-red-700">🔴 SOLICITAR AUTORIZAÇÃO</span>
+                              </>
+                            )}
+                            {slot.galpao !== "12" && slot.restricao === "teste" && (
+                              <span className="rounded-full bg-orange-50 px-2 py-1 text-[9px] font-black uppercase text-orange-700">🟠 TESTE — NÃO SEPARAR</span>
+                            )}
+                            {slot.galpao !== "12" && slot.restricao === "autorizacao" && (
+                              <span className="rounded-full bg-red-50 px-2 py-1 text-[9px] font-black uppercase text-red-700">🔴 SOLICITAR AUTORIZAÇÃO</span>
+                            )}
+                            {slot.galpao !== "12" && slot.restricao === "outra" && (
+                              <span className="rounded-full bg-purple-50 px-2 py-1 text-[9px] font-black uppercase text-purple-700">🟣 OUTRA RESTRIÇÃO</span>
+                            )}
+                          </div>
                         </button>
                       ))}
                     </div>
@@ -1194,6 +1451,19 @@ export function MobileShell({
                     </div>
                   )}
                 </div>
+
+                <label className="block rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+                  <span className="block text-[10px] font-black uppercase tracking-wider text-slate-400">
+                    Observação da transferência
+                  </span>
+                  <textarea
+                    value={transferObservation}
+                    onChange={event => setTransferObservation(event.target.value)}
+                    placeholder="Motivo ou observação da transferência"
+                    rows={2}
+                    className="mt-2 min-h-20 w-full resize-none rounded-xl border border-slate-200 px-3 py-2 text-base font-semibold outline-none"
+                  />
+                </label>
 
                 <button
                   type="button"
@@ -1412,9 +1682,11 @@ export function MobileShell({
                         <input
                           type="text"
                           value={divergenciaResolveChacote}
-                          onChange={event => setDivergenciaResolveChacote(event.target.value)}
+                          onChange={event => setDivergenciaResolveChacote(formatChacoteInput(event.target.value))}
                           disabled={resolvingDivergencia}
-                          placeholder="Ex.: 09/06/2026"
+                          placeholder="DD/MM/AAAA"
+                          inputMode="numeric"
+                          maxLength={10}
                           className="min-h-12 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 text-base font-bold text-slate-800 outline-none focus:border-blue-400"
                         />
                       </label>
@@ -1504,9 +1776,38 @@ export function MobileShell({
                     <input type="date" value={historyDateTo} onChange={event => setHistoryDateTo(event.target.value)}
                       className="mt-1 h-11 w-full rounded-xl border border-slate-200 px-2 text-base font-bold text-slate-700" />
                   </label>
+                  <label className="text-[10px] font-black uppercase text-slate-400">
+                    Galpão
+                    <select
+                      value={historyGalpao}
+                      onChange={event => setHistoryGalpao(event.target.value)}
+                      className="mt-1 h-11 w-full rounded-xl border border-slate-200 bg-white px-2 text-base font-bold text-slate-700"
+                    >
+                      <option value="">Todos</option>
+                      <option value="3">Galpão 3</option>
+                      <option value="12">Galpão 12</option>
+                    </select>
+                  </label>
+                  <label className="text-[10px] font-black uppercase text-slate-400">
+                    Observação
+                    <input
+                      type="text"
+                      value={historyObservacao}
+                      onChange={event => setHistoryObservacao(event.target.value)}
+                      placeholder="Buscar observação"
+                      className="mt-1 h-11 w-full rounded-xl border border-slate-200 px-3 text-base font-bold text-slate-700"
+                    />
+                  </label>
                 </div>
                 <button type="button"
-                  onClick={() => { setHistoryResponsible(""); setHistoryType(""); setHistoryDateFrom(""); setHistoryDateTo(""); }}
+                  onClick={() => {
+                    setHistoryResponsible("");
+                    setHistoryType("");
+                    setHistoryDateFrom("");
+                    setHistoryDateTo("");
+                    setHistoryGalpao("");
+                    setHistoryObservacao("");
+                  }}
                   className="mt-3 text-[10px] font-black uppercase text-blue-600"
                 >
                   Limpar filtros
@@ -1540,7 +1841,9 @@ export function MobileShell({
                     </div>
                     <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-[10px] font-semibold text-slate-500">
                       <span>Responsável: <strong className="text-slate-700">{row.responsavel || "—"}</strong></span>
+                      <span>Galpão: <strong className="text-slate-700">{row.galpao || "3"}</strong></span>
                       {row.dataChacote && <span>Chacote: <strong className="text-slate-700">{row.dataChacote}</strong></span>}
+                      {row.observacao && <span>Obs.: <strong className="text-slate-700">{row.observacao}</strong></span>}
                     </div>
                   </div>
                 </article>

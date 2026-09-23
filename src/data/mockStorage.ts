@@ -280,6 +280,15 @@ export function processLancamentosInSequence(
         currentRef.trim().toUpperCase() === refUpper
       ) {
         const hadExistingStock = currentRef !== "" && currentSaldo > 0;
+        const requestedGalpao = row.galpao;
+        const requestedRestricao = row.restricao;
+        const requestedObservacao = row.observacao?.trim() || "";
+
+        if (!hadExistingStock) {
+          slot.galpao = requestedGalpao || slot.galpao || "3";
+          slot.restricao = requestedRestricao || slot.restricao || "nenhuma";
+          slot.observacao = requestedObservacao;
+        }
 
         slot.referencia = prod.referencia;
         slot.descricao = prod.descricao;
@@ -311,6 +320,8 @@ export function processLancamentosInSequence(
           dataChacote: slot.dataChacote,
           hora: row.hora || "00:00",
           responsavel: row.responsavel || batchOperator,
+          galpao: slot.galpao || row.galpao || "3",
+          observacao: row.observacao?.trim() || "",
         });
 
         processedCount++;
@@ -400,6 +411,9 @@ export function processLancamentosInSequence(
           slot.referencia = "";
           slot.descricao = "";
           slot.dataChacote = "";
+          slot.galpao = "3";
+          slot.restricao = "nenhuma";
+          slot.observacao = "";
         }
 
         newHistory.push({
@@ -420,6 +434,8 @@ export function processLancamentosInSequence(
           dataChacote: registeredChacote,
           hora: row.hora || "00:00",
           responsavel: row.responsavel || batchOperator,
+          galpao: slot.galpao || row.galpao || "3",
+          observacao: row.observacao?.trim() || "",
         });
 
         processedCount++;
@@ -520,6 +536,9 @@ export function processTransferenciaPosicao(
   destination.descricao = description;
   destination.saldo = quantity;
   destination.dataChacote = chacote;
+  destination.galpao = source.galpao || "3";
+  destination.restricao = source.restricao || "nenhuma";
+  destination.observacao = source.observacao || "";
   destination.ultimaData = movementDate;
   destination.ultimaHora = hour;
   destination.ultimoResponsavel = operator;
@@ -528,6 +547,9 @@ export function processTransferenciaPosicao(
   source.descricao = "";
   source.saldo = 0;
   source.dataChacote = "";
+  source.galpao = "3";
+  source.restricao = "nenhuma";
+  source.observacao = "";
   source.ultimaData = movementDate;
   source.ultimaHora = hour;
   source.ultimoResponsavel = operator;
@@ -550,6 +572,8 @@ export function processTransferenciaPosicao(
       dataChacote: chacote,
       hora: hour,
       responsavel: operator,
+      galpao: source.galpao || "3",
+      observacao: "",
     },
     {
       id: `MOV-${generateId()}`,
@@ -565,6 +589,8 @@ export function processTransferenciaPosicao(
       dataChacote: chacote,
       hora: hour,
       responsavel: operator,
+      galpao: destination.galpao || source.galpao || "3",
+      observacao: "",
     }
   );
 

@@ -16,7 +16,9 @@ import {
   Divergencia, 
   LancamentoRow, 
   AppMode, 
-  Product 
+  Product,
+  Galpao,
+  Restricao
 } from "./types";
 import { PRODUCT_CATALOG, findProductInList } from "./data/products";
 import { normalizeRole, canExecuteOperations, isAdmin, isReadOnlyRole } from "./constants/permissions";
@@ -77,7 +79,7 @@ const loadSlotsFromSupabase = (): Promise<WarehouseSlot[]> => {
     while (true) {
       const { data, error } = await supabase
         .from("slots")
-        .select("id,estoque,modulo,posicao,referencia,descricao,saldo,dataChacote,ultimaData,ultimaHora,ultimoResponsavel")
+        .select("id,estoque,modulo,posicao,referencia,descricao,saldo,dataChacote,ultimaData,ultimaHora,ultimoResponsavel,galpao,restricao,observacao")
         .range(from, from + HISTORY_PAGE_SIZE - 1);
 
       if (error) {
@@ -152,7 +154,7 @@ const loadHistoryFromSupabaseUncached = async (
   while (true) {
     let query = supabase
       .from("history")
-      .select("id,dataLancamento,quemLancou,data,estoque,modulo,posicao,referencia,quantidade,tipo,dataChacote,hora,responsavel")
+      .select("id,dataLancamento,quemLancou,data,estoque,modulo,posicao,referencia,quantidade,tipo,dataChacote,hora,responsavel,galpao,observacao")
       .order("data", { ascending: false })
       .order("hora", { ascending: false })
       .range(from, from + HISTORY_PAGE_SIZE - 1);
@@ -226,7 +228,7 @@ const loadLatestHistoryRecord = (): Promise<HistoricoMov | null> => {
   latestHistoryLoadPromise = (async (): Promise<HistoricoMov | null> => {
     const { data, error } = await supabase
       .from("history")
-      .select("id,dataLancamento,quemLancou,data,estoque,modulo,posicao,referencia,quantidade,tipo,dataChacote,hora,responsavel")
+      .select("id,dataLancamento,quemLancou,data,estoque,modulo,posicao,referencia,quantidade,tipo,dataChacote,hora,responsavel,galpao,observacao")
       .lte("data", getTodayIsoDate())
       .order("data", { ascending: false })
       .order("hora", { ascending: false })
@@ -674,7 +676,7 @@ useEffect(() => {
   };
 
   loadSlots();
-}, [currentUser]);
+}, []);
 
 useEffect(() => {
   if (activeTab !== "dashboard" && activeTab !== "histórico" && activeTab !== "ai") {
@@ -701,7 +703,7 @@ useEffect(() => {
 }, [activeTab]);
 
 useEffect(() => {
-  if (!currentUser || activeTab !== "divergências") return;
+  if (!currentUser) return;
 
   const loadDivergencias = async () => {
     const data = await loadDivergenciasFromSupabase();
@@ -709,7 +711,7 @@ useEffect(() => {
   };
 
   loadDivergencias();
-}, [currentUser, activeTab]);
+}, [currentUser]);
 
   // --- DYNAMIC REGISTERED CUSTOM PRODUCTS STATE ---
   const [productsList, setProductsList] = useState<Product[]>([]);
@@ -1162,6 +1164,7 @@ const deleteProduct = async (
       dataChacote: action === "descartar" ? "" : (dataChacoteValue.trim() || "Reconciliação"),
       hora: currentHour,
       responsavel: correctedBy,
+      observacao: `Correção de divergência: ${currentDiv.id}`,
     };
 
     const historySaved = await appendHistory([newLog]);
@@ -1230,6 +1233,8 @@ const deleteProduct = async (
   const [searchRef, setSearchRef] = useState("");
   const [searchDesc, setSearchDesc] = useState("");
   const [filterEstoque, setFilterEstoque] = useState("");
+  const [filterGalpao, setFilterGalpao] = useState("");
+  const [searchObservacao, setSearchObservacao] = useState("");
   const [searchModulo, setSearchModulo] = useState("");
   const [searchPosicao, setSearchPosicao] = useState("");
   const [searchPage, setSearchPage] = useState(1);
@@ -1294,6 +1299,9 @@ const deleteProduct = async (
   const [unitSku, setUnitSku] = useState<string>("");
   const [unitQuantidade, setUnitQuantidade] = useState<number | "">("");
   const [unitChacote, setUnitChacote] = useState<string>("");
+  const [unitGalpao, setUnitGalpao] = useState<Galpao>("3");
+  const [unitRestricao, setUnitRestricao] = useState<Restricao>("nenhuma");
+  const [unitObservacao, setUnitObservacao] = useState<string>("");
   const [selectedLaunchType, setSelectedLaunchType] = useState<"unitario" | "lote">("unitario");
 
   const matchedUnitProduct = productsList.find(
@@ -1374,7 +1382,10 @@ const lancamentoInputRefs = useRef<Record<string, HTMLInputElement | null>>({});
       tipo: "Entrada",
       dataChacote: "",
       hora: "",
-      responsavel: ""
+      responsavel: "",
+      galpao: "3",
+      restricao: "nenhuma",
+      observacao: ""
     };
 
     setLancamentoRows(prev => [...prev, defaultRow]);
@@ -1556,6 +1567,37 @@ if (
           `Linha ${index + 1}: a hora da movimentação deve estar no formato HH:mm (ex.: 08:30).`
         );
       }
+
+      const rowGalpao = row.galpao || "3";
+      const rowRestricao = rowGalpao === "12" ? "autorizacao" : (row.restricao || "nenhuma");
+
+      if (rowGalpao === "12" && row.restricao !== "autorizacao") {
+        allErrors.push(
+          `Linha ${index + 1}: Galpão 12 exige Restrição = Solicitar autorização.`
+        );
+      }
+
+      if (row.tipo === "Entrada") {
+        const targetSlot = slots.find(
+          slot =>
+            slot.estoque === row.estoque.replace(/^E/, "") &&
+            slot.modulo === row.modulo.replace(/^[RM]/i, "") &&
+            slot.posicao === row.posicao
+        );
+
+        if (targetSlot?.referencia && targetSlot.saldo > 0) {
+          const currentGalpao = targetSlot.galpao || "3";
+          const currentRestricao = targetSlot.restricao || "nenhuma";
+
+          if (currentGalpao !== rowGalpao || currentRestricao !== rowRestricao) {
+            allErrors.push(
+              `Linha ${index + 1}: a posição já possui Galpão ${currentGalpao} / ` +
+              `${currentRestricao === "nenhuma" ? "Sem restrição" : currentRestricao}. ` +
+              "Não é permitido misturar classificações no mesmo palete."
+            );
+          }
+        }
+      }
     });
 
     if (allErrors.length > 0) {
@@ -1608,6 +1650,9 @@ if (
       sku: string;
       quantidade: number;
       dataChacote: string;
+      galpao: Galpao;
+      restricao: Restricao;
+      observacao: string;
     }
   ): Promise<boolean> => {
     if (!hasAccess("operador")) {
@@ -1641,7 +1686,10 @@ if (
       tipo: type,
       dataChacote: mobileData?.dataChacote ?? unitChacote,
       hora,
-      responsavel: operator
+      responsavel: operator,
+      galpao: mobileData?.galpao ?? unitGalpao,
+      restricao: mobileData?.restricao ?? unitRestricao,
+      observacao: mobileData?.observacao ?? unitObservacao
     };
 
     const errors = validateLancamentoRow(
@@ -1655,6 +1703,34 @@ if (
     if (errors.length > 0) {
       alert(`O lançamento não pôde ser realizado:\n\n${errors.join("\n")}`);
       return false;
+    }
+
+    if (type === "Entrada") {
+      const targetSlot = slots.find(
+        slot =>
+          slot.estoque === estVal &&
+          slot.modulo === cleanCorredor &&
+          slot.posicao === posVal
+      );
+
+      if (targetSlot?.referencia && targetSlot.saldo > 0) {
+        const currentGalpao = targetSlot.galpao || "3";
+        const currentRestricao = targetSlot.restricao || "nenhuma";
+        const requestedGalpao = row.galpao || "3";
+        const requestedRestricao = row.restricao || "nenhuma";
+
+        if (
+          currentGalpao !== requestedGalpao ||
+          currentRestricao !== requestedRestricao
+        ) {
+          alert(
+            `A posição já possui estoque classificado como Galpão ${currentGalpao} / ` +
+            `${currentRestricao === "nenhuma" ? "Sem restrição" : currentRestricao}. ` +
+            "Não é permitido misturar classificações no mesmo palete."
+          );
+          return false;
+        }
+      }
     }
 
     const {
@@ -1707,7 +1783,14 @@ if (
         return false;
       }
 
+      setUnitCorredor("");
+      setUnitPosicao("");
+      setUnitSku("");
       setUnitQuantidade("");
+      setUnitChacote("");
+      setUnitGalpao("3");
+      setUnitRestricao("nenhuma");
+      setUnitObservacao("");
       alert(
         `A movimentação gerou ${newDivergencias.length} divergência(s) para revisão. ` +
         "O saldo do endereço não foi alterado."
@@ -1720,6 +1803,9 @@ if (
     setUnitSku("");
     setUnitQuantidade("");
     setUnitChacote("");
+    setUnitGalpao("3");
+    setUnitRestricao("nenhuma");
+    setUnitObservacao("");
 
     alert(
       `Lançamento de ${type} consolidado no endereço ` +
@@ -1731,7 +1817,8 @@ if (
 
   const handleTransferPosition = async (
     sourceId: string,
-    destinationId: string
+    destinationId: string,
+    observation = ""
   ): Promise<boolean> => {
     if (!hasAccess("operador")) {
       alert("Seu perfil não possui permissão para transferir posições.");
@@ -1759,13 +1846,18 @@ if (
       return false;
     }
 
+    const historyWithObservation = result.newHistory.map(item => ({
+      ...item,
+      observacao: observation.trim(),
+    }));
+
     const slotsSaved = await persistSlotsUpdate(result.updatedSlots);
     if (!slotsSaved) {
       alert("A transferência não foi concluída porque não foi possível salvar as posições no Supabase.");
       return false;
     }
 
-    const historySaved = await appendHistory(result.newHistory);
+    const historySaved = await appendHistory(historyWithObservation);
     if (!historySaved) {
       const latestSlots = await loadSlotsFromSupabase();
       setSlots(latestSlots);
@@ -1850,6 +1942,17 @@ const hora =
 const responsavel =
   cols[11]?.trim() || operator;
 
+const galpaoRaw = cols[12]?.trim() || "3";
+const galpao = galpaoRaw === "12" ? "12" : "3";
+const restricaoRaw = cols[13]?.trim().toLowerCase() || "nenhuma";
+const restricao =
+  galpao === "12"
+    ? "autorizacao"
+    : ["nenhuma", "teste", "autorizacao", "outra"].includes(restricaoRaw)
+      ? restricaoRaw
+      : "nenhuma";
+const observacao = cols[14]?.trim() || "";
+
 if (refRaw) {
   newRows.push({
     id: `ROW-${generateId()}`,
@@ -1868,6 +1971,9 @@ if (refRaw) {
     dataChacote,
     hora,
     responsavel,
+    galpao,
+    restricao,
+    observacao,
   });
 }
       }
@@ -1904,6 +2010,9 @@ if (refRaw) {
         minute: "2-digit",
       }),
       Responsavel: operator,
+      Galpao: "3",
+      Restricao: "nenhuma",
+      Observacao: "",
     },
   ];
 
@@ -2096,7 +2205,9 @@ if (refRaw) {
         "Quantidade_Pecas",
         "Tipo_Movimento",
         "Data_Chacote",
-        "Responsavel_Operacional"
+        "Responsavel_Operacional",
+        "Galpao",
+        "Observacao"
       ];
 
       const rows = exportData.map(h => [
@@ -2112,7 +2223,9 @@ if (refRaw) {
         String(h.quantidade),
         h.tipo,
         h.dataChacote || "",
-        h.responsavel
+        h.responsavel,
+        h.galpao || "3",
+        h.observacao || ""
       ]);
 
       const csvContent = [
@@ -2285,6 +2398,8 @@ if (refRaw) {
     setSearchRef("");
     setSearchDesc("");
     setFilterEstoque("");
+    setFilterGalpao("");
+    setSearchObservacao("");
     setSearchModulo("");
     setSearchPosicao("");
     setSearchPage(1);
@@ -2300,6 +2415,8 @@ if (refRaw) {
     const normalizedSearchRef = searchRef.trim().toLowerCase();
     const normalizedSearchDesc = searchDesc.trim().toLowerCase();
     const normFilterEst = filterEstoque ? filterEstoque.replace("E", "") : "";
+    const normalizedFilterGalpao = filterGalpao.trim();
+    const normalizedSearchObservacao = searchObservacao.trim().toLowerCase();
     const normalizedSearchModulo = searchModulo.replace(/^[RM]/i, "");
     const normalizedSearchPosicao = searchPosicao.replace(/^[RMG]/i, "").toUpperCase();
     const normalizedSearchPosicaoText = searchPosicao.trim().toLowerCase();
@@ -2315,6 +2432,14 @@ if (refRaw) {
 
       const matchesEstoque = normFilterEst
         ? s.estoque.replace("E", "") === normFilterEst
+        : true;
+
+      const matchesGalpao = normalizedFilterGalpao
+        ? String(s.galpao || "3") === normalizedFilterGalpao
+        : true;
+
+      const matchesObservacao = normalizedSearchObservacao
+        ? String(s.observacao || "").toLowerCase().includes(normalizedSearchObservacao)
         : true;
 
       const matchesModulo = normalizedSearchModulo
@@ -2341,6 +2466,8 @@ if (refRaw) {
         matchesRef &&
         matchesDesc &&
         matchesEstoque &&
+        matchesGalpao &&
+        matchesObservacao &&
         matchesModulo &&
         matchesPosicao
       );
@@ -2351,6 +2478,8 @@ if (refRaw) {
     searchRef,
     searchDesc,
     filterEstoque,
+    filterGalpao,
+    searchObservacao,
     searchModulo,
     searchPosicao,
     somenteAcimaPaletizacao
@@ -4101,7 +4230,7 @@ if (refRaw) {
                   </div>
                 </div>
 
-                <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-6 gap-4">
                   {appMode === "basico" ? (
                     <>
                       <div>
@@ -4212,6 +4341,30 @@ if (refRaw) {
                           <option value="E2">Estoque 2 (E2)</option>
                           <option value="E3">Estoque 3 (E3)</option>
                         </select>
+                      </div>
+
+                      <div>
+                        <label className="text-[10px] text-slate-450 font-bold block uppercase mb-1">Galpão</label>
+                        <select
+                          value={filterGalpao}
+                          onChange={(e) => { setFilterGalpao(e.target.value); setSearchPage(1); }}
+                          className="w-full border border-slate-300 bg-white rounded-lg p-2 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500 font-bold"
+                        >
+                          <option value="">Todos</option>
+                          <option value="3">Galpão 3</option>
+                          <option value="12">Galpão 12</option>
+                        </select>
+                      </div>
+
+                      <div>
+                        <label className="text-[10px] text-slate-450 font-bold block uppercase mb-1">Observação</label>
+                        <input
+                          type="text"
+                          value={searchObservacao}
+                          onChange={(e) => { setSearchObservacao(e.target.value); setSearchPage(1); }}
+                          placeholder="Buscar observação"
+                          className="w-full border border-slate-300 rounded-lg p-2 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500 font-bold"
+                        />
                       </div>
                     </>
                   )}
@@ -4523,8 +4676,56 @@ if (refRaw) {
                           type="text"
                           value={unitChacote}
                           onChange={(e) => setUnitChacote(e.target.value)}
-                          placeholder="Ex: 11/04, NT"
+                          placeholder="DD/MM/AAAA"
                           className="w-full bg-white border border-slate-300 rounded p-2 text-xs font-bold uppercase focus:outline-none text-slate-800 font-mono"
+                          inputMode="numeric"
+                        />
+                      </div>
+
+                      <div>
+                        <label className="text-[10px] text-slate-450 block font-bold mb-1 uppercase">Galpão</label>
+                        <select
+                          value={unitGalpao}
+                          onChange={(e) => {
+                            const value = e.target.value as Galpao;
+                            setUnitGalpao(value);
+                            if (value === "12") setUnitRestricao("autorizacao");
+                          }}
+                          className="w-full bg-white border border-slate-300 rounded p-2 text-xs font-bold text-slate-800 focus:outline-none"
+                        >
+                          <option value="3">Galpão 3</option>
+                          <option value="12">Galpão 12</option>
+                        </select>
+                        {unitGalpao === "12" && (
+                          <span className="mt-1 block text-[9px] font-black uppercase text-red-600">
+                            🔴 Solicitar autorização
+                          </span>
+                        )}
+                      </div>
+
+                      <div>
+                        <label className="text-[10px] text-slate-450 block font-bold mb-1 uppercase">Restrição</label>
+                        <select
+                          value={unitGalpao === "12" ? "autorizacao" : unitRestricao}
+                          onChange={(e) => setUnitRestricao(e.target.value as Restricao)}
+                          disabled={unitGalpao === "12"}
+                          className="w-full bg-white border border-slate-300 rounded p-2 text-xs font-bold text-slate-800 focus:outline-none disabled:bg-slate-100"
+                        >
+                          <option value="nenhuma">Nenhuma</option>
+                          <option value="teste">Teste — não separar</option>
+                          <option value="autorizacao">Solicitar autorização</option>
+                          <option value="outra">Outra restrição</option>
+                        </select>
+                      </div>
+
+                      <div>
+                        <label className="text-[10px] text-slate-450 block font-bold mb-1 uppercase">Observação</label>
+                        <textarea
+                          value={unitObservacao}
+                          onChange={(e) => setUnitObservacao(e.target.value)}
+                          placeholder="Observação do palete/movimentação"
+                          rows={2}
+                          className="w-full resize-none rounded border border-slate-300 bg-white p-2 text-xs font-semibold text-slate-800 focus:outline-none focus:ring-1 focus:ring-blue-500"
                         />
                       </div>
 
@@ -4697,7 +4898,7 @@ if (refRaw) {
 
                 {/* TABULAR ENTRY SYSTEM WITH ADVANCED DYNAMIC LAYOUT FIELD CORRECTIONS */}
                 <div className="overflow-x-auto pt-2">
-                  <div className="min-w-[1100px] border border-slate-350 rounded-xl overflow-hidden bg-slate-50 shadow-inner">
+                  <div className="min-w-[1550px] border border-slate-350 rounded-xl overflow-hidden bg-slate-50 shadow-inner">
                     <table className="w-full text-xs text-left border-collapse">
                       <thead>
                         <tr className="bg-slate-100 border-b border-slate-200 text-slate-600 text-[10px] uppercase font-bold tracking-wider">
@@ -4714,6 +4915,7 @@ if (refRaw) {
                               </div>
                             </th>
                             <th className="py-2.5 px-3 w-32">Data do Lançamento</th>
+                            <th className="py-2.5 px-3 w-28">Galpão</th>
                             <th className="py-2.5 px-3 w-36">
                                 <div className="flex flex-col gap-1">
                                   <span>Estoque</span>
@@ -4772,9 +4974,11 @@ if (refRaw) {
                             <th className="py-2.5 px-3 w-32">Data Chacote</th>
                             <th className="py-2.5 px-3 w-24">Hora</th>
                             <th className="py-2.5 px-3 w-32">Responsável</th>
+                            <th className="py-2.5 px-3 w-36">Restrição</th>
+                            <th className="py-2.5 px-3 w-48">Observação</th>
                             <th className="py-2.5 px-2 w-12 text-center">Remover</th>
                           </tr>
-                        
+
                         </thead>
                       <tbody className="divide-y divide-slate-150">
                         {lancamentoRowsFiltradas.map((row, index) => {
@@ -4796,6 +5000,24 @@ if (refRaw) {
                                   onKeyDown={handleLancamentoInputKeyDown}
                                   className="w-full border border-slate-300 rounded p-1 text-xs focus:ring-1 focus:ring-indigo-500 focus:outline-none"
                                 />
+                              </td>
+
+                              {/* Galpão */}
+                              <td className="py-2 px-2.5">
+                                <select
+                                  value={row.galpao || "3"}
+                                  onChange={(e) => {
+                                    const nextGalpao = e.target.value as Galpao;
+                                    updateRowField(row.id, "galpao", nextGalpao);
+                                    if (nextGalpao === "12") {
+                                      updateRowField(row.id, "restricao", "autorizacao");
+                                    }
+                                  }}
+                                  className="w-full border border-slate-300 rounded p-1 text-xs bg-white focus:ring-1 focus:ring-indigo-500 focus:outline-none font-bold"
+                                >
+                                  <option value="3">3</option>
+                                  <option value="12">12</option>
+                                </select>
                               </td>
 
                               {/* Estoque selector E1, E2, E3 */}
@@ -4947,6 +5169,33 @@ if (refRaw) {
                                     <option key={nome} value={nome} />
                                   ))}
                                 </datalist>
+                              </td>
+
+                              {/* Restrição */}
+                              <td className="py-2 px-2.5">
+                                <select
+                                  value={row.galpao === "12" ? "autorizacao" : (row.restricao || "nenhuma")}
+                                  onChange={(e) => updateRowField(row.id, "restricao", e.target.value as Restricao)}
+                                  disabled={row.galpao === "12"}
+                                  className="w-full border border-slate-300 rounded p-1 text-xs bg-white disabled:bg-slate-100 disabled:text-slate-500 focus:ring-1 focus:ring-indigo-500 focus:outline-none font-bold"
+                                >
+                                  <option value="nenhuma">Nenhuma</option>
+                                  <option value="teste">Teste — não separar</option>
+                                  <option value="autorizacao">Solicitar autorização</option>
+                                  <option value="outra">Outra restrição</option>
+                                </select>
+                              </td>
+
+                              {/* Observação */}
+                              <td className="py-2 px-2.5">
+                                <input
+                                  type="text"
+                                  value={row.observacao || ""}
+                                  placeholder="Observação"
+                                  onChange={(e) => updateRowField(row.id, "observacao", e.target.value)}
+                                  onKeyDown={handleLancamentoInputKeyDown}
+                                  className="w-full border border-slate-300 rounded p-1 text-xs focus:ring-1 focus:ring-indigo-500 focus:outline-none"
+                                />
                               </td>
 
                               {/* Remove button */}
@@ -5192,6 +5441,7 @@ if (refRaw) {
                           <th className="py-3.5 px-4">Data Registro</th>
                           <th className="py-3.5 px-4">Efetuado por</th>
                           <th className="py-3.5 px-4 font-mono">Estoque</th>
+                          <th className="py-3.5 px-4">Galpão</th>
                           <th className="py-3.5 px-4">Módulo / Rua</th>
                           <th className="py-3.5 px-4">Posição</th>
                           <th className="py-3.5 px-4 font-mono text-center">Referência</th>
@@ -5199,6 +5449,7 @@ if (refRaw) {
                           <th className="py-3.5 px-4 text-center">Tipo</th>
                           <th className="py-3.5 px-4 font-mono">Data Chacote</th>
                           <th className="py-3.5 px-4">Responsável Físico</th>
+                          <th className="py-3.5 px-4">Observação</th>
                           <th className="py-3.5 px-4">Hora</th>
 
                         </tr>
@@ -5212,6 +5463,7 @@ if (refRaw) {
                               <td className="py-3 px-4 font-mono text-slate-500">{h.dataLancamento}</td>
                               <td className="py-3 px-4 text-slate-800">{h.quemLancou}</td>
                               <td className="py-3 px-4 font-black text-slate-850 font-mono">{h.estoque.replace("E", "")}</td>
+                              <td className="py-3 px-4 font-bold text-slate-800">{h.galpao || "3"}</td>
                               <td className="py-3 px-4 font-bold font-mono text-slate-800">{h.modulo.replace(/^[RM]/i, "")}</td>
                               <td className="py-3 px-4 font-bold font-mono text-slate-700">{h.posicao || "—"}</td>
                               <td className="py-3 px-4 text-center">
@@ -5231,13 +5483,14 @@ if (refRaw) {
                               </td>
                               <td className="py-3 px-4 font-mono text-slate-500">{h.dataChacote || "—"}</td>
                               <td className="py-3 px-4 font-bold text-slate-650">{h.responsavel}</td>
+                              <td className="py-3 px-4 max-w-[260px] truncate text-slate-500">{h.observacao || "—"}</td>
                               <td className="py-3 px-4 font-mono text-slate-500">{h.hora}</td>
 
                             </tr>
                           ))
                         ) : (
                           <tr>
-                            <td colSpan={12} className="py-20 text-center text-slate-400 font-semibold bg-slate-50">
+                            <td colSpan={13} className="py-20 text-center text-slate-400 font-semibold bg-slate-50">
                               Nenhuma movimentação registrada no Supabase corresponde aos filtros selecionados.
                             </td>
                           </tr>
