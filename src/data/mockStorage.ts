@@ -20,7 +20,7 @@ const sameNumericModule = (left: string, right: string): boolean => {
  * - Data do lançamento: mandatory
  * - Estoque: mandatory (1, 2, 3)
  * - Módulo/Rua: mandatory (without R/M prefix under the hood, but normalized automatically if entered)
- *    Estoque 1: 1 to 22
+ *    Estoque 1: ruas cadastradas e ativas na configuração física
  *    Estoque 2: 1 to 172
  *    Estoque 3: 1 to 112
  * - Posição: mandatory for Estoque 2 and 3 ONLY
@@ -44,7 +44,8 @@ export function validateLancamentoRow(
   rowNumber: number,
   productsList: Product[],
   isAdvanced = false,
-  currentSlots?: WarehouseSlot[]
+  currentSlots?: WarehouseSlot[],
+  e1Capacity: Record<string, number> = E1_CAPACITY
 ): string[] {
   const errors: string[] = [];
 
@@ -69,8 +70,8 @@ export function validateLancamentoRow(
     if (isNaN(modNum) || modNum <= 0) {
       errors.push(`Linha ${rowNumber}: Módulo/Rua deve ser um número inteiro.`);
     } else {
-      if (est === "1" && (modNum < 1 || modNum > 22)) {
-        errors.push(`Linha ${rowNumber}: Para o Estoque 1, o campo módulo/rua deve ser de 1 a 22.`);
+      if (est === "1" && !Object.prototype.hasOwnProperty.call(e1Capacity, String(modNum))) {
+        errors.push(`Linha ${rowNumber}: o corredor ${mod} não está ativo/cadastrado no Estoque 1.`);
       } else if (est === "2" && (modNum < 1 || modNum > 172)) {
         errors.push(`Linha ${rowNumber}: Para o Estoque 2, o módulo deve ser de 1 a 172.`);
       } else if (est === "3" && (modNum < 1 || modNum > 112)) {
@@ -104,12 +105,6 @@ export function validateLancamentoRow(
     if (pos) {
       errors.push(`Linha ${rowNumber}: Estoque 1 não possui posições definidas. Deixe o campo Posição vazio.`);
     }
-  }
-
-  if (currentSlots && est === "1" && mod && !Object.prototype.hasOwnProperty.call(E1_CAPACITY, String(Number(mod)))) {
-    errors.push(
-      `Linha ${rowNumber}: o corredor ${mod} não está cadastrado no Estoque 1.`
-    );
   }
 
   // 5. Referência (SKU)
@@ -307,7 +302,8 @@ export function processLancamentosInSequence(
   batchDate: string,
   allDivergencias: Divergencia[],
   productsList: Product[],
-  isAdvanced = false
+  isAdvanced = false,
+  e1Capacity: Record<string, number> = E1_CAPACITY
 ): ProcessResult {
   const slots = JSON.parse(JSON.stringify(currentSlots)) as WarehouseSlot[];
   const newHistory: HistoricoMov[] = [];

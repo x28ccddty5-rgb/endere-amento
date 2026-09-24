@@ -18,7 +18,8 @@ import {
   AppMode, 
   Product,
   Galpao,
-  Restricao
+  Restricao,
+  WarehouseLayoutEntry
 } from "./types";
 import { PRODUCT_CATALOG, findProductInList } from "./data/products";
 import { normalizeRole, canExecuteOperations, isAdmin, isReadOnlyRole } from "./constants/permissions";
@@ -31,6 +32,8 @@ import { MobileShell } from "./components/mobile/MobileShell";
 import { readOfflineSnapshot, saveOfflineSnapshot } from "./lib/offlineCache";
 import { getPhysicalAddressKey } from "./lib/slotUtils";
 import { BaseDeDadosPanel } from "./components/BaseDeDadosPanel";
+import { WarehouseLayoutPanel } from "./components/WarehouseLayoutPanel";
+import { getDefaultE1Layout, getE1CapacityMap, getE1TotalCapacity, loadE1Layout, saveE1Layout } from "./lib/warehouseLayout";
 import { 
   LayoutDashboard, 
   Search, 
@@ -53,7 +56,8 @@ import {
   User,
   LogOut,
   Users,
-  UserPlus
+  UserPlus,
+  Settings2
 } from "lucide-react";
 
 const HISTORY_PAGE_SIZE = 1000;
@@ -208,6 +212,21 @@ interface HistoryLoadOptions {
   endDate?: string;
 }
 
+const mapHistoryRowFromSupabase = (row: any): HistoricoMov => {
+  const { slot_id, slotId: legacySlotId, ...rest } = row ?? {};
+
+  return {
+    ...rest,
+    slotId: slot_id ?? legacySlotId ?? undefined,
+  } as HistoricoMov;
+};
+
+const mapHistoryRowsForSupabase = (rows: HistoricoMov[]) =>
+  rows.map(({ slotId, ...row }) => ({
+    ...row,
+    slot_id: slotId ?? null,
+  }));
+
 /**
  * Carrega histórico por período, paginado para não depender do limite padrão do Supabase.
  * Sem período, mantém o comportamento de buscar todos os registros apenas quando isso
@@ -222,7 +241,7 @@ const loadHistoryFromSupabaseUncached = async (
   while (true) {
     let query = supabase
       .from("history")
-      .select("id,dataLancamento,quemLancou,data,estoque,modulo,posicao,referencia,quantidade,tipo,dataChacote,hora,responsavel,galpao,observacao,slotId,restricao")
+      .select("id,dataLancamento,quemLancou,data,estoque,modulo,posicao,referencia,quantidade,tipo,dataChacote,hora,responsavel,galpao,observacao,slot_id,restricao")
       .order("data", { ascending: false })
       .order("hora", { ascending: false })
       .range(from, from + HISTORY_PAGE_SIZE - 1);
@@ -252,7 +271,7 @@ const loadHistoryFromSupabaseUncached = async (
     from += HISTORY_PAGE_SIZE;
   }
 
-  const result = allData as HistoricoMov[];
+  const result = allData.map(mapHistoryRowFromSupabase);
   await saveOfflineSnapshot("history", result);
   return result;
 };
@@ -296,7 +315,7 @@ const loadLatestHistoryRecord = (): Promise<HistoricoMov | null> => {
   latestHistoryLoadPromise = (async (): Promise<HistoricoMov | null> => {
     const { data, error } = await supabase
       .from("history")
-      .select("id,dataLancamento,quemLancou,data,estoque,modulo,posicao,referencia,quantidade,tipo,dataChacote,hora,responsavel,galpao,observacao,slotId,restricao")
+      .select("id,dataLancamento,quemLancou,data,estoque,modulo,posicao,referencia,quantidade,tipo,dataChacote,hora,responsavel,galpao,observacao,slot_id,restricao")
       .lte("data", getTodayIsoDate())
       .order("data", { ascending: false })
       .order("hora", { ascending: false })
@@ -308,7 +327,7 @@ const loadLatestHistoryRecord = (): Promise<HistoricoMov | null> => {
       return null;
     }
 
-    return (data as HistoricoMov | null) || null;
+    return data ? mapHistoryRowFromSupabase(data) : null;
   })();
 
   latestHistoryLoadPromise.then(
@@ -330,7 +349,7 @@ const appendHistoryToSupabase = async (
 
   const { error } = await supabase
     .from("history")
-    .insert(historyData);
+    .insert(mapHistoryRowsForSupabase(historyData));
 
   if (error) {
     console.error("Erro ao inserir histórico:", error);
@@ -341,6 +360,21 @@ const appendHistoryToSupabase = async (
 };
 
 let divergenciasLoadPromise: Promise<Divergencia[]> | null = null;
+
+const mapDivergenciaRowFromSupabase = (row: any) => {
+  const { slot_id, slotId: legacySlotId, ...rest } = row ?? {};
+
+  return {
+    ...rest,
+    slotId: slot_id ?? legacySlotId ?? undefined,
+  };
+};
+
+const mapDivergenciasForSupabase = (rows: Divergencia[]) =>
+  rows.map(({ slotId, ...row }) => ({
+    ...row,
+    slot_id: slotId ?? null,
+  }));
 
 const normalizeDivergenciaRow = (row: any): Divergencia | null => {
   const rawStatus = String(row?.status ?? "").trim().toLowerCase();
@@ -356,7 +390,7 @@ const normalizeDivergenciaRow = (row: any): Divergencia | null => {
   }
 
   return {
-    ...row,
+    ...mapDivergenciaRowFromSupabase(row),
     status,
   } as Divergencia;
 };
@@ -424,7 +458,7 @@ const saveDivergenciasToSupabase = async (
 
   const { error } = await supabase
     .from("divergencias")
-    .upsert(divergenciasData);
+    .upsert(mapDivergenciasForSupabase(divergenciasData));
 
   if (error) {
     console.error("Erro ao salvar divergências:", error);
@@ -759,6 +793,29 @@ useEffect(() => {
 }, [authUserId]);
 
 useEffect(() => {
+  if (!authUserId) return;
+
+  let cancelled = false;
+
+  const loadLayout = async () => {
+    setE1LayoutLoading(true);
+    const result = await loadE1Layout();
+
+    if (cancelled) return;
+
+    setE1Layout(result.data);
+    setE1LayoutError(result.error);
+    setE1LayoutLoading(false);
+  };
+
+  loadLayout();
+
+  return () => {
+    cancelled = true;
+  };
+}, [authUserId]);
+
+useEffect(() => {
   if (activeTab !== "dashboard" && activeTab !== "histórico" && activeTab !== "ai") {
     return;
   }
@@ -1034,6 +1091,10 @@ const deleteProduct = async (
 
   // --- CORE SYSTEM DATA PERSISTENCE ---
   const [slots, setSlots] = useState<WarehouseSlot[]>([]);
+  const [e1Layout, setE1Layout] = useState<WarehouseLayoutEntry[]>(() => getDefaultE1Layout());
+  const [e1LayoutLoading, setE1LayoutLoading] = useState(false);
+  const [e1LayoutSaving, setE1LayoutSaving] = useState(false);
+  const [e1LayoutError, setE1LayoutError] = useState<string | null>(null);
 
   const [history, setHistory] = useState<HistoricoMov[]>([]);
 
@@ -1058,6 +1119,33 @@ const deleteProduct = async (
     }
 
     return saved;
+  };
+
+  const handleSaveE1Layout = async (
+    entries: WarehouseLayoutEntry[]
+  ): Promise<boolean> => {
+    if (!authUserId || !isAdmin(currentUser?.role)) {
+      alert("Somente usuários Administrador podem alterar a configuração física.");
+      return false;
+    }
+
+    setE1LayoutSaving(true);
+
+    const result = await saveE1Layout(entries, authUserId);
+
+    if (result.error || !result.data) {
+      setE1LayoutSaving(false);
+      alert(
+        `Não foi possível salvar a configuração física do Estoque 1.\n\n${result.error || "Erro desconhecido."}`
+      );
+      return false;
+    }
+
+    setE1Layout(result.data);
+    setE1LayoutError(null);
+    setE1LayoutSaving(false);
+    alert("Configuração física do Estoque 1 salva com sucesso.");
+    return true;
   };
 
   const appendHistory = async (newMovements: HistoricoMov[]): Promise<boolean> => {
@@ -1346,10 +1434,13 @@ const deleteProduct = async (
       productsList.map(product => [product.referencia, product])
     );
 
+    const activeCapacityMap = getE1CapacityMap(e1Layout);
+
     return slots
       .filter(
         s =>
           s.estoque === "1" &&
+          activeCapacityMap[String(Number(s.modulo))] !== undefined &&
           s.referencia &&
           s.saldo > 0
       )
@@ -1362,7 +1453,7 @@ const deleteProduct = async (
 
         return total + calcularPaletes(slot.saldo, produto.paletizacao);
       }, 0);
-  }, [slots, productsList]);
+  }, [slots, productsList, e1Layout]);
   
   const [appMode, setAppMode] = useState<AppMode>(() => {
     const saved = localStorage.getItem("eb_mode");
@@ -1386,6 +1477,7 @@ const deleteProduct = async (
   const [searchDesc, setSearchDesc] = useState("");
   const [filterEstoque, setFilterEstoque] = useState("");
   const [filterGalpao, setFilterGalpao] = useState("");
+  const [filterRestricao, setFilterRestricao] = useState("");
   const [searchObservacao, setSearchObservacao] = useState("");
   const [searchModulo, setSearchModulo] = useState("");
   const [searchPosicao, setSearchPosicao] = useState("");
@@ -1760,7 +1852,9 @@ if (
 
   // Executing batch launches with Travas (blocking validators)
   const handleLancarLote = async () => {
-    // Perform validators for each active field
+    // Perform validators for each active field. Operational conflicts such as
+    // occupied positions and restriction mismatches are handled by the
+    // sequential processor as divergences, so they must not abort the batch.
     const activeData = lancamentoRows.filter(r => r.referencia.trim() !== "");
     if (activeData.length === 0) {
       alert("Por favor, preencha pelo menos um lançamento contendo código SKU válido.");
@@ -1768,10 +1862,19 @@ if (
     }
 
     try {
-      // Capture errors
+      // Capture only structural/input errors here. Physical conflicts are
+      // business events and are intentionally delegated to
+      // processLancamentosInSequence().
       let allErrors: string[] = [];
       activeData.forEach((row, index) => {
-        const rowErrors = validateLancamentoRow(row, index + 1, productsList, appMode === "avancado", slots);
+        const rowErrors = validateLancamentoRow(
+          row,
+          index + 1,
+          productsList,
+          appMode === "avancado",
+          slots,
+          getE1CapacityMap(e1Layout)
+        );
         allErrors = [...allErrors, ...rowErrors];
 
         // A hora pertence à movimentação registrada na folha.
@@ -1784,55 +1887,16 @@ if (
         }
 
         const rowGalpao = row.galpao || "3";
-        const rowRestricao = rowGalpao === "12" ? "autorizacao" : (row.restricao || "nenhuma");
 
+        // Galpão 12 continua sendo uma trava estrutural da entrada:
+        // ele exige explicitamente a restrição "autorizacao".
         if (rowGalpao === "12" && row.restricao !== "autorizacao") {
           allErrors.push(
             `Linha ${index + 1}: Galpão 12 exige Restrição = Solicitar autorização.`
           );
         }
-
-        if (row.tipo === "Entrada" && ["E2", "E3"].includes(row.estoque)) {
-          const estVal = row.estoque.replace(/^E/, "");
-          const modVal = row.modulo.replace(/^[RM]/i, "");
-          const addressSlots = slots.filter(
-            slot =>
-              slot.estoque === estVal &&
-              slot.modulo === modVal &&
-              slot.posicao === row.posicao &&
-              slot.saldo > 0 &&
-              Boolean(slot.referencia)
-          );
-
-          const rowRef = row.referencia.trim().toUpperCase();
-          const hasExactItem = addressSlots.some(
-            slot =>
-              slot.referencia.toUpperCase() === rowRef &&
-              (slot.restricao || "nenhuma") === rowRestricao
-          );
-          const hasNormal = addressSlots.some(
-            slot => (slot.restricao || "nenhuma") === "nenhuma"
-          );
-          const hasRestricted = addressSlots.some(
-            slot => (slot.restricao || "nenhuma") !== "nenhuma"
-          );
-
-          if (
-            (rowRestricao === "nenhuma" && addressSlots.length > 0 && !hasExactItem) ||
-            (rowRestricao === "nenhuma" && hasRestricted) ||
-            (rowRestricao !== "nenhuma" && hasNormal)
-          ) {
-            allErrors.push(
-              rowRestricao === "nenhuma"
-                ? `Linha ${index + 1}: a posição já possui outro item. ` +
-                  "Estoque normal sem restrição não pode compartilhar a posição com outro SKU."
-                : `Linha ${index + 1}: a posição já possui estoque sem restrição. ` +
-                  "Não é permitido misturar paletes normais e restritos na mesma posição."
-            );
-          }
-        }
-
       });
+
       if (allErrors.length > 0) {
         alert(`O lote contém inconsistências de validação e não pôde ser lançado:\n\n${allErrors.slice(0, 10).join("\n")}${allErrors.length > 10 ? `\n...e mais ${allErrors.length - 10} travas violadas.` : ""}`);
         return;
@@ -1844,7 +1908,16 @@ if (
         newDivergencias,
         processedCount,
         errorCount
-      } = processLancamentosInSequence(activeData, slots, operator, launchDate, divergencias, productsList, appMode === "avancado");
+      } = processLancamentosInSequence(
+        activeData,
+        slots,
+        operator,
+        launchDate,
+        divergencias,
+        productsList,
+        appMode === "avancado",
+        getE1CapacityMap(e1Layout)
+      );
 
       const updatedDivergencias = [...newDivergencias, ...divergencias];
 
@@ -1897,6 +1970,7 @@ if (
       );
     }
   };
+
   const handleUnitaryLaunch = async (
     type: "Entrada" | "Saída",
     mobileData?: {
@@ -1953,7 +2027,8 @@ if (
       1,
       productsList,
       appMode === "avancado",
-      slots
+      slots,
+      getE1CapacityMap(e1Layout)
     );
 
     if (errors.length > 0) {
@@ -2010,7 +2085,8 @@ if (
       launchDate,
       divergencias,
       productsList,
-      appMode === "avancado"
+      appMode === "avancado",
+      getE1CapacityMap(e1Layout)
     );
 
     if (processedCount === 0 && newDivergencias.length === 0) {
@@ -2691,6 +2767,7 @@ if (refRaw) {
     const normalizedSearchDesc = searchDesc.trim().toLowerCase();
     const normFilterEst = filterEstoque ? filterEstoque.replace("E", "") : "";
     const normalizedFilterGalpao = filterGalpao.trim();
+    const normalizedFilterRestricao = filterRestricao.trim().toLowerCase();
     const normalizedSearchObservacao = searchObservacao.trim().toLowerCase();
     const normalizedSearchModulo = searchModulo.replace(/^[RM]/i, "");
     const normalizedSearchPosicao = searchPosicao.replace(/^[RMG]/i, "").toUpperCase();
@@ -2711,6 +2788,10 @@ if (refRaw) {
 
       const matchesGalpao = normalizedFilterGalpao
         ? String(s.galpao || "3") === normalizedFilterGalpao
+        : true;
+
+      const matchesRestricao = normalizedFilterRestricao
+        ? String(s.restricao || "nenhuma").trim().toLowerCase() === normalizedFilterRestricao
         : true;
 
       const matchesObservacao = normalizedSearchObservacao
@@ -2742,6 +2823,7 @@ if (refRaw) {
         matchesDesc &&
         matchesEstoque &&
         matchesGalpao &&
+        matchesRestricao &&
         matchesObservacao &&
         matchesModulo &&
         matchesPosicao
@@ -2754,6 +2836,7 @@ if (refRaw) {
     searchDesc,
     filterEstoque,
     filterGalpao,
+    filterRestricao,
     searchObservacao,
     searchModulo,
     searchPosicao,
@@ -4003,6 +4086,10 @@ if (refRaw) {
       return false;
     }
 
+    if (tab === "configuracao") {
+      return isAdmin(currentUser.role);
+    }
+
     switch (role) {
       case "administrador":
         return true;
@@ -4174,6 +4261,20 @@ if (refRaw) {
             >
               <Database className="w-4 h-4 shrink-0" />
               <span>BASE DE DADOS</span>
+            </button>
+          )}
+
+          {canAccessTab("configuracao") && (
+            <button
+              onClick={() => setActiveTab("configuracao")}
+              className={`w-full flex items-center space-x-3 px-4 py-2 text-xs font-bold transition-all ${
+                activeTab === "configuracao"
+                  ? "bg-blue-600/15 border-l-4 border-blue-500 text-blue-400 font-bold text-xs"
+                  : "hover:bg-slate-800 text-slate-350"
+              }`}
+            >
+              <Settings2 className="w-4 h-4 shrink-0" />
+              <span>CONFIGURAÇÃO ESTOQUE</span>
             </button>
           )}
 
@@ -4368,6 +4469,7 @@ if (refRaw) {
                 divergencias={divergencias}
                 productsList={productsList}
                 occupiedPalletsE1={occupiedPalletsE1}
+                e1CapacityTotal={getE1TotalCapacity(e1Layout)}
                 appMode={appMode}
                 canPerformActions={canExecuteOperations(currentUser?.role)}
               />
@@ -4391,7 +4493,7 @@ if (refRaw) {
                         let occupied = 0;
                         
                         if (est === "1") {
-                          total = 657;
+                          total = getE1TotalCapacity(e1Layout);
                           occupied = occupiedPalletsE1;
                         }
                         
@@ -4632,6 +4734,21 @@ if (refRaw) {
                           <option value="">Todos</option>
                           <option value="3">Galpão 3</option>
                           <option value="12">Galpão 12</option>
+                        </select>
+                      </div>
+
+                      <div>
+                        <label className="text-[10px] text-slate-450 font-bold block uppercase mb-1">Restrição</label>
+                        <select
+                          value={filterRestricao}
+                          onChange={(e) => { setFilterRestricao(e.target.value); setSearchPage(1); }}
+                          className="w-full border border-slate-300 bg-white rounded-lg p-2 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500 font-bold"
+                        >
+                          <option value="">Todas</option>
+                          <option value="nenhuma">Nenhuma</option>
+                          <option value="teste">Teste</option>
+                          <option value="autorizacao">Solicitar autorização</option>
+                          <option value="outra">Outro motivo</option>
                         </select>
                       </div>
 
@@ -5194,10 +5311,11 @@ if (refRaw) {
                 )}
 
                 {/* TABULAR ENTRY SYSTEM WITH ADVANCED DYNAMIC LAYOUT FIELD CORRECTIONS */}
-                <div className="overflow-x-auto pt-2">
-                  <div className="min-w-[1550px] border border-slate-350 rounded-xl overflow-hidden bg-slate-50 shadow-inner">
+                <div className="pt-2">
+                  <div className="max-h-[calc(100vh-24rem)] min-h-[18rem] overflow-auto border border-slate-350 rounded-xl bg-slate-50 shadow-inner">
+                    <div className="min-w-[1550px]">
                     <table className="w-full text-xs text-left border-collapse">
-                      <thead>
+                      <thead className="sticky top-0 z-20 shadow-sm">
                         <tr className="bg-slate-100 border-b border-slate-200 text-slate-600 text-[10px] uppercase font-bold tracking-wider">
                             <th className="w-20 text-center">
                               <div className="flex flex-col gap-1">
@@ -5509,6 +5627,7 @@ if (refRaw) {
                         })}
                       </tbody>
                     </table>
+                    </div>
                   </div>
                 </div>
 
@@ -5829,6 +5948,19 @@ if (refRaw) {
           />
           )}
 
+          {activeTab === "configuracao" && (
+            <WarehouseLayoutPanel
+              layout={e1Layout}
+              slots={slots}
+              productsList={productsList}
+              currentUser={currentUser}
+              loading={e1LayoutLoading}
+              saving={e1LayoutSaving}
+              loadError={e1LayoutError}
+              onSave={handleSaveE1Layout}
+            />
+          )}
+
           {/* TAB 7: ENDEREÇO CORREDOR */}
           {activeTab === "corredor" && (
             <AisleStoragePanel
@@ -5883,6 +6015,7 @@ if (refRaw) {
                 }}
               productsList={productsList}
               currentUser={currentUser}
+              e1Layout={e1Layout}
               />
             </div>
           )}

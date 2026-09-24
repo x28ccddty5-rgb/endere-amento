@@ -1,6 +1,16 @@
 export type Galpao = "3" | "12";
 export type Restricao = "nenhuma" | "teste" | "autorizacao" | "outra";
 
+
+export interface WarehouseLayoutEntry {
+  id: string;
+  estoque: string;
+  modulo: string;
+  capacidade: number;
+  ativo: boolean;
+  updatedAt?: string;
+}
+
 export interface Product {
   referencia: string;
   descricao: string;

@@ -14,13 +14,7 @@ export const E1_CAPACITY: Record<string, number> = {
   "12": 30,
   "13": 33,
   "14": 33,
-  "15": 30,
-  "16": 27,
-  "17": 33,
-  "18": 33,
-  "19": 33,
-  "20": 33,
-  "21": 30
+  "15": 30
 };
 
 export const E2_BLOCKED_POSITIONS: Record<number, string[]> = {

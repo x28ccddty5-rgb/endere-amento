@@ -2,13 +2,13 @@ import React, { useState } from "react";
 import { calcularPaletes } from "../lib/palletUtils";
 import { Search } from "lucide-react";
 import { jsPDF } from "jspdf";
-import { WarehouseSlot, Product } from "../types";
+import { WarehouseLayoutEntry, WarehouseSlot, Product } from "../types";
 import { Map, Info, User, Calendar, Sliders, Check, Hammer, Package } from "lucide-react";
 import { VerticalModuleMap } from "./VerticalModuleMap";
 import { isAdmin } from "../constants/permissions";
+import { getE1ActiveLayout, getE1CapacityMap, getE1TotalCapacity } from "../lib/warehouseLayout";
 
 import {
-  E1_CAPACITY,
   E2_BLOCKED_POSITIONS,
   E3_BLOCKED_POSITIONS,
   E3_EXTRA_POSITIONS
@@ -19,13 +19,15 @@ interface InteractiveMapaProps {
   onQuickUpdateSlot: (updatedSlot: WarehouseSlot) => void;
   productsList: Product[];
   currentUser: any;
+  e1Layout: WarehouseLayoutEntry[];
 }
 
 export const InteractiveMapa: React.FC<InteractiveMapaProps> = ({
   slots,
   onQuickUpdateSlot,
   productsList,
-  currentUser
+  currentUser,
+  e1Layout
 }) => {
 
   const isReadOnly = !isAdmin(currentUser?.role);
@@ -49,8 +51,9 @@ export const InteractiveMapa: React.FC<InteractiveMapaProps> = ({
   const [editChacote, setChacote] = useState("");
   const [editOperator, setEditOperator] = useState("");
 
-  const capacidadeTotalE1 = Object.values(E1_CAPACITY)
-  .reduce((total, capacidade) => total + capacidade, 0);
+  const activeE1Layout = getE1ActiveLayout(e1Layout);
+  const e1CapacityMap = getE1CapacityMap(e1Layout);
+  const capacidadeTotalE1 = getE1TotalCapacity(e1Layout);
   
   const activeSlots = slots.filter(s => s.estoque === selectedEstoque);
   const selectedSlot = slots.find(s => s.id === selectedSlotId);
@@ -83,13 +86,13 @@ export const InteractiveMapa: React.FC<InteractiveMapaProps> = ({
 
   const capacidadeRuaSelecionada =
     selectedSlot?.estoque === "1"
-      ? E1_CAPACITY[selectedSlot.modulo] || 33
+      ? e1CapacityMap[String(Number(selectedSlot.modulo))] || 33
       : 0;
   const livresRua =
   capacidadeRuaSelecionada - paletesRua;
   
   // Lists definitions (plain numbers!)
-  const e1Ruas = Array.from({ length: 21 }, (_, i) => String(i + 1));
+  const e1Ruas = activeE1Layout.map(entry => String(Number(entry.modulo)));
   
   const e2Positions = ["A1", "B1", "C1", "D1", "E1", "A2", "B2", "C2", "D2", "E2"];
   const e3Positions = ["A1", "B1", "C1", "D1", "E1", "F1", "A2", "B2", "C2", "D2", "E2", "F2"];
@@ -417,6 +420,7 @@ if (estoque === "2") {
   .filter(
     s =>
       s.estoque === "1" &&
+      e1CapacityMap[String(Number(s.modulo))] !== undefined &&
       s.referencia &&
       s.saldo > 0
   )
@@ -567,7 +571,7 @@ if (estoque === "2") {
         {/* LAYOUT MAP VIEWER */}
         <div className="overflow-x-auto pt-2">
           {selectedEstoque === "1" ? (
-            /* E1 GRID VIEWER: 22 RUAS */
+            /* E1 GRID VIEWER: ruas ativas na configuração física */
             <div className="space-y-4">
               <span className="text-xs font-bold text-slate-500 block">MAPA DE RUAS 1 (Selecione uma rua para inspecionar):</span>
               <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-6 gap-3">
@@ -601,7 +605,7 @@ if (estoque === "2") {
                 
                   }, 0);
                 
-                const capacidadeRua = E1_CAPACITY[rua] || 33;
+                const capacidadeRua = e1CapacityMap[String(Number(rua))] || 33;
 
                 const percentualOcupacao = Math.round(
                 (ocupacaoReal / capacidadeRua) * 100
@@ -1071,9 +1075,16 @@ if (estoque === "2") {
                       
                             return (
                       
-                              <div
+                              <button
+                                type="button"
                                 key={slot.id}
-                                className="bg-slate-50 border border-slate-200 rounded-lg p-2"
+                                onClick={() => handleSelectSlot(slot)}
+                                className={`w-full text-left bg-slate-50 border rounded-lg p-2 transition ${
+                                  selectedSlotId === slot.id
+                                    ? "border-blue-400 ring-2 ring-blue-100 bg-blue-50/60"
+                                    : "border-slate-200 hover:border-blue-300 hover:bg-white"
+                                }`}
+                                title={`Selecionar SKU ${slot.referencia} para correção`}
                               >
                       
                                 <div className="flex justify-between items-center">
@@ -1096,7 +1107,7 @@ if (estoque === "2") {
                                   {slot.saldo.toLocaleString()} peças
                                 </div>
                       
-                              </div>
+                              </button>
                             );
                 
                           })}

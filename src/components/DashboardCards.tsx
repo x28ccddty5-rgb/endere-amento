@@ -79,6 +79,7 @@ interface DashboardCardsProps {
   divergencias: Divergencia[];
   productsList: any[];
   occupiedPalletsE1: number;
+  e1CapacityTotal: number;
   appMode?: string;
   canPerformActions?: boolean;
 }
@@ -89,6 +90,7 @@ export const DashboardCards: React.FC<DashboardCardsProps> = ({
   divergencias,
   productsList,
   occupiedPalletsE1,
+  e1CapacityTotal,
   appMode,
   canPerformActions = false
 }) => {
@@ -106,7 +108,7 @@ export const DashboardCards: React.FC<DashboardCardsProps> = ({
   const [selectedDays, setSelectedDays] = useState(7);
   
   // 1. Calculate slot statuses
-  const totalSlotsE1 = 657;
+  const totalSlotsE1 = e1CapacityTotal;
   const totalSlotsE2 = 1373;
   const totalSlotsE3 = 1288;
   const totalSlots = totalSlotsE1 + totalSlotsE2 + totalSlotsE3;
