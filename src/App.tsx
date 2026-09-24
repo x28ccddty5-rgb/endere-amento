@@ -208,6 +208,21 @@ interface HistoryLoadOptions {
   endDate?: string;
 }
 
+const mapHistoryRowFromSupabase = (row: any): HistoricoMov => {
+  const { slot_id, slotId: legacySlotId, ...rest } = row ?? {};
+
+  return {
+    ...rest,
+    slotId: slot_id ?? legacySlotId ?? undefined,
+  } as HistoricoMov;
+};
+
+const mapHistoryRowsForSupabase = (rows: HistoricoMov[]) =>
+  rows.map(({ slotId, ...row }) => ({
+    ...row,
+    slot_id: slotId ?? null,
+  }));
+
 /**
  * Carrega histórico por período, paginado para não depender do limite padrão do Supabase.
  * Sem período, mantém o comportamento de buscar todos os registros apenas quando isso
@@ -222,7 +237,7 @@ const loadHistoryFromSupabaseUncached = async (
   while (true) {
     let query = supabase
       .from("history")
-      .select("id,dataLancamento,quemLancou,data,estoque,modulo,posicao,referencia,quantidade,tipo,dataChacote,hora,responsavel,galpao,observacao,slotId,restricao")
+      .select("id,dataLancamento,quemLancou,data,estoque,modulo,posicao,referencia,quantidade,tipo,dataChacote,hora,responsavel,galpao,observacao,slot_id,restricao")
       .order("data", { ascending: false })
       .order("hora", { ascending: false })
       .range(from, from + HISTORY_PAGE_SIZE - 1);
@@ -252,7 +267,7 @@ const loadHistoryFromSupabaseUncached = async (
     from += HISTORY_PAGE_SIZE;
   }
 
-  const result = allData as HistoricoMov[];
+  const result = allData.map(mapHistoryRowFromSupabase);
   await saveOfflineSnapshot("history", result);
   return result;
 };
@@ -296,7 +311,7 @@ const loadLatestHistoryRecord = (): Promise<HistoricoMov | null> => {
   latestHistoryLoadPromise = (async (): Promise<HistoricoMov | null> => {
     const { data, error } = await supabase
       .from("history")
-      .select("id,dataLancamento,quemLancou,data,estoque,modulo,posicao,referencia,quantidade,tipo,dataChacote,hora,responsavel,galpao,observacao,slotId,restricao")
+      .select("id,dataLancamento,quemLancou,data,estoque,modulo,posicao,referencia,quantidade,tipo,dataChacote,hora,responsavel,galpao,observacao,slot_id,restricao")
       .lte("data", getTodayIsoDate())
       .order("data", { ascending: false })
       .order("hora", { ascending: false })
@@ -308,7 +323,7 @@ const loadLatestHistoryRecord = (): Promise<HistoricoMov | null> => {
       return null;
     }
 
-    return (data as HistoricoMov | null) || null;
+    return data ? mapHistoryRowFromSupabase(data) : null;
   })();
 
   latestHistoryLoadPromise.then(
@@ -330,7 +345,7 @@ const appendHistoryToSupabase = async (
 
   const { error } = await supabase
     .from("history")
-    .insert(historyData);
+    .insert(mapHistoryRowsForSupabase(historyData));
 
   if (error) {
     console.error("Erro ao inserir histórico:", error);
@@ -341,6 +356,21 @@ const appendHistoryToSupabase = async (
 };
 
 let divergenciasLoadPromise: Promise<Divergencia[]> | null = null;
+
+const mapDivergenciaRowFromSupabase = (row: any) => {
+  const { slot_id, slotId: legacySlotId, ...rest } = row ?? {};
+
+  return {
+    ...rest,
+    slotId: slot_id ?? legacySlotId ?? undefined,
+  };
+};
+
+const mapDivergenciasForSupabase = (rows: Divergencia[]) =>
+  rows.map(({ slotId, ...row }) => ({
+    ...row,
+    slot_id: slotId ?? null,
+  }));
 
 const normalizeDivergenciaRow = (row: any): Divergencia | null => {
   const rawStatus = String(row?.status ?? "").trim().toLowerCase();
@@ -356,7 +386,7 @@ const normalizeDivergenciaRow = (row: any): Divergencia | null => {
   }
 
   return {
-    ...row,
+    ...mapDivergenciaRowFromSupabase(row),
     status,
   } as Divergencia;
 };
@@ -424,7 +454,7 @@ const saveDivergenciasToSupabase = async (
 
   const { error } = await supabase
     .from("divergencias")
-    .upsert(divergenciasData);
+    .upsert(mapDivergenciasForSupabase(divergenciasData));
 
   if (error) {
     console.error("Erro ao salvar divergências:", error);
