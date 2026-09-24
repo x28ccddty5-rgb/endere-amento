@@ -29,6 +29,7 @@ import { AisleStoragePanel } from "./components/AisleStoragePanel";
 import { DivergenciasPanel } from "./components/DivergenciasPanel";
 import { MobileShell } from "./components/mobile/MobileShell";
 import { readOfflineSnapshot, saveOfflineSnapshot } from "./lib/offlineCache";
+import { getPhysicalAddressKey } from "./lib/slotUtils";
 import { BaseDeDadosPanel } from "./components/BaseDeDadosPanel";
 import { 
   LayoutDashboard, 
@@ -58,6 +59,73 @@ import {
 const HISTORY_PAGE_SIZE = 1000;
 const HISTORY_DASHBOARD_DAYS = 60;
 const PRODUCT_SEARCH_PAGE_SIZE = 100;
+
+interface LancamentoDraftRecord {
+  user_id: string;
+  rows: LancamentoRow[];
+  updated_at: string;
+}
+
+const loadLancamentoDraftFromSupabase = async (
+  userId: string
+): Promise<LancamentoRow[] | null> => {
+  const { data, error } = await supabase
+    .from("lancamento_drafts")
+    .select("rows,updated_at")
+    .eq("user_id", userId)
+    .maybeSingle();
+
+  if (error) {
+    console.error("Erro ao carregar rascunho de lançamento:", error);
+    return null;
+  }
+
+  if (!data) return [];
+  if (!Array.isArray(data.rows)) {
+    console.warn("Rascunho de lançamento ignorado: formato inválido.");
+    return [];
+  }
+
+  return data.rows as LancamentoRow[];
+};
+
+const saveLancamentoDraftToSupabase = async (
+  userId: string,
+  rows: LancamentoRow[]
+): Promise<boolean> => {
+  const draft: LancamentoDraftRecord = {
+    user_id: userId,
+    rows,
+    updated_at: new Date().toISOString(),
+  };
+
+  const { error } = await supabase
+    .from("lancamento_drafts")
+    .upsert(draft, { onConflict: "user_id" });
+
+  if (error) {
+    console.error("Erro ao salvar rascunho de lançamento:", error);
+    return false;
+  }
+
+  return true;
+};
+
+const deleteLancamentoDraftFromSupabase = async (
+  userId: string
+): Promise<boolean> => {
+  const { error } = await supabase
+    .from("lancamento_drafts")
+    .delete()
+    .eq("user_id", userId);
+
+  if (error) {
+    console.error("Erro ao excluir rascunho de lançamento:", error);
+    return false;
+  }
+
+  return true;
+};
 
 const getTodayIsoDate = (): string => new Date().toISOString().slice(0, 10);
 
@@ -154,7 +222,7 @@ const loadHistoryFromSupabaseUncached = async (
   while (true) {
     let query = supabase
       .from("history")
-      .select("id,dataLancamento,quemLancou,data,estoque,modulo,posicao,referencia,quantidade,tipo,dataChacote,hora,responsavel,galpao,observacao")
+      .select("id,dataLancamento,quemLancou,data,estoque,modulo,posicao,referencia,quantidade,tipo,dataChacote,hora,responsavel,galpao,observacao,slotId,restricao")
       .order("data", { ascending: false })
       .order("hora", { ascending: false })
       .range(from, from + HISTORY_PAGE_SIZE - 1);
@@ -228,7 +296,7 @@ const loadLatestHistoryRecord = (): Promise<HistoricoMov | null> => {
   latestHistoryLoadPromise = (async (): Promise<HistoricoMov | null> => {
     const { data, error } = await supabase
       .from("history")
-      .select("id,dataLancamento,quemLancou,data,estoque,modulo,posicao,referencia,quantidade,tipo,dataChacote,hora,responsavel,galpao,observacao")
+      .select("id,dataLancamento,quemLancou,data,estoque,modulo,posicao,referencia,quantidade,tipo,dataChacote,hora,responsavel,galpao,observacao,slotId,restricao")
       .lte("data", getTodayIsoDate())
       .order("data", { ascending: false })
       .order("hora", { ascending: false })
@@ -398,6 +466,7 @@ export default function App() {
   const [users, setUsers] = useState<AppUser[]>([]);
 
   const [currentUser, setCurrentUser] = useState<AppUser | null>(null);
+  const [authUserId, setAuthUserId] = useState<string | null>(null);
 
   // Login Form input state
   const [loginUsername, setLoginUsername] = useState("");
@@ -440,6 +509,7 @@ export default function App() {
         await supabase.auth.getSession();
 
       if (sessionError || !sessionData.session) {
+        setAuthUserId(null);
         setCurrentUser(null);
         setAuthLoading(false);
         return;
@@ -456,6 +526,7 @@ export default function App() {
       if (profileError || !profile) {
         console.error("Erro ao carregar perfil autenticado:", profileError);
         await supabase.auth.signOut();
+        setAuthUserId(null);
         setCurrentUser(null);
         setAuthLoading(false);
         return;
@@ -468,10 +539,12 @@ export default function App() {
           role: getAppRole(profile.role)
         };
 
+        setAuthUserId(userId);
         setCurrentUser(sessUser);
       } catch (error) {
         console.error("Perfil autenticado possui role inválida:", error);
         await supabase.auth.signOut();
+        setAuthUserId(null);
         setCurrentUser(null);
       }
 
@@ -565,6 +638,7 @@ export default function App() {
       if (profileError || !profile) {
         console.error("Erro ao carregar perfil após login:", profileError);
         await supabase.auth.signOut();
+        setAuthUserId(null);
         setCurrentUser(null);
         setLoginError("A conta foi autenticada, mas o perfil de acesso não foi encontrado.");
         return;
@@ -576,12 +650,14 @@ export default function App() {
         role: getAppRole(profile.role)
       };
 
+      setAuthUserId(authUserId);
       setCurrentUser(sessUser);
       setLoginUsername("");
       setLoginPassword("");
     } catch (error) {
       console.error("Erro inesperado durante o login:", error);
       await supabase.auth.signOut();
+      setAuthUserId(null);
       setCurrentUser(null);
       setLoginError("Não foi possível concluir o login.");
     } finally {
@@ -596,7 +672,9 @@ export default function App() {
       console.error("Erro ao encerrar sessão:", error);
     }
 
+    setAuthUserId(null);
     setCurrentUser(null);
+    setLancamentoRows([]);
     setActiveTab("dashboard");
   };
   const authLoadPromiseRef = useRef<Promise<void> | null>(null);
@@ -670,13 +748,15 @@ useEffect(() => {
 }, [currentUser]);
 
 useEffect(() => {
+  if (!authUserId) return;
+
   const loadSlots = async () => {
     const data = await loadSlotsFromSupabase();
     setSlots(data);
   };
 
   loadSlots();
-}, []);
+}, [authUserId]);
 
 useEffect(() => {
   if (activeTab !== "dashboard" && activeTab !== "histórico" && activeTab !== "ai") {
@@ -1042,20 +1122,12 @@ const deleteProduct = async (
     }
 
     const updatedSlots = [...slots];
-    const slotIdx = updatedSlots.findIndex(
-      slot =>
-        slot.estoque === currentDiv.estoque &&
-        slot.modulo === currentDiv.modulo &&
-        slot.posicao === currentDiv.posicao
-    );
-
-    if (slotIdx === -1) {
-      alert(
-        `A posição ${currentDiv.estoque}-${currentDiv.modulo}-${currentDiv.posicao || "Rua"} não está cadastrada. ` +
-        "A correção foi interrompida para evitar alteração em uma posição física inexistente."
-      );
-      return false;
-    }
+    const targetDate = getTodayIsoDate();
+    const currentHour = new Date().toLocaleTimeString("pt-BR", {
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+    const correctedBy = currentUser.name || operator;
 
     let cleanSku = "";
     let product: Product | undefined;
@@ -1076,60 +1148,129 @@ const deleteProduct = async (
 
       product = productsList.find(item => {
         const reference = item.referencia.trim().toUpperCase();
-        return reference === cleanSku || (reference.startsWith("S") && reference.slice(1) === cleanSku);
+        return reference === cleanSku ||
+          (reference.startsWith("S") && reference.slice(1) === cleanSku);
       });
 
       if (!product) {
         alert(`Código SKU "${cleanSku}" não cadastrado na Base de Dados de Referências.`);
         return false;
       }
+    }
 
-      updatedSlots[slotIdx] = {
-        ...updatedSlots[slotIdx],
-        referencia: product.referencia,
-        descricao: product.descricao,
+    const normalizedEstoque = currentDiv.estoque.replace(/^E/, "");
+    const normalizedModulo = currentDiv.modulo.replace(/^[RM]/i, "");
+    const normalizedPosicao = currentDiv.posicao || "";
+    const targetSlotIdx = currentDiv.slotId
+      ? updatedSlots.findIndex(slot => slot.id === currentDiv.slotId)
+      : updatedSlots.findIndex(slot =>
+          slot.estoque === normalizedEstoque &&
+          slot.modulo === normalizedModulo &&
+          slot.posicao === normalizedPosicao &&
+          (
+            currentDiv.refAtual === "Vazio" ||
+            !currentDiv.refAtual ||
+            slot.referencia.toUpperCase() === currentDiv.refAtual.toUpperCase()
+          ) &&
+          (slot.restricao || "nenhuma") === (currentDiv.restricao || slot.restricao || "nenhuma")
+        );
+
+    let effectiveSlotId: string | undefined =
+      targetSlotIdx >= 0 ? updatedSlots[targetSlotIdx].id : currentDiv.slotId;
+
+    if (action === "sobrescrever" && targetSlotIdx === -1) {
+      if (normalizedEstoque === "1") {
+        const e1Index = updatedSlots.findIndex(slot =>
+          slot.estoque === "1" &&
+          slot.modulo === normalizedModulo &&
+          slot.referencia.toUpperCase() === cleanSku
+        );
+        if (e1Index >= 0) {
+          effectiveSlotId = updatedSlots[e1Index].id;
+        }
+      } else {
+        const restriction = currentDiv.restricao || "nenhuma";
+        const addressId = `${normalizedEstoque}-${normalizedModulo}-${normalizedPosicao}`;
+        const itemId = `${addressId}::ITEM::${cleanSku}::${restriction}`;
+        const reusableIndex = updatedSlots.findIndex(slot =>
+          slot.estoque === normalizedEstoque &&
+          slot.modulo === normalizedModulo &&
+          slot.posicao === normalizedPosicao &&
+          slot.saldo === 0 &&
+          slot.id.includes("::ITEM::")
+        );
+
+        if (reusableIndex >= 0) {
+          effectiveSlotId = updatedSlots[reusableIndex].id;
+        } else {
+          updatedSlots.push({
+            id: itemId,
+            estoque: normalizedEstoque,
+            modulo: normalizedModulo,
+            posicao: normalizedPosicao,
+            referencia: "",
+            descricao: "",
+            saldo: 0,
+            dataChacote: "",
+            ultimaData: "",
+            ultimaHora: "",
+            ultimoResponsavel: "",
+            galpao: currentDiv.restricao === "autorizacao" ? "12" : "3",
+            restricao: restriction,
+            observacao: "",
+          });
+          effectiveSlotId = itemId;
+        }
+      }
+    }
+
+    const resolvedSlotIdx = effectiveSlotId
+      ? updatedSlots.findIndex(slot => slot.id === effectiveSlotId)
+      : -1;
+
+    if (action === "descartar") {
+      if (resolvedSlotIdx >= 0) {
+        updatedSlots[resolvedSlotIdx] = {
+          ...updatedSlots[resolvedSlotIdx],
+          referencia: "",
+          descricao: "",
+          saldo: 0,
+          dataChacote: "",
+          observacao: "",
+          ultimaData: targetDate,
+          ultimaHora: currentHour,
+          ultimoResponsavel: correctedBy,
+        };
+      }
+    } else if (resolvedSlotIdx >= 0) {
+      updatedSlots[resolvedSlotIdx] = {
+        ...updatedSlots[resolvedSlotIdx],
+        referencia: product!.referencia,
+        descricao: product!.descricao,
         saldo: quantity,
         dataChacote: dataChacoteValue.trim(),
-        ultimaData: getTodayIsoDate(),
-        ultimaHora: new Date().toLocaleTimeString("pt-BR", {
-          hour: "2-digit",
-          minute: "2-digit",
-        }),
-        ultimoResponsavel: currentUser.name || operator,
-      };
-    } else {
-      updatedSlots[slotIdx] = {
-        ...updatedSlots[slotIdx],
-        referencia: "",
-        descricao: "",
-        saldo: 0,
-        dataChacote: "",
-        ultimaData: getTodayIsoDate(),
-        ultimaHora: new Date().toLocaleTimeString("pt-BR", {
-          hour: "2-digit",
-          minute: "2-digit",
-        }),
-        ultimoResponsavel: currentUser.name || operator,
+        galpao: currentDiv.restricao === "autorizacao"
+          ? "12"
+          : (updatedSlots[resolvedSlotIdx].galpao || "3"),
+        restricao: currentDiv.restricao || updatedSlots[resolvedSlotIdx].restricao || "nenhuma",
+        ultimaData: targetDate,
+        ultimaHora: currentHour,
+        ultimoResponsavel: correctedBy,
       };
     }
 
-    const targetDate = getTodayIsoDate();
-    const currentHour = new Date().toLocaleTimeString("pt-BR", {
-      hour: "2-digit",
-      minute: "2-digit",
-    });
-    const correctedBy = currentUser.name || operator;
-
-    // Uma correção física do endereço resolve todas as ocorrências abertas
-    // daquele mesmo endereço, evitando que o operador precise repetir a tratativa.
     const updatedDivergencias = divergencias.map(item => {
-      const sameOpenAddress =
+      const sameItem =
         item.status === "Aberta" &&
-        item.estoque === currentDiv.estoque &&
-        item.modulo === currentDiv.modulo &&
-        item.posicao === currentDiv.posicao;
+        (
+          (currentDiv.slotId && item.slotId === currentDiv.slotId) ||
+          (!currentDiv.slotId &&
+            item.estoque === currentDiv.estoque &&
+            item.modulo === currentDiv.modulo &&
+            item.posicao === currentDiv.posicao)
+        );
 
-      if (!sameOpenAddress) return item;
+      if (!sameItem) return item;
 
       return {
         ...item,
@@ -1138,15 +1279,24 @@ const deleteProduct = async (
         saldoFinal: action === "descartar" ? 0 : quantity,
         dataCorrecao: targetDate,
         corrigidoPor: correctedBy,
+        slotId: effectiveSlotId || item.slotId,
+        restricao: currentDiv.restricao || item.restricao,
         observacao:
           `${item.observacao || "Divergência gerada durante a operação."} ` +
           `Correção física registrada por ${correctedBy}.`,
       };
     });
 
+    if (action === "sobrescrever" && resolvedSlotIdx < 0) {
+      alert(
+        `Não foi possível localizar ou criar o item da posição ${currentDiv.estoque}-${currentDiv.modulo}-${currentDiv.posicao || "Rua"}.`
+      );
+      return false;
+    }
+
     const slotsSaved = await persistSlotsUpdate(updatedSlots);
     if (!slotsSaved) {
-      alert("Não foi possível salvar a correção do endereço.");
+      alert("Não foi possível salvar a correção do item.");
       return false;
     }
 
@@ -1165,6 +1315,8 @@ const deleteProduct = async (
       hora: currentHour,
       responsavel: correctedBy,
       observacao: `Correção de divergência: ${currentDiv.id}`,
+      slotId: effectiveSlotId,
+      restricao: currentDiv.restricao || (resolvedSlotIdx >= 0 ? (updatedSlots[resolvedSlotIdx].restricao || "nenhuma") : "nenhuma"),
     };
 
     const historySaved = await appendHistory([newLog]);
@@ -1320,6 +1472,7 @@ const deleteProduct = async (
       return [];
     }
   });
+  const [lancamentoDraftReady, setLancamentoDraftReady] = useState(false);
 
   // Rascunho local: protege o preenchimento contra F5/atualização da página.
   useEffect(() => {
@@ -1334,12 +1487,73 @@ const deleteProduct = async (
           localStorage.removeItem("eb_lancamento_draft_v1");
         }
       } catch (error) {
-        console.error("Erro ao salvar rascunho de lançamento:", error);
+        console.error("Erro ao salvar rascunho local de lançamento:", error);
       }
     }, 150);
 
     return () => window.clearTimeout(timeout);
   }, [lancamentoRows]);
+
+  // O Supabase passa a ser o rascunho compartilhado por usuário. O localStorage
+  // continua como proteção rápida para F5/offline e para a transição inicial.
+  useEffect(() => {
+    let cancelled = false;
+
+    if (!authUserId) {
+      setLancamentoDraftReady(false);
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    setLancamentoDraftReady(false);
+
+    const hydrateDraft = async () => {
+      const remoteRows = await loadLancamentoDraftFromSupabase(authUserId);
+      if (cancelled) return;
+
+      if (remoteRows === null) {
+        // Falha de leitura não apaga o rascunho local existente.
+        setLancamentoDraftReady(true);
+        return;
+      }
+
+      if (remoteRows.length > 0) {
+        setLancamentoRows(remoteRows);
+      } else if (lancamentoRows.length > 0) {
+        // Migra o rascunho local existente para a conta autenticada na primeira
+        // abertura após esta funcionalidade ser habilitada.
+        await saveLancamentoDraftToSupabase(authUserId, lancamentoRows);
+      } else {
+        setLancamentoRows([]);
+      }
+
+      if (!cancelled) {
+        setLancamentoDraftReady(true);
+      }
+    };
+
+    void hydrateDraft();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [authUserId]);
+
+  useEffect(() => {
+    if (!authUserId || !lancamentoDraftReady) return;
+
+    const timeout = window.setTimeout(() => {
+      if (lancamentoRows.length === 0) {
+        void deleteLancamentoDraftFromSupabase(authUserId);
+        return;
+      }
+
+      void saveLancamentoDraftToSupabase(authUserId, lancamentoRows);
+    }, 500);
+
+    return () => window.clearTimeout(timeout);
+  }, [authUserId, lancamentoDraftReady, lancamentoRows]);
 
   const clearLancamentoDraft = () => {
     if (lancamentoRows.length === 0) return;
@@ -1553,93 +1767,135 @@ if (
       return;
     }
 
-    // Capture errors
-    let allErrors: string[] = [];
-    activeData.forEach((row, index) => {
-      const rowErrors = validateLancamentoRow(row, index + 1, productsList, appMode === "avancado", slots);
-      allErrors = [...allErrors, ...rowErrors];
+    try {
+      // Capture errors
+      let allErrors: string[] = [];
+      activeData.forEach((row, index) => {
+        const rowErrors = validateLancamentoRow(row, index + 1, productsList, appMode === "avancado", slots);
+        allErrors = [...allErrors, ...rowErrors];
 
-      // A hora pertence à movimentação registrada na folha.
-      // Ela pode ficar vazia durante o preenchimento, mas deve estar
-      // completa e válida no momento do lançamento do lote.
-      if (!/^(?:[01]\d|2[0-3]):[0-5]\d$/.test(row.hora.trim())) {
-        allErrors.push(
-          `Linha ${index + 1}: a hora da movimentação deve estar no formato HH:mm (ex.: 08:30).`
-        );
-      }
+        // A hora pertence à movimentação registrada na folha.
+        // Ela pode ficar vazia durante o preenchimento, mas deve estar
+        // completa e válida no momento do lançamento do lote.
+        if (!/^(?:[01]\d|2[0-3]):[0-5]\d$/.test(row.hora.trim())) {
+          allErrors.push(
+            `Linha ${index + 1}: a hora da movimentação deve estar no formato HH:mm (ex.: 08:30).`
+          );
+        }
 
-      const rowGalpao = row.galpao || "3";
-      const rowRestricao = rowGalpao === "12" ? "autorizacao" : (row.restricao || "nenhuma");
+        const rowGalpao = row.galpao || "3";
+        const rowRestricao = rowGalpao === "12" ? "autorizacao" : (row.restricao || "nenhuma");
 
-      if (rowGalpao === "12" && row.restricao !== "autorizacao") {
-        allErrors.push(
-          `Linha ${index + 1}: Galpão 12 exige Restrição = Solicitar autorização.`
-        );
-      }
+        if (rowGalpao === "12" && row.restricao !== "autorizacao") {
+          allErrors.push(
+            `Linha ${index + 1}: Galpão 12 exige Restrição = Solicitar autorização.`
+          );
+        }
 
-      if (row.tipo === "Entrada") {
-        const targetSlot = slots.find(
-          slot =>
-            slot.estoque === row.estoque.replace(/^E/, "") &&
-            slot.modulo === row.modulo.replace(/^[RM]/i, "") &&
-            slot.posicao === row.posicao
-        );
+        if (row.tipo === "Entrada" && ["E2", "E3"].includes(row.estoque)) {
+          const estVal = row.estoque.replace(/^E/, "");
+          const modVal = row.modulo.replace(/^[RM]/i, "");
+          const addressSlots = slots.filter(
+            slot =>
+              slot.estoque === estVal &&
+              slot.modulo === modVal &&
+              slot.posicao === row.posicao &&
+              slot.saldo > 0 &&
+              Boolean(slot.referencia)
+          );
 
-        if (targetSlot?.referencia && targetSlot.saldo > 0) {
-          const currentGalpao = targetSlot.galpao || "3";
-          const currentRestricao = targetSlot.restricao || "nenhuma";
+          const rowRef = row.referencia.trim().toUpperCase();
+          const hasExactItem = addressSlots.some(
+            slot =>
+              slot.referencia.toUpperCase() === rowRef &&
+              (slot.restricao || "nenhuma") === rowRestricao
+          );
+          const hasNormal = addressSlots.some(
+            slot => (slot.restricao || "nenhuma") === "nenhuma"
+          );
+          const hasRestricted = addressSlots.some(
+            slot => (slot.restricao || "nenhuma") !== "nenhuma"
+          );
 
-          if (currentGalpao !== rowGalpao || currentRestricao !== rowRestricao) {
+          if (
+            (rowRestricao === "nenhuma" && addressSlots.length > 0 && !hasExactItem) ||
+            (rowRestricao === "nenhuma" && hasRestricted) ||
+            (rowRestricao !== "nenhuma" && hasNormal)
+          ) {
             allErrors.push(
-              `Linha ${index + 1}: a posição já possui Galpão ${currentGalpao} / ` +
-              `${currentRestricao === "nenhuma" ? "Sem restrição" : currentRestricao}. ` +
-              "Não é permitido misturar classificações no mesmo palete."
+              rowRestricao === "nenhuma"
+                ? `Linha ${index + 1}: a posição já possui outro item. ` +
+                  "Estoque normal sem restrição não pode compartilhar a posição com outro SKU."
+                : `Linha ${index + 1}: a posição já possui estoque sem restrição. ` +
+                  "Não é permitido misturar paletes normais e restritos na mesma posição."
             );
           }
         }
+
+      });
+      if (allErrors.length > 0) {
+        alert(`O lote contém inconsistências de validação e não pôde ser lançado:\n\n${allErrors.slice(0, 10).join("\n")}${allErrors.length > 10 ? `\n...e mais ${allErrors.length - 10} travas violadas.` : ""}`);
+        return;
       }
-    });
 
-    if (allErrors.length > 0) {
-      alert(`O lote contém inconsistências de validação e não pôde ser lançado:\n\n${allErrors.slice(0, 10).join("\n")}${allErrors.length > 10 ? `\n...e mais ${allErrors.length - 10} travas violadas.` : ""}`);
-      return;
+      const {
+        updatedSlots,
+        newHistory,
+        newDivergencias,
+        processedCount,
+        errorCount
+      } = processLancamentosInSequence(activeData, slots, operator, launchDate, divergencias, productsList, appMode === "avancado");
+
+      const updatedDivergencias = [...newDivergencias, ...divergencias];
+
+      // Quando há divergência, ela é registrada antes da alteração física.
+      // Assim, se a segunda persistência falhar, a posição continua protegida
+      // pela divergência aberta em vez de ficar alterada sem registro.
+      if (newDivergencias.length > 0) {
+        const divergenciasSaved = await persistDivergenciasUpdate(updatedDivergencias);
+        if (!divergenciasSaved) {
+          alert(
+            "O lote não foi concluído porque as divergências não puderam ser registradas no Supabase. " +
+            "Os dados preenchidos foram preservados no rascunho. Não repita a operação antes de verificar a conexão."
+          );
+          return;
+        }
+      }
+
+      // Persistência incremental: somente o que foi alterado é enviado ao Supabase.
+      const slotsSaved = await persistSlotsUpdate(updatedSlots);
+      if (!slotsSaved) {
+        alert(
+          newDivergencias.length > 0
+            ? "As divergências foram registradas, mas não foi possível atualizar os endereços no Supabase. A posição permanece protegida para revisão e os dados do lote foram preservados."
+            : "O lote não foi concluído porque não foi possível salvar os endereços no Supabase. Os dados preenchidos foram preservados no rascunho."
+        );
+        return;
+      }
+
+      const historySaved = await appendHistory(newHistory);
+      if (!historySaved) {
+        // O endereço já foi salvo. Recarregamos para manter a tela fiel ao banco.
+        const latestSlots = await loadSlotsFromSupabase();
+        setSlots(latestSlots);
+        alert(
+          "Os endereços foram salvos, mas o histórico não pôde ser gravado. " +
+          "Os dados preenchidos foram preservados no rascunho; não repita a operação antes de verificar a conexão."
+        );
+        return;
+      }
+
+      alert(`Lote processado!\n✔️ ${processedCount} movimentações consolidadas de modo sequencial.\n⚠️ ${errorCount} divergências identificadas e enviadas para revisão.`);
+
+      // Clear grid only after all persistent writes succeeded.
+      setLancamentoRows([]);
+    } catch (error) {
+      console.error("Erro inesperado ao processar lote:", error);
+      alert(
+        "O lote não foi concluído por causa de um erro inesperado. " +
+        "Os dados preenchidos foram preservados no rascunho para nova tentativa."
+      );
     }
-
-    const {
-      updatedSlots,
-      newHistory,
-      newDivergencias,
-      processedCount,
-      errorCount
-    } = processLancamentosInSequence(activeData, slots, operator, launchDate, divergencias, productsList, appMode === "avancado");
-
-    // Persistência incremental: somente o que foi alterado é enviado ao Supabase.
-    const slotsSaved = await persistSlotsUpdate(updatedSlots);
-    if (!slotsSaved) {
-      alert("O lote não foi concluído porque não foi possível salvar os endereços no Supabase.");
-      return;
-    }
-
-    const historySaved = await appendHistory(newHistory);
-    if (!historySaved) {
-      // O endereço já foi salvo. Recarregamos para manter a tela fiel ao banco.
-      const latestSlots = await loadSlotsFromSupabase();
-      setSlots(latestSlots);
-      alert("Os endereços foram salvos, mas o histórico não pôde ser gravado. Nenhum rascunho foi apagado; tente novamente após verificar a conexão.");
-      return;
-    }
-
-    const updatedDivergencias = [...newDivergencias, ...divergencias];
-    const divergenciasSaved = await persistDivergenciasUpdate(updatedDivergencias);
-    if (!divergenciasSaved) {
-      alert("Lote salvo e histórico registrado, mas houve falha ao salvar as divergências. Recarregue a aba Divergências antes de continuar.");
-      return;
-    }
-
-    alert(`Lote processado!\n✔️ ${processedCount} movimentações consolidadas de modo sequencial.\n⚠️ ${errorCount} divergências identificadas e enviadas para revisão.`);
-
-    // Clear grid only after the persistent writes succeeded.
-    setLancamentoRows([]);
   };
   const handleUnitaryLaunch = async (
     type: "Entrada" | "Saída",
@@ -1705,31 +1961,40 @@ if (
       return false;
     }
 
-    if (type === "Entrada") {
-      const targetSlot = slots.find(
+    if (type === "Entrada" && (estVal === "2" || estVal === "3")) {
+      const addressSlots = slots.filter(
         slot =>
           slot.estoque === estVal &&
           slot.modulo === cleanCorredor &&
-          slot.posicao === posVal
+          slot.posicao === posVal &&
+          slot.saldo > 0 &&
+          Boolean(slot.referencia)
       );
 
-      if (targetSlot?.referencia && targetSlot.saldo > 0) {
-        const currentGalpao = targetSlot.galpao || "3";
-        const currentRestricao = targetSlot.restricao || "nenhuma";
-        const requestedGalpao = row.galpao || "3";
-        const requestedRestricao = row.restricao || "nenhuma";
+      const requestedRestricao = row.restricao || "nenhuma";
+      const hasExactItem = addressSlots.some(
+        slot =>
+          slot.referencia.toUpperCase() === cleanSku &&
+          (slot.restricao || "nenhuma") === requestedRestricao
+      );
+      const hasNormal = addressSlots.some(
+        slot => (slot.restricao || "nenhuma") === "nenhuma"
+      );
+      const hasRestricted = addressSlots.some(
+        slot => (slot.restricao || "nenhuma") !== "nenhuma"
+      );
 
-        if (
-          currentGalpao !== requestedGalpao ||
-          currentRestricao !== requestedRestricao
-        ) {
-          alert(
-            `A posição já possui estoque classificado como Galpão ${currentGalpao} / ` +
-            `${currentRestricao === "nenhuma" ? "Sem restrição" : currentRestricao}. ` +
-            "Não é permitido misturar classificações no mesmo palete."
-          );
-          return false;
-        }
+      if (
+        (requestedRestricao === "nenhuma" && addressSlots.length > 0 && !hasExactItem) ||
+        (requestedRestricao === "nenhuma" && hasRestricted) ||
+        (requestedRestricao !== "nenhuma" && hasNormal)
+      ) {
+        alert(
+          requestedRestricao === "nenhuma"
+            ? "A posição já possui outro item. Estoque normal sem restrição não pode compartilhar a posição com outro SKU."
+            : "Não é permitido misturar paletes normais e restritos na mesma posição."
+        );
+        return false;
       }
     }
 
@@ -1753,6 +2018,42 @@ if (
       return false;
     }
 
+    if (newDivergencias.length > 0) {
+      const updatedDivergencias = [...newDivergencias, ...divergencias];
+      const divergenciasSaved = await persistDivergenciasUpdate(updatedDivergencias);
+      if (!divergenciasSaved) {
+        alert(
+          "A divergência foi identificada, mas não pôde ser registrada no Supabase. " +
+          "Os dados preenchidos foram preservados para nova tentativa. Verifique a conexão antes de repetir a operação."
+        );
+        return false;
+      }
+
+      const slotsSaved = await persistSlotsUpdate(updatedSlots);
+      if (!slotsSaved) {
+        alert(
+          "A divergência foi registrada, mas não foi possível limpar a posição no Supabase. " +
+          "A posição permanece protegida para revisão. Não repita a operação antes de verificar a conexão."
+        );
+        return false;
+      }
+
+      setUnitCorredor("");
+      setUnitPosicao("");
+      setUnitSku("");
+      setUnitQuantidade("");
+      setUnitChacote("");
+      setUnitGalpao("3");
+      setUnitRestricao("nenhuma");
+      setUnitObservacao("");
+      alert(
+        `A movimentação gerou ${newDivergencias.length} divergência(s) para revisão. ` +
+        "A posição foi limpa e bloqueada até a correção."
+      );
+      // Retorna sucesso para o MobileShell limpar seu estado local do formulário.
+      return true;
+    }
+
     const slotsSaved = await persistSlotsUpdate(updatedSlots);
     if (!slotsSaved) {
       alert("O lançamento não foi concluído porque não foi possível salvar o endereço no Supabase.");
@@ -1770,32 +2071,6 @@ if (
         );
         return false;
       }
-    }
-
-    if (newDivergencias.length > 0) {
-      const updatedDivergencias = [...newDivergencias, ...divergencias];
-      const divergenciasSaved = await persistDivergenciasUpdate(updatedDivergencias);
-      if (!divergenciasSaved) {
-        alert(
-          "A divergência foi identificada, mas não pôde ser registrada no Supabase. " +
-          "Verifique a conexão antes de repetir a operação."
-        );
-        return false;
-      }
-
-      setUnitCorredor("");
-      setUnitPosicao("");
-      setUnitSku("");
-      setUnitQuantidade("");
-      setUnitChacote("");
-      setUnitGalpao("3");
-      setUnitRestricao("nenhuma");
-      setUnitObservacao("");
-      alert(
-        `A movimentação gerou ${newDivergencias.length} divergência(s) para revisão. ` +
-        "O saldo do endereço não foi alterado."
-      );
-      return false;
     }
 
     setUnitCorredor("");
@@ -4122,16 +4397,20 @@ if (refRaw) {
                         
                         if (est === "2") {
                           total = 1373;
-                          occupied = slots.filter(
-                            s => s.estoque === "2" && s.saldo > 0
-                          ).length;
+                          occupied = new Set(
+                            slots
+                              .filter(s => s.estoque === "2" && s.saldo > 0)
+                              .map(getPhysicalAddressKey)
+                          ).size;
                         }
                         
                         if (est === "3") {
                           total = 1288;
-                          occupied = slots.filter(
-                            s => s.estoque === "3" && s.saldo > 0
-                          ).length;
+                          occupied = new Set(
+                            slots
+                              .filter(s => s.estoque === "3" && s.saldo > 0)
+                              .map(getPhysicalAddressKey)
+                          ).size;
                         }
                         
                         const pct = total > 0 ? (occupied / total) * 100 : 0;
@@ -4387,6 +4666,7 @@ if (refRaw) {
                         <th className="py-3 px-4 font-bold">Módulo / Rua</th>
                         <th className="py-3 px-4 font-bold">Posição</th>
                         <th className="py-3 px-4 font-bold font-mono text-center">Referência SKU</th>
+                        <th className="py-3 px-4 font-bold text-center">Restrição</th>
                         <th className="py-3 px-4 font-bold">Descrição do Item</th>
                         <th className="py-3 px-4 font-bold text-right">Saldo Logístico (pçs)</th>
                         <th className="py-3 px-4 font-bold">Data Chacote</th>
@@ -4420,6 +4700,23 @@ if (refRaw) {
                                   <span className="text-slate-300 font-bold block">—</span>
                                 )}
                               </td>
+                              <td className="py-3 px-4 text-center">
+                                {isOccupied ? (
+                                  <span className={`text-[9px] font-black uppercase px-2 py-0.5 rounded border ${
+                                    (s.restricao || "nenhuma") === "nenhuma"
+                                      ? "bg-slate-50 text-slate-600 border-slate-200"
+                                      : (s.restricao || "") === "teste"
+                                        ? "bg-orange-50 text-orange-700 border-orange-200"
+                                        : (s.restricao || "") === "autorizacao"
+                                          ? "bg-red-50 text-red-700 border-red-200"
+                                          : "bg-purple-50 text-purple-700 border-purple-200"
+                                  }`}>
+                                    {s.restricao || "nenhuma"}
+                                  </span>
+                                ) : (
+                                  <span className="text-slate-300 font-bold block">—</span>
+                                )}
+                              </td>
                               <td className="py-3 px-4 truncate max-w-[200px]">
                                 {isOccupied ? s.descricao : <span className="text-slate-300 italic font-normal">Vaga desocupada</span>}
                               </td>
@@ -4447,7 +4744,7 @@ if (refRaw) {
                         })
                       ) : (
                         <tr>
-                          <td colSpan={11} className="py-20 text-center text-slate-400 font-medium bg-slate-50">
+                          <td colSpan={12} className="py-20 text-center text-slate-400 font-medium bg-slate-50">
                             Nenhum endereço correspondente aos filtros de pesquisa inseridos.
                           </td>
                         </tr>

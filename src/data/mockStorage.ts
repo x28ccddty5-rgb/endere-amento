@@ -1,4 +1,4 @@
-import { Product, WarehouseSlot, LancamentoRow, HistoricoMov, Divergencia } from "../types";
+import { Product, WarehouseSlot, LancamentoRow, HistoricoMov, Divergencia, Restricao } from "../types";
 import { findProductInList } from "./products";
 import { E1_CAPACITY } from "../constants/layout";
 
@@ -170,6 +170,136 @@ export interface ProcessResult {
   errorCount: number;
 }
 
+const normalizeEstoque = (value: string): string =>
+  value.trim().toUpperCase().replace(/^E/, "");
+
+const normalizeModulo = (value: string): string =>
+  value.trim().toUpperCase().replace(/^[RM]/i, "");
+
+const normalizePosicao = (value: string): string =>
+  value.trim().toUpperCase();
+
+const normalizeRestricao = (value?: string): Restricao =>
+  value === "teste" || value === "autorizacao" || value === "outra"
+    ? value
+    : "nenhuma";
+
+const isE2E3 = (estoque: string): boolean =>
+  estoque === "2" || estoque === "3";
+
+const isAuxiliarySlotId = (id: string): boolean =>
+  id.includes("::ITEM::");
+
+const buildAddressId = (
+  estoque: string,
+  modulo: string,
+  posicao: string
+): string => `${estoque}-${modulo}-${posicao}`;
+
+const buildItemId = (
+  addressId: string,
+  referencia: string,
+  restricao: Restricao
+): string =>
+  `${addressId}::ITEM::${referencia.toUpperCase()}::${restricao}`;
+
+const sameAddress = (
+  slot: WarehouseSlot,
+  estoque: string,
+  modulo: string,
+  posicao: string
+): boolean =>
+  slot.estoque === estoque &&
+  sameNumericModule(slot.modulo, modulo) &&
+  slot.posicao === posicao;
+
+const sameLogicalItem = (
+  slot: WarehouseSlot,
+  estoque: string,
+  modulo: string,
+  posicao: string,
+  referencia: string,
+  restricao: Restricao
+): boolean =>
+  sameAddress(slot, estoque, modulo, posicao) &&
+  slot.referencia.trim().toUpperCase() === referencia.toUpperCase() &&
+  normalizeRestricao(slot.restricao) === restricao;
+
+const getDivergenceBlockKey = (
+  estoque: string,
+  modulo: string,
+  posicao: string,
+  referencia = "",
+  restricao: Restricao = "nenhuma"
+): string => {
+  const est = normalizeEstoque(estoque);
+  const mod = normalizeModulo(modulo);
+  const pos = normalizePosicao(posicao);
+  const ref = referencia.trim().toUpperCase().replace(/^S/, "");
+
+  if (est === "1") {
+    return `ITEM|E1|${mod}|${ref}`;
+  }
+
+  return `ITEM|E${est}|${mod}|${pos}|${ref}|${restricao}`;
+};
+
+const getLegacyAddressBlockKey = (
+  estoque: string,
+  modulo: string,
+  posicao: string
+): string =>
+  `ADDRESS|E${normalizeEstoque(estoque)}|${normalizeModulo(modulo)}|${normalizePosicao(posicao)}`;
+
+const getExistingDivergenceBlocks = (
+  divergencia: Divergencia
+): { itemKey?: string; addressKey?: string } => {
+  const est = normalizeEstoque(divergencia.estoque);
+
+  // Divergences created before multi-SKU support did not have restriction/slotId.
+  // They are kept conservative and continue to block the whole physical address.
+  if (isE2E3(est) && !divergencia.restricao && !divergencia.slotId) {
+    return {
+      addressKey: getLegacyAddressBlockKey(
+        est,
+        divergencia.modulo,
+        divergencia.posicao
+      ),
+    };
+  }
+
+  const referencia =
+    divergencia.refNova?.trim() &&
+    divergencia.refNova.trim().toLowerCase() !== "vazio"
+      ? divergencia.refNova
+      : divergencia.refAtual;
+
+  return {
+    itemKey: getDivergenceBlockKey(
+      est,
+      divergencia.modulo,
+      divergencia.posicao,
+      referencia || "",
+      normalizeRestricao(divergencia.restricao)
+    ),
+  };
+};
+
+const clearSlotAfterDivergence = (
+  slot: WarehouseSlot,
+  row: LancamentoRow,
+  batchOperator: string
+): void => {
+  slot.referencia = "";
+  slot.descricao = "";
+  slot.saldo = 0;
+  slot.dataChacote = "";
+  slot.observacao = "";
+  slot.ultimaData = row.data;
+  slot.ultimaHora = row.hora || "00:00";
+  slot.ultimoResponsavel = row.responsavel || batchOperator;
+};
+
 export function processLancamentosInSequence(
   rows: LancamentoRow[],
   currentSlots: WarehouseSlot[],
@@ -179,19 +309,35 @@ export function processLancamentosInSequence(
   productsList: Product[],
   isAdvanced = false
 ): ProcessResult {
-  // The caller is responsible for validating the rows before processing.
-  // Do not validate the batch again here: the processor must operate on the
-  // already-approved rows while maintaining a progressively updated state.
   const slots = JSON.parse(JSON.stringify(currentSlots)) as WarehouseSlot[];
   const newHistory: HistoricoMov[] = [];
   const newDivergencias: Divergencia[] = [];
 
-  // Keep the parameter for API compatibility with the existing callers.
-  void allDivergencias;
   void isAdvanced;
 
-  // Process chronologically so that each row sees the state produced by the
-  // previous successful row in the same batch.
+  const blockedItemKeys = new Set<string>();
+  const blockedAddressKeys = new Set<string>();
+  const blockedItemSlots = new Map<string, {
+    slotId?: string;
+    refAtual: string;
+    saldoAntes: number;
+  }>();
+
+  allDivergencias
+    .filter(div => div.status === "Aberta")
+    .forEach(div => {
+      const blocks = getExistingDivergenceBlocks(div);
+      if (blocks.addressKey) blockedAddressKeys.add(blocks.addressKey);
+      if (blocks.itemKey) {
+        blockedItemKeys.add(blocks.itemKey);
+        blockedItemSlots.set(blocks.itemKey, {
+          slotId: div.slotId,
+          refAtual: div.refAtual || "Vazio",
+          saldoAntes: div.saldoAntes || 0,
+        });
+      }
+    });
+
   const sortedRows = [...rows].sort((a, b) => {
     const dateTimeA = `${a.data}T${a.hora || "00:00"}`;
     const dateTimeB = `${b.data}T${b.hora || "00:00"}`;
@@ -211,236 +357,333 @@ export function processLancamentosInSequence(
     }
 
     const refUpper = prod.referencia.toUpperCase();
-
-    // Normalizations for storage references.
-    const estVal = row.estoque.trim().toUpperCase().replace("E", "");
-    const modVal = row.modulo.trim().toUpperCase().replace(/^[RM]/i, "");
-
-    // E1 is a corridor ledger and does not use a physical position.
-    // E2/E3 require the registered physical position.
+    const estVal = normalizeEstoque(row.estoque);
+    const modVal = normalizeModulo(row.modulo);
     const posVal =
       estVal === "1" || !row.posicao || row.posicao.trim() === ""
         ? ""
-        : row.posicao.trim().toUpperCase();
+        : normalizePosicao(row.posicao);
+    const requestedRestricao = normalizeRestricao(row.restricao);
+    const itemBlockKey = getDivergenceBlockKey(
+      estVal,
+      modVal,
+      posVal,
+      refUpper,
+      requestedRestricao
+    );
+    const addressBlockKey = getLegacyAddressBlockKey(estVal, modVal, posVal);
 
-    let slotIdx = slots.findIndex((s) => {
-      if (estVal === "1") {
-        return (
-          s.estoque === estVal &&
-          s.modulo === modVal &&
-          s.referencia.toUpperCase() === refUpper
-        );
+    const addressSlots = slots.filter(slot =>
+      sameAddress(slot, estVal, modVal, posVal)
+    );
+
+    let exactSlotIdx = slots.findIndex(slot =>
+      sameLogicalItem(
+        slot,
+        estVal,
+        modVal,
+        posVal,
+        refUpper,
+        requestedRestricao
+      )
+    );
+
+    const exactSlot = exactSlotIdx >= 0 ? slots[exactSlotIdx] : undefined;
+
+    const createDivergence = (
+      tipoDivergencia: Divergencia["tipoDivergencia"],
+      observation: string,
+      movimentacao: number,
+      targetSlot?: WarehouseSlot,
+      clearTarget = false,
+      explicitRefAtual?: string,
+      explicitSaldoAntes?: number
+    ) => {
+      errorCount++;
+
+      const refAtual =
+        explicitRefAtual ??
+        targetSlot?.referencia ??
+        (addressSlots.find(slot => slot.saldo > 0)?.referencia || "Vazio");
+
+      const saldoAntes =
+        explicitSaldoAntes ??
+        targetSlot?.saldo ??
+        (addressSlots.find(slot => slot.saldo > 0)?.saldo || 0);
+
+      if (targetSlot && clearTarget) {
+        clearSlotAfterDivergence(targetSlot, row, batchOperator);
       }
 
-      return (
-        s.estoque === estVal &&
-        sameNumericModule(s.modulo, modVal) &&
-        s.posicao === posVal
-      );
-    });
+      const divId = `DIV-${generateId()}`;
 
-    // E1 is a corridor ledger and can legitimately add a new SKU row.
-    // E2/E3 are physical address registries and must never create positions
-    // implicitly.
-    let slot: WarehouseSlot;
-
-    if (slotIdx === -1) {
-      if (estVal !== "1") {
-        errorCount++;
-        continue;
-      }
-
-      slot = {
-        id: `${estVal}-${modVal}-${refUpper}`,
+      newDivergencias.push({
+        id: divId,
+        dataDivergencia: batchDate,
+        tipoDivergencia,
         estoque: estVal,
         modulo: modVal,
         posicao: posVal,
-        referencia: "",
-        descricao: "",
-        saldo: 0,
-        dataChacote: "",
-        ultimaData: "",
-        ultimaHora: "",
-        ultimoResponsavel: "",
-      };
+        refAtual: refAtual || "Vazio",
+        refNova: prod.referencia,
+        saldoAntes,
+        movimentacao,
+        saldoFinal: saldoAntes,
+        responsavel: row.responsavel || batchOperator,
+        status: "Aberta",
+        dataChacote: targetSlot?.dataChacote || row.dataChacote || "",
+        observacao: observation,
+        slotId: targetSlot?.id,
+        restricao: requestedRestricao,
+      });
 
-      slots.push(slot);
-      slotIdx = slots.length - 1;
-    } else {
-      slot = slots[slotIdx];
+      blockedItemKeys.add(itemBlockKey);
+      blockedItemSlots.set(itemBlockKey, {
+        slotId: targetSlot?.id,
+        refAtual: refAtual || "Vazio",
+        saldoAntes,
+      });
+    };
+
+    // Legacy address-level divergences remain conservative for compatibility.
+    if (blockedAddressKeys.has(addressBlockKey)) {
+      createDivergence(
+        "Posição Bloqueada por Divergência",
+        `A posição ${estVal}-${modVal}-${posVal || "Corredor"} possui uma divergência aberta anterior. ` +
+        `A movimentação de ${qty} pçs de ${prod.referencia} não foi aplicada.`,
+        row.tipo === "Saída" ? -qty : qty
+      );
+      continue;
     }
 
-    const currentRef = slot.referencia;
-    const currentSaldo = slot.saldo;
+    // New divergences are item-specific. A second movement for the same
+    // SKU/restriction is blocked, while other restricted items at the same
+    // physical address remain operational.
+    if (blockedItemKeys.has(itemBlockKey)) {
+      const blocked = blockedItemSlots.get(itemBlockKey);
+      createDivergence(
+        "Item Bloqueado por Divergência",
+        `O item ${prod.referencia} / ${requestedRestricao} já possui uma divergência aberta. ` +
+        `A movimentação de ${qty} pçs não foi aplicada e também foi registrada como divergência.`,
+        row.tipo === "Saída" ? -qty : qty,
+        blocked?.slotId
+          ? slots.find(slot => slot.id === blocked.slotId)
+          : undefined,
+        false,
+        blocked?.refAtual,
+        blocked?.saldoAntes
+      );
+      continue;
+    }
+
+    if (estVal === "1") {
+      // Preserve the existing E1 behavior exactly: one logical row per SKU.
+      exactSlotIdx = slots.findIndex(slot =>
+        slot.estoque === "1" &&
+        slot.modulo === modVal &&
+        slot.referencia.toUpperCase() === refUpper
+      );
+    }
 
     if (row.tipo === "Entrada") {
-      // Slot is either empty or already contains the same reference.
-      if (
-        currentRef === "" ||
-        currentRef.trim().toUpperCase() === refUpper
-      ) {
-        const hadExistingStock = currentRef !== "" && currentSaldo > 0;
-        const requestedGalpao = row.galpao;
-        const requestedRestricao = row.restricao;
-        const requestedObservacao = row.observacao?.trim() || "";
-
-        if (!hadExistingStock) {
-          slot.galpao = requestedGalpao || slot.galpao || "3";
-          slot.restricao = requestedRestricao || slot.restricao || "nenhuma";
-          slot.observacao = requestedObservacao;
+      if (estVal === "1") {
+        if (exactSlotIdx === -1) {
+          const newSlot: WarehouseSlot = {
+            id: `${estVal}-${modVal}-${refUpper}`,
+            estoque: estVal,
+            modulo: modVal,
+            posicao: "",
+            referencia: "",
+            descricao: "",
+            saldo: 0,
+            dataChacote: "",
+            ultimaData: "",
+            ultimaHora: "",
+            ultimoResponsavel: "",
+            galpao: row.galpao || "3",
+            restricao: requestedRestricao,
+            observacao: row.observacao?.trim() || "",
+          };
+          slots.push(newSlot);
+          exactSlotIdx = slots.length - 1;
         }
-
-        slot.referencia = prod.referencia;
-        slot.descricao = prod.descricao;
-        slot.saldo += qty;
-
-        // The registered chacote date belongs to the physical position.
-        // Once the position already has stock, adding another mixed lot does
-        // not replace that registered date.
-        if (!hadExistingStock && row.dataChacote) {
-          slot.dataChacote = row.dataChacote;
-        }
-
-        slot.ultimaData = row.data;
-        slot.ultimaHora = row.hora || "00:00";
-        slot.ultimoResponsavel = row.responsavel || batchOperator;
-
-        newHistory.push({
-          id: `MOV-${generateId()}`,
-          dataLancamento: batchDate,
-          quemLancou: batchOperator,
-          data: row.data,
-          estoque: estVal,
-          modulo: modVal,
-          posicao: posVal,
-          referencia: prod.referencia,
-          quantidade: qty,
-          tipo: "Entrada",
-          // History records the chacote date actually registered on the slot.
-          dataChacote: slot.dataChacote,
-          hora: row.hora || "00:00",
-          responsavel: row.responsavel || batchOperator,
-          galpao: slot.galpao || row.galpao || "3",
-          observacao: row.observacao?.trim() || "",
-        });
-
-        processedCount++;
       } else {
-        // Slot is occupied by a different product reference.
-        errorCount++;
+        const occupiedAtAddress = addressSlots.filter(slot => slot.saldo > 0);
 
-        const divId = `DIV-${generateId()}`;
+        // Normal pallets cannot share an address with restricted pallets and
+        // restricted pallets cannot share an address with a normal pallet.
+        const hasNormal = occupiedAtAddress.some(
+          slot => normalizeRestricao(slot.restricao) === "nenhuma"
+        );
+        const hasRestricted = occupiedAtAddress.some(
+          slot => normalizeRestricao(slot.restricao) !== "nenhuma"
+        );
 
-        newDivergencias.push({
-          id: divId,
-          dataDivergencia: batchDate,
-          tipoDivergencia: "Posição Ocupada",
-          estoque: estVal,
-          modulo: modVal,
-          posicao: posVal,
-          refAtual: currentRef,
-          refNova: prod.referencia,
-          saldoAntes: currentSaldo,
-          movimentacao: qty,
-          saldoFinal: currentSaldo,
-          responsavel: row.responsavel || batchOperator,
-          status: "Aberta",
-          observacao: `Posição já ocupada por ${currentRef} (${slot.descricao}). Tentativa de entrada de ${qty} pçs de ${prod.referencia}.`,
-        });
-      }
-    } else {
-      // Saída.
-      if (
-        currentRef === "" ||
-        currentRef.trim().toUpperCase() !== refUpper
-      ) {
-        errorCount++;
-
-        const divId = `DIV-${generateId()}`;
-
-        newDivergencias.push({
-          id: divId,
-          dataDivergencia: batchDate,
-          tipoDivergencia: "Referência Divergente",
-          estoque: estVal,
-          modulo: modVal,
-          posicao: posVal,
-          refAtual: currentRef || "Vazio",
-          refNova: prod.referencia,
-          saldoAntes: currentSaldo,
-          movimentacao: -qty,
-          saldoFinal: currentSaldo,
-          responsavel: row.responsavel || batchOperator,
-          status: "Aberta",
-          observacao: `Tentativa de saída do item ${prod.referencia} em posição ocupada por ${currentRef || "Vazio"}.`,
-        });
-      } else if (currentSaldo < qty) {
-        errorCount++;
-
-        const divId = `DIV-${generateId()}`;
-
-        newDivergencias.push({
-          id: divId,
-          dataDivergencia: batchDate,
-          tipoDivergencia: "Saldo Insuficiente",
-          estoque: estVal,
-          modulo: modVal,
-          posicao: posVal,
-          refAtual: currentRef,
-          refNova: prod.referencia,
-          saldoAntes: currentSaldo,
-          movimentacao: -qty,
-          saldoFinal: currentSaldo,
-          responsavel: row.responsavel || batchOperator,
-          status: "Aberta",
-          observacao: `Solicitada saída de ${qty} pçs de ${prod.referencia} mas o saldo atual é de apenas ${currentSaldo} pçs.`,
-        });
-      } else {
-        // Capture the registered position chacote before the stock can become
-        // empty and clear the position.
-        const registeredChacote = slot.dataChacote;
-
-        slot.saldo -= qty;
-        slot.ultimaData = row.data;
-        slot.ultimaHora = row.hora || "00:00";
-        slot.ultimoResponsavel = row.responsavel || batchOperator;
-
-        // If the position becomes empty, its registered chacote is no longer
-        // applicable and the position becomes available for a new stock/date.
-        if (slot.saldo === 0) {
-          slot.referencia = "";
-          slot.descricao = "";
-          slot.dataChacote = "";
-          slot.galpao = "3";
-          slot.restricao = "nenhuma";
-          slot.observacao = "";
+        if (
+          (requestedRestricao === "nenhuma" &&
+            occupiedAtAddress.length > 0 &&
+            exactSlotIdx === -1) ||
+          (requestedRestricao === "nenhuma" && hasRestricted) ||
+          (requestedRestricao !== "nenhuma" && hasNormal)
+        ) {
+          createDivergence(
+            "Classificação Incompatível",
+            requestedRestricao === "nenhuma"
+              ? `A posição ${estVal}-${modVal}-${posVal} já possui outro item. ` +
+                "Estoque normal sem restrição não pode compartilhar a posição com outro SKU."
+              : `A posição ${estVal}-${modVal}-${posVal} já contém ` +
+                "palete(s) sem restrição. Não é permitido misturar estoque normal e restrito na mesma posição.",
+            qty
+          );
+          continue;
         }
 
-        newHistory.push({
-          id: `MOV-${generateId()}`,
-          dataLancamento: batchDate,
-          quemLancou: batchOperator,
-          data: row.data,
-          estoque: estVal,
-          modulo: modVal,
-          posicao: posVal,
-          referencia: prod.referencia,
-          quantidade: qty,
-          tipo: "Saída",
-          // Preserve the date that was registered on the physical
-          // position before this movement. If the position is emptied,
-          // the slot itself is cleared, but the movement history keeps
-          // the date that was actually registered on that stock.
-          dataChacote: registeredChacote,
-          hora: row.hora || "00:00",
-          responsavel: row.responsavel || batchOperator,
-          galpao: slot.galpao || row.galpao || "3",
-          observacao: row.observacao?.trim() || "",
-        });
+        if (exactSlotIdx === -1) {
+          // Reuse an empty auxiliary row first, then the physical base row.
+          // This avoids unbounded row growth because DELETE is not enabled by
+          // the current slots RLS policy.
+          const reusableIdx = slots.findIndex(slot =>
+            sameAddress(slot, estVal, modVal, posVal) &&
+            slot.saldo === 0 &&
+            (isAuxiliarySlotId(slot.id) || slot.id === buildAddressId(estVal, modVal, posVal))
+          );
 
-        processedCount++;
+          if (reusableIdx >= 0) {
+            exactSlotIdx = reusableIdx;
+          } else {
+            const baseAddressId = buildAddressId(estVal, modVal, posVal);
+            const newSlot: WarehouseSlot = {
+              id: buildItemId(baseAddressId, refUpper, requestedRestricao),
+              estoque: estVal,
+              modulo: modVal,
+              posicao: posVal,
+              referencia: "",
+              descricao: "",
+              saldo: 0,
+              dataChacote: "",
+              ultimaData: "",
+              ultimaHora: "",
+              ultimoResponsavel: "",
+              galpao: row.galpao || "3",
+              restricao: requestedRestricao,
+              observacao: row.observacao?.trim() || "",
+            };
+            slots.push(newSlot);
+            exactSlotIdx = slots.length - 1;
+          }
+        }
       }
+
+      const activeSlot = slots[exactSlotIdx];
+      const hadExistingStock = activeSlot.referencia !== "" && activeSlot.saldo > 0;
+
+      if (!hadExistingStock) {
+        activeSlot.galpao = row.galpao || activeSlot.galpao || "3";
+        activeSlot.restricao = requestedRestricao;
+        activeSlot.observacao = row.observacao?.trim() || "";
+      }
+
+      activeSlot.referencia = prod.referencia;
+      activeSlot.descricao = prod.descricao;
+      activeSlot.saldo += qty;
+
+      if (!hadExistingStock && row.dataChacote) {
+        activeSlot.dataChacote = row.dataChacote;
+      }
+
+      activeSlot.ultimaData = row.data;
+      activeSlot.ultimaHora = row.hora || "00:00";
+      activeSlot.ultimoResponsavel = row.responsavel || batchOperator;
+
+      newHistory.push({
+        id: `MOV-${generateId()}`,
+        dataLancamento: batchDate,
+        quemLancou: batchOperator,
+        data: row.data,
+        estoque: estVal,
+        modulo: modVal,
+        posicao: posVal,
+        referencia: prod.referencia,
+        quantidade: qty,
+        tipo: "Entrada",
+        dataChacote: activeSlot.dataChacote,
+        hora: row.hora || "00:00",
+        responsavel: row.responsavel || batchOperator,
+        galpao: activeSlot.galpao || row.galpao || "3",
+        observacao: row.observacao?.trim() || "",
+        slotId: activeSlot.id,
+        restricao: normalizeRestricao(activeSlot.restricao),
+      });
+
+      processedCount++;
+      continue;
     }
+
+    // Saída: in E2/E3 the requested SKU + restriction identifies the exact item.
+    if (exactSlotIdx === -1) {
+      createDivergence(
+        "Referência Divergente",
+        `Não existe o item ${prod.referencia} / ${requestedRestricao} na posição ` +
+        `${estVal}-${modVal}-${posVal}. A movimentação não foi aplicada.`,
+        -qty
+      );
+      continue;
+    }
+
+    const activeSlot = slots[exactSlotIdx];
+    const currentRef = activeSlot.referencia;
+    const currentSaldo = activeSlot.saldo;
+
+    if (currentSaldo < qty) {
+      createDivergence(
+        "Saldo Insuficiente",
+        `Solicitada saída de ${qty} pçs de ${prod.referencia} / ${requestedRestricao}, ` +
+        `mas o saldo atual deste item é de apenas ${currentSaldo} pçs. ` +
+        "Somente este item foi limpo e bloqueado para correção.",
+        -qty,
+        activeSlot,
+        true
+      );
+      continue;
+    }
+
+    const registeredChacote = activeSlot.dataChacote;
+
+    activeSlot.saldo -= qty;
+    activeSlot.ultimaData = row.data;
+    activeSlot.ultimaHora = row.hora || "00:00";
+    activeSlot.ultimoResponsavel = row.responsavel || batchOperator;
+
+    if (activeSlot.saldo === 0) {
+      activeSlot.referencia = "";
+      activeSlot.descricao = "";
+      activeSlot.dataChacote = "";
+      activeSlot.galpao = "3";
+      activeSlot.restricao = "nenhuma";
+      activeSlot.observacao = "";
+    }
+
+    newHistory.push({
+      id: `MOV-${generateId()}`,
+      dataLancamento: batchDate,
+      quemLancou: batchOperator,
+      data: row.data,
+      estoque: estVal,
+      modulo: modVal,
+      posicao: posVal,
+      referencia: prod.referencia,
+      quantidade: qty,
+      tipo: "Saída",
+      dataChacote: registeredChacote,
+      hora: row.hora || "00:00",
+      responsavel: row.responsavel || batchOperator,
+      galpao: activeSlot.galpao || row.galpao || "3",
+      observacao: row.observacao?.trim() || "",
+      slotId: activeSlot.id,
+      restricao: requestedRestricao,
+    });
+
+    processedCount++;
   }
 
   return {

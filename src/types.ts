@@ -57,6 +57,8 @@ export interface HistoricoMov {
   responsavel: string;
   galpao?: Galpao;
   observacao?: string;
+  slotId?: string;
+  restricao?: Restricao;
 }
 
 export interface Divergencia {
@@ -77,6 +79,8 @@ export interface Divergencia {
   dataCorrecao?: string;
   corrigidoPor?: string;
   observacao?: string;
+  slotId?: string;
+  restricao?: Restricao;
 }
 
 export type AppMode = "basico" | "avancado";

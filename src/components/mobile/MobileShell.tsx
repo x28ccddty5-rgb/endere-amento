@@ -414,7 +414,7 @@ export function MobileShell({
     const groups = new Map<string, Divergencia[]>();
 
     openDivergencias.forEach(div => {
-      const key = `${div.estoque}|${div.modulo}|${div.posicao || ""}`;
+      const key = `${div.estoque}|${div.modulo}|${div.posicao || ""}|${div.slotId || div.refNova || div.refAtual}|${div.restricao || "nenhuma"}`;
       const group = groups.get(key);
 
       if (group) {
@@ -495,16 +495,26 @@ export function MobileShell({
   };
 
   const selectedSkuProduct = productMap.get(normalizeSku(sku));
-  const selectedLaunchSlot = useMemo(
-    () =>
-      slots.find(
-        slot =>
-          slot.estoque === estoque &&
-          slot.modulo === normalizeModule(modulo) &&
-          slot.posicao === (estoque === "1" ? "" : posicao.toUpperCase())
-      ) ?? null,
-    [slots, estoque, modulo, posicao]
-  );
+  const selectedLaunchSlot = useMemo(() => {
+    const normalizedSku = normalizeSku(sku);
+    const addressMatches = slots.filter(
+      slot =>
+        slot.estoque === estoque &&
+        slot.modulo === normalizeModule(modulo) &&
+        slot.posicao === (estoque === "1" ? "" : posicao.toUpperCase()) &&
+        slot.saldo > 0 &&
+        slot.referencia &&
+        (!normalizedSku || normalizeSku(slot.referencia) === normalizedSku)
+    );
+
+    if (addressMatches.length === 0) return null;
+
+    return (
+      addressMatches.find(
+        slot => (slot.restricao || "nenhuma") === (galpao === "12" ? "autorizacao" : restricao)
+      ) || addressMatches[0]
+    );
+  }, [slots, estoque, modulo, posicao, sku, galpao, restricao]);
 
   const stopScanner = () => {
     if (scannerFrameRef.current !== null) {
@@ -942,7 +952,14 @@ export function MobileShell({
                     type="button"
                     onClick={() => {
                       setSearch(slot.referencia);
-                      onTabChange("endereçamento");
+                      setSku(slot.referencia);
+                      setEstoque(slot.estoque);
+                      setModulo(slot.modulo);
+                      setPosicao(slot.posicao);
+                      setGalpao(slot.galpao || "3");
+                      setRestricao(slot.restricao || "nenhuma");
+                      setLaunchType("Saída");
+                      onTabChange("lançamento");
                     }}
                     className="w-full rounded-2xl border border-slate-200 bg-white p-4 text-left shadow-sm active:scale-[0.99]"
                   >
@@ -1281,6 +1298,22 @@ export function MobileShell({
                         <span className="text-xs font-semibold text-slate-400">Selecione um endereço para visualizar a classificação do palete.</span>
                       )}
                     </div>
+                    <label className="mt-3 block">
+                      <span className="block text-[10px] font-black uppercase tracking-wider text-slate-400">
+                        Restrição do item
+                      </span>
+                      <select
+                        value={galpao === "12" ? "autorizacao" : restricao}
+                        onChange={event => setRestricao(event.target.value as Restricao)}
+                        className="mt-2 h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-base font-black outline-none"
+                      >
+                        <option value="nenhuma">Nenhuma</option>
+                        <option value="teste">Teste — não separar</option>
+                        <option value="autorizacao">Solicitar autorização</option>
+                        <option value="outra">Outra restrição</option>
+                      </select>
+                    </label>
+
 
                     <label className="mt-3 block">
                       <span className="block text-[10px] font-black uppercase tracking-wider text-slate-400">
@@ -1498,7 +1531,7 @@ export function MobileShell({
               const divergenceCount = group.length;
 
               return (
-                <article key={`${div.estoque}-${div.modulo}-${div.posicao || "RUA"}`} className="rounded-2xl border border-red-100 bg-white p-4 shadow-sm">
+                <article key={`${div.estoque}-${div.modulo}-${div.posicao || "RUA"}-${div.slotId || div.refNova || div.refAtual}-${div.restricao || "nenhuma"}`} className="rounded-2xl border border-red-100 bg-white p-4 shadow-sm">
                   <div className="flex items-start justify-between gap-3">
                     <div>
                       <div className="font-mono text-xs font-black text-red-700">{div.id}</div>
@@ -1511,7 +1544,7 @@ export function MobileShell({
 
                 {divergenceCount > 1 && (
                   <div className="mt-2 rounded-xl bg-red-50 px-3 py-2 text-xs font-black text-red-700">
-                    {divergenceCount} divergências abertas nesta posição
+                    {divergenceCount} divergências abertas para este item
                   </div>
                 )}
 
@@ -1526,6 +1559,21 @@ export function MobileShell({
                     <span className="block text-[9px] font-black uppercase text-slate-400">Movimento</span>
                     <span className="mt-1 block font-black text-slate-700">
                       {Math.abs(div.movimentacao).toLocaleString("pt-BR")} pçs
+                    </span>
+                  </div>
+                </div>
+
+                <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
+                  <div className="rounded-xl bg-slate-50 p-3">
+                    <span className="block text-[9px] font-black uppercase text-slate-400">SKU</span>
+                    <span className="mt-1 block font-mono font-black text-slate-700">
+                      {div.refNova || div.refAtual || "Vazio"}
+                    </span>
+                  </div>
+                  <div className="rounded-xl bg-slate-50 p-3">
+                    <span className="block text-[9px] font-black uppercase text-slate-400">Restrição</span>
+                    <span className="mt-1 block font-black text-slate-700">
+                      {div.restricao || "nenhuma"}
                     </span>
                   </div>
                 </div>
@@ -1585,6 +1633,21 @@ export function MobileShell({
                       <span className="block text-[9px] font-black uppercase text-slate-400">Movimento</span>
                       <span className="mt-1 block text-xs font-black text-slate-800">
                         {Math.abs(selectedDivergencia.movimentacao).toLocaleString("pt-BR")} pçs
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
+                    <div className="rounded-xl bg-slate-50 p-3">
+                      <span className="block text-[9px] font-black uppercase text-slate-400">SKU</span>
+                      <span className="mt-1 block font-mono font-black text-slate-800">
+                        {selectedDivergencia.refNova || selectedDivergencia.refAtual || "Vazio"}
+                      </span>
+                    </div>
+                    <div className="rounded-xl bg-slate-50 p-3">
+                      <span className="block text-[9px] font-black uppercase text-slate-400">Restrição</span>
+                      <span className="mt-1 block font-black text-slate-800">
+                        {selectedDivergencia.restricao || "nenhuma"}
                       </span>
                     </div>
                   </div>
