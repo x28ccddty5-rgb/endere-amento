@@ -33,6 +33,7 @@ interface MobileShellProps {
   canExecute: boolean;
   activeTab: string;
   onTabChange: (tab: MobileTab) => void;
+  onUpdateSlot: (slot: WarehouseSlot) => Promise<boolean>;
   onUnitaryLaunch: (type: "Entrada" | "Saída", data: {
     estoque: string;
     modulo: string;
@@ -189,6 +190,7 @@ export function MobileShell({
   canExecute,
   activeTab,
   onTabChange,
+  onUpdateSlot,
   onUnitaryLaunch,
   onTransferPosition,
   onResolveDivergencia,
@@ -205,6 +207,9 @@ export function MobileShell({
   const [searchGalpao, setSearchGalpao] = useState("");
   const [searchRestricao, setSearchRestricao] = useState("");
   const [searchObservacao, setSearchObservacao] = useState("");
+  const [searchAddress, setSearchAddress] = useState("");
+  const [searchAbovePalletizacao, setSearchAbovePalletizacao] = useState(false);
+  const [searchSkuMode, setSearchSkuMode] = useState<"exact" | "contains">("exact");
   const [searchSort, setSearchSort] = useState<"address" | "chacoteAsc" | "chacoteDesc" | "qtyAsc" | "qtyDesc">("address");
   const [launchType, setLaunchType] = useState<"Entrada" | "Saída" | "Transferência">("Entrada");
   const [estoque, setEstoque] = useState("2");
@@ -227,6 +232,7 @@ export function MobileShell({
   const [scannerTarget, setScannerTarget] = useState<ScanTarget | null>(null);
   const [scannerError, setScannerError] = useState("");
   const [scannerSupported, setScannerSupported] = useState(true);
+  const [scannerZoom, setScannerZoom] = useState(1);
   const [historySearch, setHistorySearch] = useState("");
   const [historyResponsible, setHistoryResponsible] = useState("");
   const [historyType, setHistoryType] = useState("");
@@ -243,6 +249,9 @@ export function MobileShell({
   const [divergenciaResolveChacote, setDivergenciaResolveChacote] = useState("");
   const [resolvingDivergencia, setResolvingDivergencia] = useState(false);
   const [keyboardOpen, setKeyboardOpen] = useState(false);
+  const [editingSlotId, setEditingSlotId] = useState<string | null>(null);
+  const [editingChacote, setEditingChacote] = useState("");
+  const [editingObservacao, setEditingObservacao] = useState("");
 
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const scannerStreamRef = useRef<MediaStream | null>(null);
@@ -256,7 +265,8 @@ export function MobileShell({
 
   const searchResults = useMemo(() => {
     const query = search.trim().toLowerCase();
-    const addressQueryVariants = getAddressSearchVariants(search);
+    const addressQuery = normalizeAddressSearch(searchAddress || search);
+    const addressQueryVariants = getAddressSearchVariants(searchAddress || search);
     const galpaoFilter = searchGalpao.trim();
     const observacaoFilter = searchObservacao.trim().toLowerCase();
     const restricaoFilter = searchRestricao.trim().toLowerCase();
@@ -265,28 +275,52 @@ export function MobileShell({
       .filter(slot => slot.saldo > 0 && slot.referencia)
       .filter(slot => {
         const product = productMap.get(normalizeSku(slot.referencia));
+        const normalizedSku = normalizeSku(slot.referencia).toLowerCase();
+        const queryLooksLikeAddress =
+          /^e?[123]\s*[mM]?\s*\d{1,3}(?:\s*[a-z]\d{0,2})?$/i.test(search.trim()) ||
+          Boolean(searchAddress.trim());
+
         const addressVariants = getAddressSearchVariants(
           `E${slot.estoque}M${slot.modulo}${slot.posicao || ""}`
         );
+
         const matchesAddress =
-          addressQueryVariants.length > 0 &&
+          queryLooksLikeAddress &&
+          Boolean(addressQuery) &&
           addressQueryVariants.some(queryVariant =>
             addressVariants.some(addressVariant =>
-              addressVariant.includes(queryVariant)
+              addressVariant.startsWith(queryVariant)
             )
           );
 
-        const matchesQuery =
+        const skuMatches =
           !query ||
-          slot.referencia.toLowerCase().includes(query) ||
+          (searchSkuMode === "exact"
+            ? normalizedSku === normalizeSku(search).toLowerCase()
+            : normalizedSku.includes(normalizeSku(search).toLowerCase()));
+
+        const textMatches =
+          !query ||
           slot.descricao.toLowerCase().includes(query) ||
-          slot.modulo.toLowerCase().includes(query) ||
-          slot.posicao.toLowerCase().includes(query) ||
-          formatAddress(slot).toLowerCase().includes(query) ||
-          matchesAddress ||
           product?.descricao.toLowerCase().includes(query);
 
+        const genericAddressMatches =
+          !queryLooksLikeAddress &&
+          !(searchSkuMode === "exact" && /^[a-z0-9]+$/i.test(search.trim())) &&
+          (!query ||
+            slot.modulo.toLowerCase().includes(query) ||
+            slot.posicao.toLowerCase().includes(query) ||
+            formatAddress(slot).toLowerCase().includes(query));
+
+        const matchesQuery =
+          !query ||
+          skuMatches ||
+          textMatches ||
+          genericAddressMatches ||
+          matchesAddress;
+
         if (!matchesQuery) return false;
+        if (searchAddress.trim() && !matchesAddress) return false;
         if (galpaoFilter && String(slot.galpao || "3") !== galpaoFilter) return false;
         if (
           restricaoFilter &&
@@ -301,6 +335,12 @@ export function MobileShell({
           return false;
         }
 
+        if (searchAbovePalletizacao) {
+          if (!product?.paletizacao || slot.saldo <= product.paletizacao) {
+            return false;
+          }
+        }
+
         return true;
       });
 
@@ -313,8 +353,6 @@ export function MobileShell({
           const aTime = a.dataChacote ? parseChacoteDate(a.dataChacote) : null;
           const bTime = b.dataChacote ? parseChacoteDate(b.dataChacote) : null;
 
-          // Paletes sem data devem sempre aparecer primeiro.
-          // Depois deles, a ordenação segue a data escolhida.
           if (aTime === null && bTime === null) return 0;
           if (aTime === null) return -1;
           if (bTime === null) return 1;
@@ -332,10 +370,13 @@ export function MobileShell({
   }, [
     slots,
     search,
+    searchAddress,
     productMap,
     searchGalpao,
     searchRestricao,
     searchObservacao,
+    searchAbovePalletizacao,
+    searchSkuMode,
     searchSort,
   ]);
 
@@ -670,7 +711,12 @@ export function MobileShell({
 
         if (BarcodeDetectorCtor) {
           const stream = await navigator.mediaDevices.getUserMedia({
-            video: { facingMode: { ideal: "environment" } },
+            video: {
+              facingMode: { ideal: "environment" },
+              width: { ideal: 1920 },
+              height: { ideal: 1080 },
+              frameRate: { ideal: 30, max: 60 },
+            },
             audio: false,
           });
 
@@ -680,6 +726,26 @@ export function MobileShell({
           }
 
           scannerStreamRef.current = stream;
+
+          const videoTrack = stream.getVideoTracks()[0];
+          const capabilities = videoTrack?.getCapabilities?.();
+          if (videoTrack && capabilities && "zoom" in capabilities) {
+            const zoomRange = capabilities as MediaTrackCapabilities & {
+              zoom?: { min: number; max: number; step?: number };
+            };
+            const requestedZoom = Math.min(
+              Math.max(scannerZoom, zoomRange.zoom?.min ?? 1),
+              zoomRange.zoom?.max ?? scannerZoom
+            );
+
+            try {
+              await videoTrack.applyConstraints({
+                advanced: [{ zoom: requestedZoom } as MediaTrackConstraintSet],
+              });
+            } catch {
+              // Alguns Safari/iPhone expõem zoom mas recusam a constraint.
+            }
+          }
 
           if (!videoRef.current) return;
           videoRef.current.srcObject = stream;
@@ -746,7 +812,7 @@ export function MobileShell({
       cancelled = true;
       stopScanner();
     };
-  }, [scannerTarget, slots]);
+  }, [scannerTarget, slots, scannerZoom]);
 
   const handleLaunch = async () => {
     if (!canExecute || launching) return;
@@ -955,6 +1021,38 @@ export function MobileShell({
                       className="mt-1 h-11 w-full rounded-xl border border-slate-200 px-3 text-base font-bold text-slate-700"
                     />
                   </label>
+
+                  <label className="text-[10px] font-black uppercase text-slate-400">
+                    Endereço
+                    <input
+                      type="text"
+                      value={searchAddress}
+                      onChange={event => setSearchAddress(event.target.value)}
+                      placeholder="Ex.: E3M10"
+                      className="mt-1 h-11 w-full rounded-xl border border-slate-200 px-3 text-base font-bold text-slate-700"
+                    />
+                  </label>
+
+                  <label className="text-[10px] font-black uppercase text-slate-400">
+                    SKU
+                    <select
+                      value={searchSkuMode}
+                      onChange={event => setSearchSkuMode(event.target.value as "exact" | "contains")}
+                      className="mt-1 h-11 w-full rounded-xl border border-slate-200 bg-white px-2 text-base font-bold text-slate-700"
+                    >
+                      <option value="exact">Exato</option>
+                      <option value="contains">Contém</option>
+                    </select>
+                  </label>
+
+                  <label className="col-span-2 flex min-h-11 items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 text-[10px] font-black uppercase text-indigo-600">
+                    <input
+                      type="checkbox"
+                      checked={searchAbovePalletizacao}
+                      onChange={event => setSearchAbovePalletizacao(event.target.checked)}
+                    />
+                    Apenas acima da paletização
+                  </label>
                 </div>
 
                 <label className="mt-2 block text-[10px] font-black uppercase text-slate-400">
@@ -977,6 +1075,9 @@ export function MobileShell({
                     setSearchGalpao("");
                     setSearchRestricao("");
                     setSearchObservacao("");
+                    setSearchAddress("");
+                    setSearchAbovePalletizacao(false);
+                    setSearchSkuMode("exact");
                     setSearchSort("address");
                   }}
                   className="mt-3 text-[10px] font-black uppercase text-blue-600"
@@ -990,15 +1091,27 @@ export function MobileShell({
               {searchResults.map(slot => {
                 const product = productMap.get(normalizeSku(slot.referencia));
                 return (
-                  <button
+                  <div
                     key={slot.id}
-                    type="button"
-                    onClick={() => {
-                      setSearch(slot.referencia);
-                      onTabChange("endereçamento");
-                    }}
-                    className="w-full rounded-2xl border border-slate-200 bg-white p-4 text-left shadow-sm active:scale-[0.99]"
+                    className="w-full rounded-2xl border border-slate-200 bg-white p-4 text-left shadow-sm"
                   >
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setLaunchType("Entrada");
+                        setEstoque(slot.estoque);
+                        setModulo(normalizeModule(slot.modulo));
+                        setPosicao(slot.posicao);
+                        setSku(normalizeSku(slot.referencia));
+                        setQuantidade("");
+                        setDataChacote(slot.dataChacote || "");
+                        setGalpao((slot.galpao || "3") as Galpao);
+                        setRestricao(slot.restricao || "nenhuma");
+                        setObservacao(slot.observacao || "");
+                        onTabChange("lançamento");
+                      }}
+                      className="w-full text-left active:scale-[0.99]"
+                    >
                     <div className="flex items-start justify-between gap-3">
                       <div className="min-w-0">
                         <div className="font-mono text-sm font-black text-blue-700">
@@ -1008,7 +1121,19 @@ export function MobileShell({
                           {slot.descricao || product?.descricao || "Produto"}
                         </div>
                       </div>
-                      <ChevronRight className="mt-1 h-5 w-5 shrink-0 text-slate-300" />
+                       <div className="flex shrink-0 items-start gap-2">
+                         {slot.dataChacote && (
+                           <div className="rounded-lg bg-amber-50 px-2 py-1 text-right">
+                             <span className="block text-[8px] font-black uppercase tracking-wide text-amber-600">
+                               Chacote
+                             </span>
+                             <span className="block text-[12px] font-black leading-tight text-amber-800">
+                               {slot.dataChacote}
+                             </span>
+                           </div>
+                         )}
+                         <ChevronRight className="mt-1 h-5 w-5 text-slate-300" />
+                       </div>
                     </div>
 
                     <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
@@ -1035,38 +1160,108 @@ export function MobileShell({
                         GALPÃO {slot.galpao || "3"}
                       </span>
                       {slot.galpao === "12" && (
-                        <span className="rounded-full bg-red-50 px-2 py-1 text-[9px] font-black uppercase text-red-700">
+                        <span className="rounded-full border border-red-200 bg-red-50 px-2.5 py-1.5 text-[11px] font-black uppercase text-red-700 shadow-sm">
                           🔴 SOLICITAR AUTORIZAÇÃO
                         </span>
                       )}
                       {slot.galpao !== "12" && slot.restricao === "teste" && (
-                        <span className="rounded-full bg-orange-50 px-2 py-1 text-[9px] font-black uppercase text-orange-700">
+                        <span className="rounded-full border border-orange-200 bg-orange-50 px-2.5 py-1.5 text-[11px] font-black uppercase text-orange-700 shadow-sm">
                           🟠 TESTE — NÃO SEPARAR
                         </span>
                       )}
                       {slot.galpao !== "12" && slot.restricao === "autorizacao" && (
-                        <span className="rounded-full bg-red-50 px-2 py-1 text-[9px] font-black uppercase text-red-700">
+                        <span className="rounded-full border border-red-200 bg-red-50 px-2.5 py-1.5 text-[11px] font-black uppercase text-red-700 shadow-sm">
                           🔴 SOLICITAR AUTORIZAÇÃO
                         </span>
                       )}
                       {slot.galpao !== "12" && slot.restricao === "outra" && (
-                        <span className="rounded-full bg-purple-50 px-2 py-1 text-[9px] font-black uppercase text-purple-700">
+                        <span className="rounded-full border border-purple-200 bg-purple-50 px-2.5 py-1.5 text-[11px] font-black uppercase text-purple-700 shadow-sm">
                           🟣 OUTRA RESTRIÇÃO
                         </span>
                       )}
                     </div>
 
-                    {slot.dataChacote && (
-                      <div className="mt-2 text-[10px] font-semibold text-slate-400">
-                        Chacote: {slot.dataChacote}
-                      </div>
-                    )}
                     {slot.observacao && (
-                      <div className="mt-1 text-[10px] font-medium text-slate-500">
+                      <div className="mt-2 text-xs font-semibold leading-relaxed text-slate-600">
                         Obs.: {slot.observacao}
                       </div>
                     )}
-                  </button>
+                    </button>
+
+                    {canExecute && (
+                      <div className="mt-3 border-t border-slate-100 pt-3">
+                        {editingSlotId === slot.id ? (
+                          <div className="space-y-2">
+                            <label className="block text-[9px] font-black uppercase text-slate-400">
+                              Data Chacote
+                              <input
+                                value={editingChacote}
+                                onChange={event => setEditingChacote(formatChacoteInput(event.target.value))}
+                                placeholder="DD/MM/AAAA"
+                                inputMode="numeric"
+                                maxLength={10}
+                                className="mt-1 h-10 w-full rounded-xl border border-slate-200 px-3 text-sm font-bold"
+                              />
+                            </label>
+                            <label className="block text-[9px] font-black uppercase text-slate-400">
+                              Observação
+                              <textarea
+                                value={editingObservacao}
+                                onChange={event => setEditingObservacao(event.target.value)}
+                                rows={2}
+                                className="mt-1 w-full resize-none rounded-xl border border-slate-200 px-3 py-2 text-sm font-semibold"
+                              />
+                            </label>
+                            <div className="flex gap-2">
+                              <button
+                                type="button"
+                                onClick={async () => {
+                                  const nextChacote = editingChacote.trim();
+                                  if (
+                                    nextChacote &&
+                                    nextChacote !== "NT" &&
+                                    parseChacoteDate(nextChacote) === null
+                                  ) {
+                                    window.alert("Informe o Chacote no formato DD/MM/AAAA.");
+                                    return;
+                                  }
+
+                                  const saved = await onUpdateSlot({
+                                    ...slot,
+                                    dataChacote: nextChacote,
+                                    observacao: editingObservacao.trim(),
+                                  });
+                                  if (saved) setEditingSlotId(null);
+                                }}
+                                className="flex-1 rounded-xl bg-blue-600 px-3 py-2 text-xs font-black text-white"
+                              >
+                                Salvar
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setEditingSlotId(null)}
+                                className="rounded-xl border border-slate-200 px-3 py-2 text-xs font-black text-slate-600"
+                              >
+                                Cancelar
+                              </button>
+                            </div>
+                          </div>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setEditingSlotId(slot.id);
+                              setEditingChacote(slot.dataChacote || "");
+                              setEditingObservacao(slot.observacao || "");
+                            }}
+                            className="text-[10px] font-black uppercase text-blue-600"
+                          >
+                            Editar chacote / observação
+                          </button>
+                        )}
+                      </div>
+                    )}
+                  </div>
                 );
               })}
 
@@ -1317,18 +1512,18 @@ export function MobileShell({
                     <div className="flex flex-wrap gap-1.5">
                       {selectedLaunchSlot?.galpao === "12" && (
                         <>
-                          <span className="rounded-full bg-red-50 px-2 py-1 text-[9px] font-black uppercase text-red-700">GALPÃO 12</span>
-                          <span className="rounded-full bg-red-50 px-2 py-1 text-[9px] font-black uppercase text-red-700">🔴 SOLICITAR AUTORIZAÇÃO</span>
+                          <span className="rounded-full border border-red-200 bg-red-50 px-2.5 py-1.5 text-[11px] font-black uppercase text-red-700 shadow-sm">GALPÃO 12</span>
+                          <span className="rounded-full border border-red-200 bg-red-50 px-2.5 py-1.5 text-[11px] font-black uppercase text-red-700 shadow-sm">🔴 SOLICITAR AUTORIZAÇÃO</span>
                         </>
                       )}
                       {selectedLaunchSlot?.galpao !== "12" && selectedLaunchSlot?.restricao === "teste" && (
-                        <span className="rounded-full bg-orange-50 px-2 py-1 text-[9px] font-black uppercase text-orange-700">🟠 TESTE — NÃO SEPARAR</span>
+                        <span className="rounded-full border border-orange-200 bg-orange-50 px-2.5 py-1.5 text-[11px] font-black uppercase text-orange-700 shadow-sm">🟠 TESTE — NÃO SEPARAR</span>
                       )}
                       {selectedLaunchSlot?.galpao !== "12" && selectedLaunchSlot?.restricao === "autorizacao" && (
-                        <span className="rounded-full bg-red-50 px-2 py-1 text-[9px] font-black uppercase text-red-700">🔴 SOLICITAR AUTORIZAÇÃO</span>
+                        <span className="rounded-full border border-red-200 bg-red-50 px-2.5 py-1.5 text-[11px] font-black uppercase text-red-700 shadow-sm">🔴 SOLICITAR AUTORIZAÇÃO</span>
                       )}
                       {selectedLaunchSlot?.galpao !== "12" && selectedLaunchSlot?.restricao === "outra" && (
-                        <span className="rounded-full bg-purple-50 px-2 py-1 text-[9px] font-black uppercase text-purple-700">🟣 OUTRA RESTRIÇÃO</span>
+                        <span className="rounded-full border border-purple-200 bg-purple-50 px-2.5 py-1.5 text-[11px] font-black uppercase text-purple-700 shadow-sm">🟣 OUTRA RESTRIÇÃO</span>
                       )}
                       {!selectedLaunchSlot && (
                         <span className="text-xs font-semibold text-slate-400">Selecione um endereço para visualizar a classificação do palete.</span>
@@ -1416,18 +1611,18 @@ export function MobileShell({
                         <div className="mt-2 flex flex-wrap gap-1.5">
                           {selected.galpao === "12" && (
                             <>
-                              <span className="rounded-full bg-red-50 px-2 py-1 text-[9px] font-black uppercase text-red-700">GALPÃO 12</span>
-                              <span className="rounded-full bg-red-50 px-2 py-1 text-[9px] font-black uppercase text-red-700">🔴 SOLICITAR AUTORIZAÇÃO</span>
+                              <span className="rounded-full border border-red-200 bg-red-50 px-2.5 py-1.5 text-[11px] font-black uppercase text-red-700 shadow-sm">GALPÃO 12</span>
+                              <span className="rounded-full border border-red-200 bg-red-50 px-2.5 py-1.5 text-[11px] font-black uppercase text-red-700 shadow-sm">🔴 SOLICITAR AUTORIZAÇÃO</span>
                             </>
                           )}
                           {selected.galpao !== "12" && selected.restricao === "teste" && (
-                            <span className="rounded-full bg-orange-50 px-2 py-1 text-[9px] font-black uppercase text-orange-700">🟠 TESTE — NÃO SEPARAR</span>
+                            <span className="rounded-full border border-orange-200 bg-orange-50 px-2.5 py-1.5 text-[11px] font-black uppercase text-orange-700 shadow-sm">🟠 TESTE — NÃO SEPARAR</span>
                           )}
                           {selected.galpao !== "12" && selected.restricao === "autorizacao" && (
-                            <span className="rounded-full bg-red-50 px-2 py-1 text-[9px] font-black uppercase text-red-700">🔴 SOLICITAR AUTORIZAÇÃO</span>
+                            <span className="rounded-full border border-red-200 bg-red-50 px-2.5 py-1.5 text-[11px] font-black uppercase text-red-700 shadow-sm">🔴 SOLICITAR AUTORIZAÇÃO</span>
                           )}
                           {selected.galpao !== "12" && selected.restricao === "outra" && (
-                            <span className="rounded-full bg-purple-50 px-2 py-1 text-[9px] font-black uppercase text-purple-700">🟣 OUTRA RESTRIÇÃO</span>
+                            <span className="rounded-full border border-purple-200 bg-purple-50 px-2.5 py-1.5 text-[11px] font-black uppercase text-purple-700 shadow-sm">🟣 OUTRA RESTRIÇÃO</span>
                           )}
                         </div>
                       </div>
@@ -1444,18 +1639,18 @@ export function MobileShell({
                           <div className="mt-1 flex flex-wrap gap-1.5">
                             {slot.galpao === "12" && (
                               <>
-                                <span className="rounded-full bg-red-50 px-2 py-1 text-[9px] font-black uppercase text-red-700">GALPÃO 12</span>
-                                <span className="rounded-full bg-red-50 px-2 py-1 text-[9px] font-black uppercase text-red-700">🔴 SOLICITAR AUTORIZAÇÃO</span>
+                                <span className="rounded-full border border-red-200 bg-red-50 px-2.5 py-1.5 text-[11px] font-black uppercase text-red-700 shadow-sm">GALPÃO 12</span>
+                                <span className="rounded-full border border-red-200 bg-red-50 px-2.5 py-1.5 text-[11px] font-black uppercase text-red-700 shadow-sm">🔴 SOLICITAR AUTORIZAÇÃO</span>
                               </>
                             )}
                             {slot.galpao !== "12" && slot.restricao === "teste" && (
-                              <span className="rounded-full bg-orange-50 px-2 py-1 text-[9px] font-black uppercase text-orange-700">🟠 TESTE — NÃO SEPARAR</span>
+                              <span className="rounded-full border border-orange-200 bg-orange-50 px-2.5 py-1.5 text-[11px] font-black uppercase text-orange-700 shadow-sm">🟠 TESTE — NÃO SEPARAR</span>
                             )}
                             {slot.galpao !== "12" && slot.restricao === "autorizacao" && (
-                              <span className="rounded-full bg-red-50 px-2 py-1 text-[9px] font-black uppercase text-red-700">🔴 SOLICITAR AUTORIZAÇÃO</span>
+                              <span className="rounded-full border border-red-200 bg-red-50 px-2.5 py-1.5 text-[11px] font-black uppercase text-red-700 shadow-sm">🔴 SOLICITAR AUTORIZAÇÃO</span>
                             )}
                             {slot.galpao !== "12" && slot.restricao === "outra" && (
-                              <span className="rounded-full bg-purple-50 px-2 py-1 text-[9px] font-black uppercase text-purple-700">🟣 OUTRA RESTRIÇÃO</span>
+                              <span className="rounded-full border border-purple-200 bg-purple-50 px-2.5 py-1.5 text-[11px] font-black uppercase text-purple-700 shadow-sm">🟣 OUTRA RESTRIÇÃO</span>
                             )}
                           </div>
                         </button>
@@ -1557,7 +1752,7 @@ export function MobileShell({
                       <div className="font-mono text-xs font-black text-red-700">{div.id}</div>
                       <div className="mt-1 text-sm font-black text-slate-800">{div.tipoDivergencia}</div>
                     </div>
-                  <span className="rounded-full bg-red-50 px-2 py-1 text-[9px] font-black uppercase text-red-700">
+                  <span className="rounded-full border border-red-200 bg-red-50 px-2.5 py-1.5 text-[11px] font-black uppercase text-red-700 shadow-sm">
                     Aberta
                   </span>
                 </div>

@@ -46,18 +46,20 @@ const mapRow = (row: any): WarehouseLayoutEntry => ({
   updatedAt: row.updated_at || undefined,
 });
 
-export async function loadE1Layout(): Promise<{
+
+export async function loadWarehouseLayout(): Promise<{
   data: WarehouseLayoutEntry[];
   error: string | null;
 }> {
   const { data, error } = await supabase
     .from("warehouse_layout")
     .select("id,estoque,modulo,capacidade,ativo,updated_at")
-    .eq("estoque", "1")
+    .in("estoque", ["1", "2", "3"])
+    .order("estoque", { ascending: true })
     .order("modulo", { ascending: true });
 
   if (error) {
-    console.error("Erro ao carregar configuração física do Estoque 1:", error);
+    console.error("Erro ao carregar configuração física dos estoques:", error);
     return {
       data: getDefaultE1Layout(),
       error: error.message || "Não foi possível carregar a configuração física.",
@@ -66,17 +68,22 @@ export async function loadE1Layout(): Promise<{
 
   const mapped = (data || [])
     .map(mapRow)
-    .sort((a, b) => Number(a.modulo) - Number(b.modulo));
+    .sort(
+      (a, b) =>
+        Number(a.estoque) - Number(b.estoque) ||
+        Number(a.modulo) - Number(b.modulo)
+    );
 
+  const e1 = mapped.filter(entry => entry.estoque === "1");
   return {
-    data: mapped.length > 0 ? mapped : getDefaultE1Layout(),
-    error: mapped.length > 0
-      ? null
-      : "Nenhuma configuração física foi cadastrada para o Estoque 1.",
+    data: e1.length > 0
+      ? mapped
+      : [...getDefaultE1Layout(), ...mapped.filter(entry => entry.estoque !== "1")],
+    error: null,
   };
 }
 
-export async function saveE1Layout(
+export async function saveWarehouseLayout(
   entries: WarehouseLayoutEntry[],
   userId: string
 ): Promise<{ data: WarehouseLayoutEntry[] | null; error: string | null }> {
@@ -84,7 +91,7 @@ export async function saveE1Layout(
 
   const payload = entries.map(entry => ({
     id: entry.id,
-    estoque: "1",
+    estoque: String(entry.estoque).replace(/^E/i, ""),
     modulo: String(Number(entry.modulo)),
     capacidade: Number(entry.capacidade),
     ativo: Boolean(entry.ativo),
@@ -98,7 +105,7 @@ export async function saveE1Layout(
     .select("id,estoque,modulo,capacidade,ativo,updated_at");
 
   if (error) {
-    console.error("Erro ao salvar configuração física do Estoque 1:", error);
+    console.error("Erro ao salvar configuração física dos estoques:", error);
     return {
       data: null,
       error: error.message || "Não foi possível salvar a configuração física.",
@@ -108,7 +115,21 @@ export async function saveE1Layout(
   return {
     data: (data || [])
       .map(mapRow)
-      .sort((a, b) => Number(a.modulo) - Number(b.modulo)),
+      .sort(
+        (a, b) =>
+          Number(a.estoque) - Number(b.estoque) ||
+          Number(a.modulo) - Number(b.modulo)
+      ),
     error: null,
   };
+}
+
+/** Compatibilidade com chamadas legadas: mantém a API anterior para E1. */
+export const loadE1Layout = loadWarehouseLayout;
+
+export async function saveE1Layout(
+  entries: WarehouseLayoutEntry[],
+  userId: string
+): Promise<{ data: WarehouseLayoutEntry[] | null; error: string | null }> {
+  return saveWarehouseLayout(entries, userId);
 }

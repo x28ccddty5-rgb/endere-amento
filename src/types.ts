@@ -42,7 +42,7 @@ export interface LancamentoRow {
   posicao: string;
   referencia: string;
   quantidade: number | "";
-  tipo: "Entrada" | "Saída";
+  tipo: "Entrada" | "Saída" | "";
   dataChacote: string;
   hora: string;
   responsavel: string;
@@ -61,7 +61,7 @@ export interface HistoricoMov {
   posicao: string;
   referencia: string;
   quantidade: number;
-  tipo: "Entrada" | "Saída";
+  tipo: "Entrada" | "Saída" | "";
   dataChacote: string;
   hora: string;
   responsavel: string;

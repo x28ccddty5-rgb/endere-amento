@@ -15,7 +15,6 @@ import {
   HistoricoMov, 
   Divergencia, 
   LancamentoRow, 
-  AppMode, 
   Product,
   Galpao,
   Restricao,
@@ -26,14 +25,13 @@ import { normalizeRole, canExecuteOperations, isAdmin, isReadOnlyRole } from "./
 import { DashboardCards } from "./components/DashboardCards";
 import { InteractiveMapa } from "./components/InteractiveMapa";
 import { AdminUsersManagement, AppUser } from "./components/AdminUsersManagement";
-import { AisleStoragePanel } from "./components/AisleStoragePanel";
 import { DivergenciasPanel } from "./components/DivergenciasPanel";
 import { MobileShell } from "./components/mobile/MobileShell";
 import { readOfflineSnapshot, saveOfflineSnapshot } from "./lib/offlineCache";
 import { getPhysicalAddressKey } from "./lib/slotUtils";
 import { BaseDeDadosPanel } from "./components/BaseDeDadosPanel";
 import { WarehouseLayoutPanel } from "./components/WarehouseLayoutPanel";
-import { getDefaultE1Layout, getE1CapacityMap, getE1TotalCapacity, loadE1Layout, saveE1Layout } from "./lib/warehouseLayout";
+import { getDefaultE1Layout, getE1CapacityMap, getE1TotalCapacity, loadWarehouseLayout, saveWarehouseLayout } from "./lib/warehouseLayout";
 import { 
   LayoutDashboard, 
   Search, 
@@ -132,6 +130,56 @@ const deleteLancamentoDraftFromSupabase = async (
 };
 
 const getTodayIsoDate = (): string => new Date().toISOString().slice(0, 10);
+
+const formatDateMask = (value: string): string => {
+  const digits = value.replace(/\D/g, "").slice(0, 8);
+  if (digits.length <= 2) return digits;
+  if (digits.length <= 4) return `${digits.slice(0, 2)}/${digits.slice(2)}`;
+  return `${digits.slice(0, 2)}/${digits.slice(2, 4)}/${digits.slice(4)}`;
+};
+
+const formatStoredDateForInput = (value: string): string => {
+  if (/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    const [year, month, day] = value.split("-");
+    return `${day}/${month}/${year}`;
+  }
+  return value;
+};
+
+const normalizeDateInputValue = (value: string): string => {
+  const formatted = formatDateMask(value);
+  if (!/^\d{2}\/\d{2}\/\d{4}$/.test(formatted)) return formatted;
+
+  const [day, month, year] = formatted.split("/");
+  return `${year}-${month}-${day}`;
+};
+
+const formatChacoteMask = (value: string): string => {
+  const clean = value.trim().toUpperCase();
+  if (/^N(T)?$/.test(clean)) return clean;
+
+  const digits = clean.replace(/\D/g, "").slice(0, 8);
+  if (digits.length <= 2) return digits;
+  if (digits.length <= 4) return `${digits.slice(0, 2)}/${digits.slice(2)}`;
+  return `${digits.slice(0, 2)}/${digits.slice(2, 4)}/${digits.slice(4)}`;
+};
+
+const normalizeTypedMovementType = (
+  value: string,
+  current: LancamentoRow["tipo"]
+): LancamentoRow["tipo"] => {
+  const normalized = value
+    .trim()
+    .toUpperCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+
+  if (!normalized) return "";
+  if (normalized.startsWith("E")) return "Entrada";
+  if (normalized.startsWith("S") || normalized.startsWith("A")) return "Saída";
+  return current;
+};
+
 
 const getIsoDateDaysAgo = (days: number): string => {
   const date = new Date();
@@ -798,14 +846,14 @@ useEffect(() => {
   let cancelled = false;
 
   const loadLayout = async () => {
-    setE1LayoutLoading(true);
-    const result = await loadE1Layout();
+    setWarehouseLayoutLoading(true);
+    const result = await loadWarehouseLayout();
 
     if (cancelled) return;
 
-    setE1Layout(result.data);
-    setE1LayoutError(result.error);
-    setE1LayoutLoading(false);
+    setWarehouseLayout(result.data);
+    setWarehouseLayoutError(result.error);
+    setWarehouseLayoutLoading(false);
   };
 
   loadLayout();
@@ -910,7 +958,6 @@ useEffect(() => {
       "lançamento",
       "divergências",
       "base",
-      "corredor",
       "mapa",
       "ai"
     ];
@@ -1091,10 +1138,10 @@ const deleteProduct = async (
 
   // --- CORE SYSTEM DATA PERSISTENCE ---
   const [slots, setSlots] = useState<WarehouseSlot[]>([]);
-  const [e1Layout, setE1Layout] = useState<WarehouseLayoutEntry[]>(() => getDefaultE1Layout());
-  const [e1LayoutLoading, setE1LayoutLoading] = useState(false);
-  const [e1LayoutSaving, setE1LayoutSaving] = useState(false);
-  const [e1LayoutError, setE1LayoutError] = useState<string | null>(null);
+  const [warehouseLayout, setWarehouseLayout] = useState<WarehouseLayoutEntry[]>(() => getDefaultE1Layout());
+  const [warehouseLayoutLoading, setWarehouseLayoutLoading] = useState(false);
+  const [warehouseLayoutSaving, setWarehouseLayoutSaving] = useState(false);
+  const [warehouseLayoutError, setWarehouseLayoutError] = useState<string | null>(null);
 
   const [history, setHistory] = useState<HistoricoMov[]>([]);
 
@@ -1121,7 +1168,12 @@ const deleteProduct = async (
     return saved;
   };
 
-  const handleSaveE1Layout = async (
+  const handleMobileUpdateSlot = async (updatedSlot: WarehouseSlot): Promise<boolean> =>
+    persistSlotsUpdate(
+      slots.map(slot => (slot.id === updatedSlot.id ? updatedSlot : slot))
+    );
+
+  const handleSaveWarehouseLayout = async (
     entries: WarehouseLayoutEntry[]
   ): Promise<boolean> => {
     if (!authUserId || !isAdmin(currentUser?.role)) {
@@ -1129,22 +1181,22 @@ const deleteProduct = async (
       return false;
     }
 
-    setE1LayoutSaving(true);
+    setWarehouseLayoutSaving(true);
 
-    const result = await saveE1Layout(entries, authUserId);
+    const result = await saveWarehouseLayout(entries, authUserId);
 
     if (result.error || !result.data) {
-      setE1LayoutSaving(false);
+      setWarehouseLayoutSaving(false);
       alert(
-        `Não foi possível salvar a configuração física do Estoque 1.\n\n${result.error || "Erro desconhecido."}`
+        `Não foi possível salvar a configuração física dos estoques.\n\n${result.error || "Erro desconhecido."}`
       );
       return false;
     }
 
-    setE1Layout(result.data);
-    setE1LayoutError(null);
-    setE1LayoutSaving(false);
-    alert("Configuração física do Estoque 1 salva com sucesso.");
+    setWarehouseLayout(result.data);
+    setWarehouseLayoutError(null);
+    setWarehouseLayoutSaving(false);
+    alert("Configuração física dos estoques salva com sucesso.");
     return true;
   };
 
@@ -1434,7 +1486,7 @@ const deleteProduct = async (
       productsList.map(product => [product.referencia, product])
     );
 
-    const activeCapacityMap = getE1CapacityMap(e1Layout);
+    const activeCapacityMap = getE1CapacityMap(warehouseLayout);
 
     return slots
       .filter(
@@ -1453,20 +1505,8 @@ const deleteProduct = async (
 
         return total + calcularPaletes(slot.saldo, produto.paletizacao);
       }, 0);
-  }, [slots, productsList, e1Layout]);
+  }, [slots, productsList, warehouseLayout]);
   
-  const [appMode, setAppMode] = useState<AppMode>(() => {
-    const saved = localStorage.getItem("eb_mode");
-    return (saved as AppMode) || "basico";
-  });
-
-  
-  // Persistência explícita: evita gravar listas inteiras a cada render/alteração de estado.
-
-  useEffect(() => {
-    localStorage.setItem("eb_mode", appMode);
-  }, [appMode]);
-
   // --- SYSTEM LOG OPERATOR RESPONSIBLES ---
   const operator = currentUser?.name || "Administrador Geral";
   const launchDate = new Date().toISOString().split("T")[0];
@@ -1679,13 +1719,13 @@ const lancamentoInputRefs = useRef<Record<string, HTMLInputElement | null>>({});
     const rowId = `ROW-${generateId()}`;
     const defaultRow: LancamentoRow = {
       id: rowId,
-      data: launchDate,
+      data: "",
       estoque: "1",
       modulo: "",
       posicao: "",
       referencia: "",
       quantidade: "",
-      tipo: "Entrada",
+      tipo: "",
       dataChacote: "",
       hora: "",
       responsavel: "",
@@ -1702,16 +1742,6 @@ const lancamentoInputRefs = useRef<Record<string, HTMLInputElement | null>>({});
     }, 0);
 
     return rowId;
-  };
-
-  const handleLancamentoInputKeyDown = (
-    event: KeyboardEvent<HTMLInputElement>
-  ) => {
-    if (event.key !== "Enter") return;
-
-    event.preventDefault();
-    event.stopPropagation();
-    addLancamentoRow();
   };
 
   const getPreviousResponsaveis = (rowId: string): string[] => {
@@ -1772,30 +1802,140 @@ const lancamentoInputRefs = useRef<Record<string, HTMLInputElement | null>>({});
 
   const updateRowField = (id: string, field: keyof LancamentoRow, value: any) => {
     setLancamentoRows(prev => prev.map(row => {
-      if (row.id === id) {
-        // Automatically translate stock type to uppercase
-        let nextValue = value;
-        if (field === "referencia") nextValue = value.toUpperCase();
-        if (field === "modulo") nextValue = value.replace(/\D/g, "");
-        if (field === "posicao") nextValue = value.toUpperCase();
-        
-        const updated = { ...row, [field]: nextValue };
+      if (row.id !== id) return row;
 
-        // Clean positions if E1 is selected
-        if (field === "estoque" && nextValue === "E1") {
-          updated.posicao = "";
-          updated.modulo = "11";
-        } else if (field === "estoque" && (nextValue === "E2" || nextValue === "E3")) {
-          updated.modulo = "1";
-          updated.posicao = "A1";
-        }
-        return updated;
+      let nextValue = value;
+
+      if (field === "data") {
+        nextValue = normalizeDateInputValue(String(value));
       }
-      return row;
+
+      if (field === "dataChacote") {
+        nextValue = formatChacoteMask(String(value));
+      }
+
+      if (field === "referencia") {
+        nextValue = String(value).toUpperCase();
+      }
+
+      if (field === "modulo") {
+        nextValue = String(value).replace(/\D/g, "").slice(0, 3);
+      }
+
+      if (field === "posicao") {
+        nextValue = String(value).toUpperCase().slice(0, 3);
+      }
+
+      if (field === "estoque") {
+        const raw = String(value).toUpperCase().replace(/[^E0-9]/g, "");
+        const digit = raw.replace(/^E/, "").slice(0, 1);
+        nextValue =
+          digit && ["1", "2", "3"].includes(digit)
+            ? `E${digit}`
+            : raw.startsWith("E")
+              ? "E"
+              : "";
+      }
+
+      if (field === "galpao") {
+        const digits = String(value).replace(/\D/g, "").slice(0, 2);
+        nextValue = digits as Galpao | "";
+      }
+
+      if (field === "tipo") {
+        nextValue = normalizeTypedMovementType(String(value), row.tipo);
+      }
+
+      const updated = { ...row, [field]: nextValue };
+
+      if (field === "estoque" && nextValue === "E1") {
+        updated.posicao = "";
+        if (!updated.modulo) updated.modulo = "11";
+      } else if (
+        field === "estoque" &&
+        (nextValue === "E2" || nextValue === "E3") &&
+        row.modulo === "11"
+      ) {
+        updated.modulo = "";
+        updated.posicao = "";
+      }
+
+      if (field === "galpao" && nextValue === "12") {
+        updated.restricao = "autorizacao";
+      }
+
+      return updated;
     }));
   };
 
-const lancamentoRowsFiltradas = lancamentoRows.filter((row) => {
+  const handleLancamentoInputKeyDown = (
+    event: KeyboardEvent<HTMLElement>
+  ) => {
+    const target = event.currentTarget as HTMLElement;
+    const rowId = target.dataset.lancamentoRow;
+    const column = Number(target.dataset.lancamentoCol);
+
+    if (!rowId || !Number.isInteger(column)) return;
+
+    if (event.key === "Enter") {
+      event.preventDefault();
+      event.stopPropagation();
+      addLancamentoRow();
+      return;
+    }
+
+    if (!["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(event.key)) {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+
+    const visibleRows = lancamentoRowsFiltradas;
+    const rowIndex = visibleRows.findIndex(row => row.id === rowId);
+    if (rowIndex < 0) return;
+
+    let targetRowIndex = rowIndex;
+    let targetColumn = column;
+
+    if (event.key === "ArrowUp") targetRowIndex -= 1;
+    if (event.key === "ArrowDown") targetRowIndex += 1;
+    if (event.key === "ArrowLeft") targetColumn -= 1;
+    if (event.key === "ArrowRight") targetColumn += 1;
+
+    const horizontalDirection =
+      event.key === "ArrowRight" ? 1 : event.key === "ArrowLeft" ? -1 : 0;
+    const verticalDirection =
+      event.key === "ArrowDown" ? 1 : event.key === "ArrowUp" ? -1 : 0;
+
+    let rowCursor = targetRowIndex;
+    let columnCursor = targetColumn;
+    let targetElement: HTMLElement | null = null;
+
+    while (rowCursor >= 0 && rowCursor < visibleRows.length && columnCursor >= 2 && columnCursor <= 14) {
+      const targetRow = visibleRows[rowCursor];
+      targetElement = document.querySelector<HTMLElement>(
+        `[data-lancamento-row="${targetRow.id}"][data-lancamento-col="${columnCursor}"]`
+      );
+
+      const isDisabled =
+        targetElement instanceof HTMLInputElement || targetElement instanceof HTMLSelectElement
+          ? targetElement.disabled
+          : false;
+
+      if (targetElement && !isDisabled) break;
+
+      if (horizontalDirection !== 0) {
+        columnCursor += horizontalDirection;
+      } else {
+        rowCursor += verticalDirection;
+      }
+    }
+
+    targetElement?.focus();
+  };
+
+  const lancamentoRowsFiltradas = lancamentoRows.filter((row) => {
 const numeroLinha = lancamentoRows.indexOf(row) + 1;
 
 if (
@@ -1871,9 +2011,10 @@ if (
           row,
           index + 1,
           productsList,
-          appMode === "avancado",
+          true,
           slots,
-          getE1CapacityMap(e1Layout)
+          getE1CapacityMap(warehouseLayout),
+          warehouseLayout
         );
         allErrors = [...allErrors, ...rowErrors];
 
@@ -1915,8 +2056,9 @@ if (
         launchDate,
         divergencias,
         productsList,
-        appMode === "avancado",
-        getE1CapacityMap(e1Layout)
+        true,
+        getE1CapacityMap(warehouseLayout),
+        warehouseLayout
       );
 
       const updatedDivergencias = [...newDivergencias, ...divergencias];
@@ -2026,9 +2168,10 @@ if (
       row,
       1,
       productsList,
-      appMode === "avancado",
+      true,
       slots,
-      getE1CapacityMap(e1Layout)
+      getE1CapacityMap(warehouseLayout),
+      warehouseLayout
     );
 
     if (errors.length > 0) {
@@ -2085,8 +2228,8 @@ if (
       launchDate,
       divergencias,
       productsList,
-      appMode === "avancado",
-      getE1CapacityMap(e1Layout)
+      true,
+      getE1CapacityMap(warehouseLayout)
     );
 
     if (processedCount === 0 && newDivergencias.length === 0) {
@@ -2750,9 +2893,11 @@ if (refRaw) {
     setSearchDesc("");
     setFilterEstoque("");
     setFilterGalpao("");
+    setFilterRestricao("");
     setSearchObservacao("");
     setSearchModulo("");
     setSearchPosicao("");
+    setSomenteAcimaPaletizacao(false);
     setSearchPage(1);
   };
 
@@ -4082,10 +4227,6 @@ if (refRaw) {
   const canAccessTab = (tab: string): boolean => {
     if (!currentUser) return false;
 
-    if (tab === "corredor" && appMode !== "avancado") {
-      return false;
-    }
-
     if (tab === "configuracao") {
       return isAdmin(currentUser.role);
     }
@@ -4125,6 +4266,7 @@ if (refRaw) {
         canExecute={canExecuteOperations(currentUser.role)}
         activeTab={mobileActiveTab}
         onTabChange={tab => setActiveTab(tab)}
+        onUpdateSlot={handleMobileUpdateSlot}
         onUnitaryLaunch={handleUnitaryLaunch}
         onTransferPosition={handleTransferPosition}
         onResolveDivergencia={handleMobileResolveDivergencia}
@@ -4201,19 +4343,6 @@ if (refRaw) {
             </button>
           )}
 
-          {canAccessTab("corredor") && (
-            <button
-              onClick={() => setActiveTab("corredor")}
-              className={`w-full flex items-center space-x-3 px-4 py-2 text-xs font-bold transition-all ${
-                activeTab === "corredor" 
-                  ? "bg-blue-600/15 border-l-4 border-blue-500 text-blue-400 font-bold text-xs" 
-                  : "hover:bg-slate-800 text-slate-350"
-              }`}
-            >
-              <Map className="w-4 h-4 shrink-0" />
-              <span>ENDEREÇO CORREDOR</span>
-            </button>
-          )}
 
           {canAccessTab("histórico") && (
             <button
@@ -4286,7 +4415,6 @@ if (refRaw) {
               {canAccessTab("mapa") && (
                  <button
                   onClick={() => {
-                    setAppMode("avancado");
                     setActiveTab("mapa");
                   }}
                   className={`w-full flex items-center space-x-3 px-4 py-2 text-xs font-bold transition-all ${
@@ -4303,7 +4431,6 @@ if (refRaw) {
               {canAccessTab("ai") && (
                 <button
                   onClick={() => {
-                    setAppMode("avancado");
                     setActiveTab("ai");
                   }}
                   className={`w-full flex items-center space-x-3 px-4 py-2 text-xs font-bold transition-all ${
@@ -4335,33 +4462,6 @@ if (refRaw) {
           )}
 
         </nav>
-
-        {/* Linked Version Selector */}
-        <div className="p-4 border-t border-slate-800">
-          <div className="text-[9px] text-slate-500 uppercase font-extrabold mb-1.5 tracking-wider">Acesso de Versão</div>
-          <div className="flex bg-slate-950 rounded-lg p-0.5 border border-slate-800">
-            <button
-              onClick={() => setAppMode("basico")}
-              className={`flex-1 py-1 text-[9px] rounded font-bold transition uppercase ${
-                appMode === "basico" 
-                  ? "bg-slate-800 text-white" 
-                  : "text-slate-500 hover:text-slate-300"
-              }`}
-            >
-              Básico
-            </button>
-            <button
-              onClick={() => setAppMode("avancado")}
-              className={`flex-1 py-1 text-[9px] rounded font-bold transition uppercase ${
-                appMode === "avancado" 
-                  ? "bg-slate-800 text-white" 
-                  : "text-slate-500 hover:text-slate-300"
-              }`}
-            >
-              Avançado
-            </button>
-          </div>
-        </div>
 
         {/* Sidebar user profile indicator footer */}
         <div className="p-3 border-t border-slate-800 bg-slate-950 text-[11px] leading-tight space-y-2">
@@ -4395,7 +4495,7 @@ if (refRaw) {
         <header className="bg-white border-b border-slate-200 px-6 py-3 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 no-print shrink-0 shadow-2xs">
           <div className="flex items-center space-x-3">
             <h1 className="text-sm font-black text-slate-700 font-sans tracking-tight uppercase">Módulo de Estoque • Porto Brasil</h1>
-            {appMode === "avancado" && (
+            {true && (
               <span className="bg-sky-50 text-sky-800 text-[9px] font-black px-2 py-0.5 rounded border border-sky-200 uppercase">
                 Gêmeo Digital Sincronizado
               </span>
@@ -4437,7 +4537,7 @@ if (refRaw) {
                 <div>
                   <h3 className="text-md font-extrabold uppercase tracking-wide">Fábrica Integrada • Porto Brasil Cerâmica</h3>
                   <p className="text-xs text-slate-300 max-w-2xl mt-1 leading-normal font-medium">
-                    Plataforma de endereçamento integrada de dados lógicos. A versão básica e a versão avançada estão conectadas: os lançamentos e as correções do módulo de divergências atualizam o Gêmeo Digital em tempo real.
+                    Plataforma de endereçamento integrada de dados lógicos. A operação utiliza uma única versão integrada: os lançamentos e as correções do módulo de divergências atualizam o Gêmeo Digital em tempo real.
                   </p>
                 </div>
                 <div className="flex gap-2 shrink-0">
@@ -4453,12 +4553,7 @@ if (refRaw) {
                   >
                     Efetuar Lançamentos
                   </button>
-                  <button
-                    onClick={() => setAppMode(appMode === "basico" ? "avancado" : "basico")}
-                    className="bg-slate-700 hover:bg-slate-650 border border-slate-600 text-white px-4 py-2 rounded-lg text-xs font-black transition cursor-pointer uppercase"
-                  >
-                    {appMode === "basico" ? "Ativar Modo Avançado" : "Ativar Modo Básico"}
-                  </button>
+
                 </div>
               </div>
 
@@ -4469,8 +4564,8 @@ if (refRaw) {
                 divergencias={divergencias}
                 productsList={productsList}
                 occupiedPalletsE1={occupiedPalletsE1}
-                e1CapacityTotal={getE1TotalCapacity(e1Layout)}
-                appMode={appMode}
+                e1CapacityTotal={getE1TotalCapacity(warehouseLayout)}
+                appMode="avancado"
                 canPerformActions={canExecuteOperations(currentUser?.role)}
               />
 
@@ -4493,7 +4588,7 @@ if (refRaw) {
                         let occupied = 0;
                         
                         if (est === "1") {
-                          total = getE1TotalCapacity(e1Layout);
+                          total = getE1TotalCapacity(warehouseLayout);
                           occupied = occupiedPalletsE1;
                         }
                         
@@ -4532,7 +4627,6 @@ if (refRaw) {
 
                   <button
                     onClick={() => {
-                      setAppMode("avancado");
                       setActiveTab("mapa");
                     }}
                     className="w-full bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-black transition rounded-lg py-2.5 mt-6 border border-slate-250 shadow-xs uppercase tracking-wider"
@@ -4561,7 +4655,6 @@ if (refRaw) {
 
                   <button
                     onClick={() => {
-                      setAppMode("avancado");
                       setActiveTab("ai");
                     }}
                     className="w-full bg-amber-500/10 border border-amber-200 text-amber-820 hover:bg-amber-500/25 text-amber-800 text-xs font-black transition rounded-lg py-2.5 mt-6 uppercase tracking-wider"
@@ -4612,82 +4705,8 @@ if (refRaw) {
                 </div>
 
                 <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-6 gap-4">
-                  {appMode === "basico" ? (
+                  {
                     <>
-                      <div>
-                        <label className="text-[10px] text-slate-450 font-bold block uppercase mb-1">Buscar SKU</label>
-                        <input 
-                          type="text" 
-                          value={searchRef}
-                          onChange={(e) => { setSearchRef(e.target.value); setSearchPage(1); }}
-                          placeholder="EX: 092"
-                          className="w-full border border-slate-300 rounded-lg p-2 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500 uppercase font-mono font-bold"
-                        />
-                      </div>
-
-                      <div>
-                        <label className="text-[10px] text-slate-450 font-bold block uppercase mb-1">Estoque</label>
-                        <select
-                          value={filterEstoque}
-                          onChange={(e) => { setFilterEstoque(e.target.value); setSearchPage(1); }}
-                          className="w-full border border-slate-300 bg-white rounded-lg p-2 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500 font-bold"
-                        >
-                          <option value="">Todos</option>
-                          <option value="E1">1</option>
-                          <option value="E2">2</option>
-                          <option value="E3">3</option>
-                        </select>
-                      </div>
-
-                      <div className="flex items-center gap-2">
-                        <input
-                          type="checkbox"
-                          checked={somenteAcimaPaletizacao}
-                          onChange={(e) => {
-                            setSomenteAcimaPaletizacao(e.target.checked);
-                            setSearchPage(1);
-                          }}
-                        />
-                      
-                        <label className="text-xs font-bold text-indigo-600">
-                          Apenas acima da paletização
-                        </label>
-                      </div>
-                      
-                      <div>
-                        <label className="text-[10px] text-slate-450 font-bold block uppercase mb-1">Módulo / Rua</label>
-                        <input 
-                          type="text" 
-                          value={searchModulo}
-                          onChange={(e) => { setSearchModulo(e.target.value); setSearchPage(1); }}
-                          placeholder="Ex: 11"
-                          className="w-full border border-slate-300 rounded-lg p-2 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500 uppercase font-mono font-bold"
-                        />
-                      </div>
-
-                      <div>
-                        <label className="text-[10px] text-slate-450 font-bold block uppercase mb-1">Posição</label>
-                        <input 
-                          type="text" 
-                          value={searchPosicao}
-                          onChange={(e) => { setSearchPosicao(e.target.value); setSearchPage(1); }}
-                          placeholder="Ex: A1"
-                          className="w-full border border-slate-300 rounded-lg p-2 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500 uppercase font-mono font-bold"
-                        />
-                      </div>
-                    </>
-                  ) : (
-                    <>
-                      <div>
-                        <label className="text-[10px] text-slate-450 font-bold block uppercase mb-1">Local Geral</label>
-                        <input 
-                          type="text" 
-                          value="GALPAO" 
-                          disabled
-                          className="w-full bg-slate-100 border border-slate-200 rounded-lg p-2 text-xs font-bold font-mono text-slate-500"
-                        />
-                      </div>
-
                       <div>
                         <label className="text-[10px] text-slate-450 font-bold block uppercase mb-1">Referência SKU</label>
                         <input 
@@ -4762,8 +4781,22 @@ if (refRaw) {
                           className="w-full border border-slate-300 rounded-lg p-2 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500 font-bold"
                         />
                       </div>
+
+                      <label className="flex items-center gap-2 self-end pb-2">
+                        <input
+                          type="checkbox"
+                          checked={somenteAcimaPaletizacao}
+                          onChange={(e) => {
+                            setSomenteAcimaPaletizacao(e.target.checked);
+                            setSearchPage(1);
+                          }}
+                        />
+                        <span className="text-xs font-bold text-indigo-600">
+                          Apenas acima da paletização
+                        </span>
+                      </label>
                     </>
-                  )}
+                   }
                 </div>
               </div>
 
@@ -4787,9 +4820,9 @@ if (refRaw) {
                         <th className="py-3 px-4 font-bold">Descrição do Item</th>
                         <th className="py-3 px-4 font-bold text-right">Saldo Logístico (pçs)</th>
                         <th className="py-3 px-4 font-bold">Data Chacote</th>
-                        <th className="py-3 px-4 font-bold">Última data de movimentação</th>
-                        <th className="py-3 px-4 font-bold">Última hora de movimentação</th>
+                        <th className="py-3 px-4 font-bold">Última mov.</th>
                         <th className="py-3 px-4 font-bold">Responsável</th>
+                        <th className="py-3 px-4 font-bold">Observação</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100 font-medium text-slate-700">
@@ -4853,15 +4886,19 @@ if (refRaw) {
                               )}
                             </td>
                               <td className="py-3 px-4 font-mono text-slate-550">{isOccupied ? (s.dataChacote || "—") : "—" }</td>
-                              <td className="py-3 px-4 font-mono text-slate-500">{isOccupied ? s.ultimaData : "—"}</td>
-                              <td className="py-3 px-4 font-mono text-slate-500">{isOccupied ? s.ultimaHora : "—"}</td>
-                              <td className="py-3 px-4 text-slate-705 font-bold">{isOccupied ? s.ultimoResponsavel : "—"}</td>
+                              <td className="py-3 px-4 font-mono text-slate-500 whitespace-nowrap">
+                                {isOccupied ? `${s.ultimaData || "—"} ${s.ultimaHora || ""}`.trim() : "—"}
+                              </td>
+                              <td className="py-3 px-4 text-slate-705 font-bold whitespace-nowrap">{isOccupied ? s.ultimoResponsavel : "—"}</td>
+                              <td className="py-3 px-4 max-w-[220px] truncate text-slate-500" title={isOccupied ? s.observacao || "" : ""}>
+                                {isOccupied ? s.observacao || "—" : "—"}
+                              </td>
                             </tr>
                           );
                         })
                       ) : (
                         <tr>
-                          <td colSpan={12} className="py-20 text-center text-slate-400 font-medium bg-slate-50">
+                          <td colSpan={11} className="py-20 text-center text-slate-400 font-medium bg-slate-50">
                             Nenhum endereço correspondente aos filtros de pesquisa inseridos.
                           </td>
                         </tr>
@@ -4952,7 +4989,7 @@ if (refRaw) {
             <div className="space-y-6">
               
               {/* If advanced mode, offer a toggle between Lançamento Unitário and Lançamento em Lote */}
-              {appMode === "avancado" && (
+              {true && (
                 <div className="flex bg-slate-100 p-1.5 rounded-xl max-w-lg border border-slate-200">
                   <button
                     onClick={() => !isReadOnly && setSelectedLaunchType("unitario")}
@@ -4981,7 +5018,7 @@ if (refRaw) {
                 </div>
               )}
 
-              {appMode === "avancado" && selectedLaunchType === "unitario" ? (
+              {true && selectedLaunchType === "unitario" ? (
                 <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
                   {/* Left Column - Form exactly styled like AisleStoragePanel */}
                   <div className="lg:col-span-1 bg-white border border-slate-200 p-5 rounded-xl shadow-xs space-y-4 h-fit">
@@ -5076,9 +5113,13 @@ if (refRaw) {
                       <div>
                         <label className="text-[10px] text-slate-450 block font-bold mb-1 uppercase">Quantidade (Peças)</label>
                         <input
-                          type="number"
+                          type="text"
+                          inputMode="numeric"
                           value={unitQuantidade}
-                          onChange={(e) => setUnitQuantidade(e.target.value === "" ? "" : Math.max(1, parseInt(e.target.value)))}
+                          onChange={(e) => {
+                            const digits = e.target.value.replace(/\D/g, "");
+                            setUnitQuantidade(digits ? String(Math.max(1, parseInt(digits, 10))) : "");
+                          }}
                           placeholder="Ex: 500"
                           className="w-full bg-white border border-slate-300 rounded p-2 text-xs font-mono font-bold text-slate-800 focus:outline-none"
                         />
@@ -5397,7 +5438,7 @@ if (refRaw) {
                         </thead>
                       <tbody className="divide-y divide-slate-150">
                         {lancamentoRowsFiltradas.map((row, index) => {
-                          const isE1 = row.estoque === "E1";
+                          const isE1 = row.estoque.replace(/^E/i, "") === "1";
                           const desc = getProductDesc(row.referencia);
                         
                           return (
@@ -5407,45 +5448,62 @@ if (refRaw) {
                             </td>
                               {/* Data Lançamento */}
                               <td className="py-2 px-2.5">
-                                <input 
+                                <input
                                   ref={(element) => { lancamentoInputRefs.current[row.id] = element; }}
-                                  type="date" 
-                                  value={row.data}
+                                  type="text"
+                                  inputMode="numeric"
+                                  maxLength={10}
+                                  value={formatStoredDateForInput(row.data)}
+                                  placeholder="DD/MM/AAAA"
+                                  data-lancamento-row={row.id}
+                                  data-lancamento-col="2"
                                   onChange={(e) => updateRowField(row.id, "data", e.target.value)}
                                   onKeyDown={handleLancamentoInputKeyDown}
-                                  className="w-full border border-slate-300 rounded p-1 text-xs focus:ring-1 focus:ring-indigo-500 focus:outline-none"
+                                  className="w-full border border-slate-300 rounded p-1 text-xs font-mono focus:ring-1 focus:ring-indigo-500 focus:outline-none"
                                 />
                               </td>
 
                               {/* Galpão */}
                               <td className="py-2 px-2.5">
-                                <select
-                                  value={row.galpao || "3"}
-                                  onChange={(e) => {
-                                    const nextGalpao = e.target.value as Galpao;
-                                    updateRowField(row.id, "galpao", nextGalpao);
-                                    if (nextGalpao === "12") {
-                                      updateRowField(row.id, "restricao", "autorizacao");
-                                    }
-                                  }}
+                                <input
+                                  type="text"
+                                  inputMode="numeric"
+                                  maxLength={2}
+                                  value={row.galpao || ""}
+                                  placeholder="3 ou 12"
+                                  data-lancamento-row={row.id}
+                                  data-lancamento-col="3"
+                                  onChange={(e) => updateRowField(row.id, "galpao", e.target.value)}
+                                  onKeyDown={handleLancamentoInputKeyDown}
+                                  list={`galpoes-${row.id}`}
                                   className="w-full border border-slate-300 rounded p-1 text-xs bg-white focus:ring-1 focus:ring-indigo-500 focus:outline-none font-bold"
-                                >
-                                  <option value="3">3</option>
-                                  <option value="12">12</option>
-                                </select>
+                                />
+                                <datalist id={`galpoes-${row.id}`}>
+                                  <option value="3" />
+                                  <option value="12" />
+                                </datalist>
                               </td>
 
                               {/* Estoque selector E1, E2, E3 */}
                               <td className="py-2 px-2.5 font-bold">
-                                <select
-                                  value={row.estoque}
+                                <input
+                                  type="text"
+                                  inputMode="numeric"
+                                  maxLength={2}
+                                  value={row.estoque.replace(/^E/i, "")}
+                                  placeholder="1/2/3"
+                                  data-lancamento-row={row.id}
+                                  data-lancamento-col="4"
                                   onChange={(e) => updateRowField(row.id, "estoque", e.target.value)}
+                                  onKeyDown={handleLancamentoInputKeyDown}
+                                  list={`estoques-${row.id}`}
                                   className="w-full border border-slate-300 rounded p-1 text-xs bg-white focus:ring-1 focus:ring-indigo-500 focus:outline-none font-bold"
-                                >
-                                  <option value="E1">1</option>
-                                  <option value="E2">2</option>
-                                  <option value="E3">3</option>
-                                </select>
+                                />
+                                <datalist id={`estoques-${row.id}`}>
+                                  <option value="1" />
+                                  <option value="2" />
+                                  <option value="3" />
+                                </datalist>
                               </td>
 
                               {/* Modulo / Rua value */}
@@ -5454,6 +5512,8 @@ if (refRaw) {
                                   type="text" 
                                   value={row.modulo}
                                   placeholder={isE1 ? "1 a 22" : "1 a 172"}
+                                   data-lancamento-row={row.id}
+                                   data-lancamento-col="5"
                                   onChange={(e) => updateRowField(row.id, "modulo", e.target.value)}
                                   onKeyDown={handleLancamentoInputKeyDown}
                                   className="w-full border border-slate-300 rounded p-1 text-xs uppercase focus:ring-1 focus:ring-indigo-500 focus:outline-none font-bold font-mono"
@@ -5467,6 +5527,8 @@ if (refRaw) {
                                   value={isE1 ? "SEM POSI" : row.posicao}
                                   disabled={isE1}
                                   placeholder={isE1 ? "SEM POSI" : "Ex: A1, B1"}
+                                   data-lancamento-row={row.id}
+                                   data-lancamento-col="6"
                                   onChange={(e) => updateRowField(row.id, "posicao", e.target.value)}
                                   onKeyDown={handleLancamentoInputKeyDown}
                                   className={`w-full border rounded p-1 text-xs uppercase focus:ring-1 focus:ring-indigo-500 focus:outline-none font-bold font-mono ${
@@ -5481,6 +5543,8 @@ if (refRaw) {
                                   <input 
                                     type="text" 
                                     value={row.referencia}
+                                     data-lancamento-row={row.id}
+                                     data-lancamento-col="7"
                                     placeholder="SKU"
                                     onChange={(e) => updateRowField(row.id, "referencia", e.target.value)}
                                     onKeyDown={handleLancamentoInputKeyDown}
@@ -5508,9 +5572,15 @@ if (refRaw) {
                               {/* Quantidade em peças */}
                               <td className="py-2 px-2.5 text-right">
                                 <input 
-                                  type="number" 
+                                  type="text"
+                                  inputMode="numeric"
                                   value={row.quantidade}
-                                  onChange={(e) => updateRowField(row.id, "quantidade", e.target.value === "" ? "" : parseInt(e.target.value))}
+                                  data-lancamento-row={row.id}
+                                  data-lancamento-col="8"
+                                  onChange={(e) => {
+                                    const digits = e.target.value.replace(/\D/g, "");
+                                    updateRowField(row.id, "quantidade", digits === "" ? "" : parseInt(digits, 10));
+                                  }}
                                   onKeyDown={handleLancamentoInputKeyDown}
                                   className="w-full border border-slate-300 rounded p-1 text-xs text-right pr-0.5 font-bold focus:ring-1 focus:ring-indigo-500 focus:outline-none"
                                 />
@@ -5518,18 +5588,23 @@ if (refRaw) {
 
                               {/* Type Entrada / Saída */}
                               <td className="py-2 px-2.5">
-                                <select
+                                <input
+                                  type="text"
                                   value={row.tipo}
+                                  placeholder="E / S"
+                                  data-lancamento-row={row.id}
+                                  data-lancamento-col="9"
                                   onChange={(e) => updateRowField(row.id, "tipo", e.target.value)}
+                                  onFocus={(e) => e.currentTarget.select()}
+                                  onKeyDown={handleLancamentoInputKeyDown}
                                   className={`w-full border rounded p-1 text-[11px] focus:outline-none font-extrabold ${
-                                    row.tipo === "Entrada" 
-                                      ? "bg-emerald-50 border-emerald-300 text-emerald-800" 
-                                      : "bg-red-50 border-red-300 text-red-800"
+                                    row.tipo === "Entrada"
+                                      ? "bg-emerald-50 border-emerald-300 text-emerald-800"
+                                      : row.tipo === "Saída"
+                                        ? "bg-red-50 border-red-300 text-red-800"
+                                        : "bg-white border-slate-300 text-slate-500"
                                   }`}
-                                >
-                                  <option value="Entrada">Entrada</option>
-                                  <option value="Saída">Saída</option>
-                                </select>
+                                />
                               </td>
 
                               {/* dataChacote: optional */}
@@ -5537,6 +5612,8 @@ if (refRaw) {
                                 <input 
                                   type="text" 
                                   value={row.dataChacote}
+                                  data-lancamento-row={row.id}
+                                  data-lancamento-col="10"
                                   placeholder="opcional / NT"
                                   onChange={(e) => updateRowField(row.id, "dataChacote", e.target.value)}
                                   onKeyDown={handleLancamentoInputKeyDown}
@@ -5549,6 +5626,8 @@ if (refRaw) {
                                 <input 
                                   type="text" 
                                   value={row.hora}
+                                  data-lancamento-row={row.id}
+                                  data-lancamento-col="11"
                                   placeholder="HH:mm"
                                   maxLength={5}
                                   inputMode="numeric"
@@ -5572,6 +5651,8 @@ if (refRaw) {
                                   ref={(element) => { responsavelInputRefs.current[row.id] = element; }}
                                   type="text"
                                   value={row.responsavel}
+                                  data-lancamento-row={row.id}
+                                  data-lancamento-col="12"
                                   placeholder="Responsável"
                                   list={`responsaveis-${row.id}`}
                                   autoComplete="off"
@@ -5590,6 +5671,9 @@ if (refRaw) {
                               <td className="py-2 px-2.5">
                                 <select
                                   value={row.galpao === "12" ? "autorizacao" : (row.restricao || "nenhuma")}
+                                   data-lancamento-row={row.id}
+                                   data-lancamento-col="13"
+                                   onKeyDown={handleLancamentoInputKeyDown}
                                   onChange={(e) => updateRowField(row.id, "restricao", e.target.value as Restricao)}
                                   disabled={row.galpao === "12"}
                                   className="w-full border border-slate-300 rounded p-1 text-xs bg-white disabled:bg-slate-100 disabled:text-slate-500 focus:ring-1 focus:ring-indigo-500 focus:outline-none font-bold"
@@ -5606,6 +5690,8 @@ if (refRaw) {
                                 <input
                                   type="text"
                                   value={row.observacao || ""}
+                                   data-lancamento-row={row.id}
+                                   data-lancamento-col="14"
                                   placeholder="Observação"
                                   onChange={(e) => updateRowField(row.id, "observacao", e.target.value)}
                                   onKeyDown={handleLancamentoInputKeyDown}
@@ -5950,32 +6036,18 @@ if (refRaw) {
 
           {activeTab === "configuracao" && (
             <WarehouseLayoutPanel
-              layout={e1Layout}
+              layout={warehouseLayout}
               slots={slots}
               productsList={productsList}
               currentUser={currentUser}
-              loading={e1LayoutLoading}
-              saving={e1LayoutSaving}
-              loadError={e1LayoutError}
-              onSave={handleSaveE1Layout}
+              loading={warehouseLayoutLoading}
+              saving={warehouseLayoutSaving}
+              loadError={warehouseLayoutError}
+              onSave={handleSaveWarehouseLayout}
             />
           )}
 
-          {/* TAB 7: ENDEREÇO CORREDOR */}
-          {activeTab === "corredor" && (
-            <AisleStoragePanel
-              slots={slots}
-              productsList={productsList}
-              currentUser={currentUser}
-              operator={operator}
-              launchDate={launchDate}
-              onUpdateSlots={persistSlotsUpdate}
-              onAddHistory={appendHistory}
-              hasAccess={hasAccess}
-            />
-          )}
-
-          {/* TAB 8: GÊMEO DIGITAL */}
+          {/* TAB 7: GÊMEO DIGITAL */}
           {activeTab === "mapa" && (
             <div className="space-y-6">
               
@@ -6015,7 +6087,7 @@ if (refRaw) {
                 }}
               productsList={productsList}
               currentUser={currentUser}
-              e1Layout={e1Layout}
+              e1Layout={warehouseLayout}
               />
             </div>
           )}

@@ -1,4 +1,4 @@
-import { Product, WarehouseSlot, LancamentoRow, HistoricoMov, Divergencia, Restricao } from "../types";
+import { Product, WarehouseSlot, LancamentoRow, HistoricoMov, Divergencia, Restricao, WarehouseLayoutEntry } from "../types";
 import { findProductInList } from "./products";
 import { E1_CAPACITY } from "../constants/layout";
 
@@ -39,19 +39,70 @@ export interface RowValidationError {
   message: string;
 }
 
+
+const normalizeLaunchDate = (value: string): string | null => {
+  const clean = value.trim();
+  if (!clean) return null;
+
+  if (/^\d{4}-\d{2}-\d{2}$/.test(clean)) {
+    const date = new Date(`${clean}T00:00:00Z`);
+    return Number.isNaN(date.getTime()) ? null : clean;
+  }
+
+  const br = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(clean);
+  if (!br) return null;
+
+  const [, day, month, year] = br;
+  const iso = `${year}-${month}-${day}`;
+  const date = new Date(`${iso}T00:00:00Z`);
+
+  if (
+    Number.isNaN(date.getTime()) ||
+    date.getUTCFullYear() !== Number(year) ||
+    date.getUTCMonth() !== Number(month) - 1 ||
+    date.getUTCDate() !== Number(day)
+  ) {
+    return null;
+  }
+
+  return iso;
+};
+
+const isConfiguredModuleActive = (
+  warehouseLayout: WarehouseLayoutEntry[] | undefined,
+  estoque: string,
+  modulo: string
+): boolean => {
+  if (!warehouseLayout || warehouseLayout.length === 0 || estoque === "1") {
+    return true;
+  }
+
+  const entry = warehouseLayout.find(
+    item =>
+      item.estoque === estoque &&
+      sameNumericModule(item.modulo, modulo)
+  );
+
+  return entry ? entry.ativo : true;
+};
+
 export function validateLancamentoRow(
   row: LancamentoRow,
   rowNumber: number,
   productsList: Product[],
   isAdvanced = false,
   currentSlots?: WarehouseSlot[],
-  e1Capacity: Record<string, number> = E1_CAPACITY
+  e1Capacity: Record<string, number> = E1_CAPACITY,
+  warehouseLayout: WarehouseLayoutEntry[] = []
 ): string[] {
   const errors: string[] = [];
 
   // 1. Data
+  const normalizedDate = normalizeLaunchDate(row.data || "");
   if (!row.data || !row.data.trim()) {
     errors.push(`Linha ${rowNumber}: Data do lançamento é obrigatória.`);
+  } else if (!normalizedDate) {
+    errors.push(`Linha ${rowNumber}: Data do lançamento deve estar no formato DD/MM/AAAA.`);
   }
 
   // 2. Estoque
@@ -61,7 +112,13 @@ export function validateLancamentoRow(
     return errors; // Stop here as coordinates depend on correct Estoque
   }
 
-  // 3. Modulo (Rua for Estoque 1, Modulo for Estoque 2/3)
+  // 3. Galpão
+  const galpao = String(row.galpao || "").trim();
+  if (galpao && !["3", "12"].includes(galpao)) {
+    errors.push(`Linha ${rowNumber}: Galpão deve ser 3 ou 12.`);
+  }
+
+  // 4. Modulo (Rua for Estoque 1, Modulo for Estoque 2/3)
   const mod = row.modulo ? row.modulo.trim().toUpperCase().replace(/^[RM]/i, "") : "";
   if (!mod) {
     errors.push(`Linha ${rowNumber}: Módulo/Rua é obrigatório.`);
@@ -72,6 +129,11 @@ export function validateLancamentoRow(
     } else {
       if (est === "1" && !Object.prototype.hasOwnProperty.call(e1Capacity, String(modNum))) {
         errors.push(`Linha ${rowNumber}: o corredor ${mod} não está ativo/cadastrado no Estoque 1.`);
+      } else if (
+        (est === "2" || est === "3") &&
+        !isConfiguredModuleActive(warehouseLayout, est, String(modNum))
+      ) {
+        errors.push(`Linha ${rowNumber}: o módulo ${modNum} está inativo na configuração física do Estoque ${est}.`);
       } else if (est === "2" && (modNum < 1 || modNum > 172)) {
         errors.push(`Linha ${rowNumber}: Para o Estoque 2, o módulo deve ser de 1 a 172.`);
       } else if (est === "3" && (modNum < 1 || modNum > 112)) {
@@ -303,7 +365,8 @@ export function processLancamentosInSequence(
   allDivergencias: Divergencia[],
   productsList: Product[],
   isAdvanced = false,
-  e1Capacity: Record<string, number> = E1_CAPACITY
+  e1Capacity: Record<string, number> = E1_CAPACITY,
+  warehouseLayout: WarehouseLayoutEntry[] = []
 ): ProcessResult {
   const slots = JSON.parse(JSON.stringify(currentSlots)) as WarehouseSlot[];
   const newHistory: HistoricoMov[] = [];
@@ -334,7 +397,10 @@ export function processLancamentosInSequence(
       }
     });
 
-  const sortedRows = [...rows].sort((a, b) => {
+  const sortedRows = [...rows].map(row => ({
+    ...row,
+    data: normalizeLaunchDate(row.data) || row.data,
+  })).sort((a, b) => {
     const dateTimeA = `${a.data}T${a.hora || "00:00"}`;
     const dateTimeB = `${b.data}T${b.hora || "00:00"}`;
     return dateTimeA.localeCompare(dateTimeB);
@@ -360,6 +426,29 @@ export function processLancamentosInSequence(
         ? ""
         : normalizePosicao(row.posicao);
     const requestedRestricao = normalizeRestricao(row.restricao);
+
+    if (!isConfiguredModuleActive(warehouseLayout, estVal, modVal)) {
+      errorCount++;
+      newDivergencias.push({
+        id: `DIV-${generateId()}`,
+        dataDivergencia: batchDate,
+        tipoDivergencia: "Módulo Inativo",
+        estoque: estVal,
+        modulo: modVal,
+        posicao: posVal,
+        refAtual: "",
+        refNova: prod.referencia,
+        saldoAntes: 0,
+        movimentacao: row.tipo === "Saída" ? -qty : qty,
+        saldoFinal: 0,
+        responsavel: row.responsavel || batchOperator,
+        status: "Aberta",
+        dataChacote: row.dataChacote || "",
+        observacao: `O módulo ${modVal} do Estoque ${estVal} está inativo na configuração física. A movimentação não foi aplicada.`,
+        restricao: requestedRestricao,
+      });
+      continue;
+    }
     const itemBlockKey = getDivergenceBlockKey(
       estVal,
       modVal,
