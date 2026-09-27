@@ -2132,14 +2132,14 @@ export function MobileShell({
 
             <div className="mb-3 grid grid-cols-1 gap-2">
               {[
-                "Qual o melhor local para armazenar este SKU?",
-                "Qual o melhor palete para separação?",
-                "Qual palete devo remontar?",
+                "Onde devo armazenar este SKU?",
+                "Onde separar este SKU?",
+                "Qual seria a melhor estratégia para organizar este SKU?",
               ].map(prompt => (
                 <button
                   key={prompt}
                   type="button"
-                  onClick={() => focusConsultorChat(prompt.replace("este SKU", "o SKU "))}
+                  onClick={() => focusConsultorChat(prompt)}
                   className="rounded-xl border border-indigo-100 bg-indigo-50 px-3 py-2.5 text-left text-[11px] font-bold text-indigo-800"
                 >
                   {prompt}

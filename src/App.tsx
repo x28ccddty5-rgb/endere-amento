@@ -3511,6 +3511,23 @@ if (refRaw) {
   ]);
   const [chatInput, setChatInput] = useState("");
   const [recommendationQueue, setRecommendationQueue] = useState<string[]>([]);
+  const [chatAiLoading, setChatAiLoading] = useState(false);
+  type PendingConsultorRequest =
+    | {
+        kind: "storage";
+        sku: string | null;
+        quantity: number | null;
+        palletCount: number | null;
+        structure: "2" | "3" | null;
+      }
+    | {
+        kind: "separation";
+        sku: string | null;
+        quantity: number | null;
+      };
+
+  const [pendingConsultorRequest, setPendingConsultorRequest] =
+    useState<PendingConsultorRequest | null>(null);
 
   const formatMobileSlot = (slot: WarehouseSlot): string =>
     `E${slot.estoque} • M${slot.modulo}${slot.posicao ? ` • ${slot.posicao}` : ""}`;
@@ -3521,31 +3538,135 @@ if (refRaw) {
       return clean.startsWith("S") ? clean.slice(1) : clean;
     };
 
-    const normalizedText = text.toUpperCase();
+    const normalizedText = text.trim().toUpperCase();
     const normalizedReferences = productsList.map(product => ({
       reference: product.referencia,
       normalized: normalizeReference(product.referencia),
     }));
 
-    const byReference = normalizedReferences.find(({ reference, normalized }) =>
-      normalizedText.includes(reference.toUpperCase()) ||
-      normalizedText.includes(normalized)
-    );
-    if (byReference) return byReference.reference;
+    // First, resolve exact SKU/reference tokens. Never use substring matching
+    // here because a reference such as "310" is contained in "23101G" and
+    // "43101G". The token must match the complete reference.
+    const tokens = normalizedText.match(/[A-Z0-9-]+/g) || [];
+    for (const token of tokens) {
+      const normalizedToken = normalizeReference(token);
+      const exactMatch = normalizedReferences.find(
+        ({ normalized }) => normalized === normalizedToken
+      );
+      if (exactMatch) return exactMatch.reference;
+    }
 
+    // Accept a complete reference surrounded by non-alphanumeric characters,
+    // including references that contain punctuation.
+    const byBoundedReference = normalizedReferences.find(({ reference, normalized }) => {
+      const candidates = [reference.toUpperCase(), normalized].filter(Boolean);
+      return candidates.some(candidate => {
+        const escaped = candidate.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+        return new RegExp(`(^|[^A-Z0-9])${escaped}([^A-Z0-9]|$)`, "i").test(normalizedText);
+      });
+    });
+    if (byBoundedReference) return byBoundedReference.reference;
+
+    // Description remains a fallback when the user asks using the product name.
     const byDescription = productsList.find(product =>
-      product.descricao && normalizedText.includes(product.descricao.toUpperCase())
+      product.descricao &&
+      normalizedText.includes(product.descricao.trim().toUpperCase())
     );
     if (byDescription) return byDescription.referencia;
 
-    const tokens = normalizedText.match(/[A-Z0-9]{4,}/g) || [];
-    const byToken = tokens.find(token =>
-      normalizedReferences.some(({ normalized }) => normalized === normalizeReference(token))
+    return null;
+  };
+
+  const parseConsultorQuantity = (
+    text: string,
+    allowBareNumber = false
+  ): number | null => {
+    const combined = text.match(
+      /(\d[\d.]*)\s*(?:\+|\/)\s*(\d[\d.]*)\s*(?:pç|pçs|peças|pecas|unidades|un)?/i
     );
 
-    return byToken
-      ? normalizedReferences.find(({ normalized }) => normalized === normalizeReference(byToken))?.reference || null
-      : null;
+    if (combined) {
+      const first = Number(combined[1].replace(/\./g, ""));
+      const second = Number(combined[2].replace(/\./g, ""));
+      const total = first + second;
+      return Number.isFinite(total) && total > 0 ? total : null;
+    }
+
+    const withUnit = text.match(
+      /(\d[\d.]*)\s*(?:pç|pçs|peças|pecas|unidades|un)/i
+    );
+
+    if (withUnit) {
+      const value = Number(withUnit[1].replace(/\./g, ""));
+      return Number.isFinite(value) && value > 0 ? value : null;
+    }
+
+    if (allowBareNumber && /^\s*\d[\d.]*\s*$/.test(text)) {
+      const value = Number(text.trim().replace(/\./g, ""));
+      return Number.isFinite(value) && value > 0 ? value : null;
+    }
+
+    return null;
+  };
+
+  const parseConsultorStructure = (text: string): "2" | "3" | null => {
+    if (/gaiola|aranha|\bE3\b/i.test(text)) return "3";
+    if (/palete|\bE2\b/i.test(text)) return "2";
+    return null;
+  };
+
+  const parseConsultorPalletCount = (text: string): number | null => {
+    const match = text.match(/(\d[\d.]*)\s*paletes?/i);
+    if (!match) return null;
+    const value = Number(match[1].replace(/\./g, ""));
+    return Number.isFinite(value) && value > 0 ? value : null;
+  };
+
+  const normalizeConsultorPosition = (slot: WarehouseSlot): string =>
+    `${slot.estoque}-${Number(slot.modulo)}-${String(slot.posicao || "")
+      .trim()
+      .toUpperCase()}`;
+
+  const isConsultorPhysicalPositionActive = (slot: WarehouseSlot): boolean => {
+    if (slot.estoque !== "2" && slot.estoque !== "3") return false;
+
+    const configured = activePhysicalPositionKeys[slot.estoque];
+    if (!configured || configured.size === 0) return true;
+
+    return configured.has(normalizeConsultorPosition(slot));
+  };
+
+  const getConsultorCagePair = (position: string): {
+    key: string;
+    counterpartPrefix: string;
+  } | null => {
+    const normalized = position.trim().toUpperCase();
+    const match = normalized.match(/^([A-Z])(.*)$/);
+    if (!match) return null;
+
+    const [, prefix, suffix] = match;
+    const pairMap: Record<string, string> = {
+      A: "B",
+      B: "A",
+      C: "D",
+      D: "C",
+      E: "F",
+      F: "E",
+    };
+
+    const counterpartPrefix = pairMap[prefix];
+    if (!counterpartPrefix) return null;
+
+    const keyPrefix = ["A", "B"].includes(prefix)
+      ? "A+B"
+      : ["C", "D"].includes(prefix)
+        ? "C+D"
+        : "E+F";
+
+    return {
+      key: keyPrefix,
+      counterpartPrefix: `${counterpartPrefix}${suffix}`,
+    };
   };
 
   const handleNextRecommendation = () => {
@@ -3555,16 +3676,236 @@ if (refRaw) {
     setChatMessages(messages => [...messages, { sender: "system", text: next }]);
   };
 
-  const handleSendChatMessage = (messageOverride?: string) => {
-    const userMessage = (messageOverride ?? chatInput).trim();
+
+  const shouldUseGenerativeConsultor = (message: string): boolean => {
+    const normalized = message
+      .toLowerCase()
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "");
+
+    return (
+      normalized.includes("por que") ||
+      normalized.includes("porque") ||
+      normalized.includes("explique") ||
+      normalized.includes("considerando") ||
+      normalized.includes("compare") ||
+      normalized.includes("analise") ||
+      normalized.includes("analise") ||
+      normalized.includes("qual seria") ||
+      normalized.includes("faria sentido") ||
+      normalized.includes("faz sentido") ||
+      normalized.includes("devo") ||
+      normalized.includes("sugira") ||
+      normalized.includes("estrategia") ||
+      normalized.includes("melhor opcao") ||
+      normalized.includes("outra opcao") ||
+      normalized.includes("o que voce") ||
+      normalized.includes("o que você")
+    );
+  };
+
+  const buildConsultorAiContext = (
+    question: string,
+    deterministicResponse: string
+  ): string => {
+    const sku = findSkuInChatText(question);
+    const normalizedSku = sku?.toUpperCase();
+
+    const relevantSlots = slots
+      .filter(slot =>
+        normalizedSku
+          ? slot.referencia.toUpperCase() === normalizedSku
+          : slot.saldo > 0
+      )
+      .slice(0, normalizedSku ? 20 : 12)
+      .map(slot => ({
+        estoque: slot.estoque,
+        modulo: slot.modulo,
+        posicao: slot.posicao,
+        referencia: slot.referencia,
+        descricao: slot.descricao,
+        saldo: slot.saldo,
+        dataChacote: slot.dataChacote || null,
+      }));
+
+    const relevantProduct = sku
+      ? productsList.find(
+          product => product.referencia.toUpperCase() === normalizedSku
+        )
+      : null;
+
+    const openDivergencias = divergencias
+      .filter(item =>
+        item.status === "Aberta" &&
+        (!normalizedSku ||
+          item.refAtual?.toUpperCase() === normalizedSku ||
+          item.refNova?.toUpperCase() === normalizedSku)
+      )
+      .slice(0, 10)
+      .map(item => ({
+        tipo: item.tipoDivergencia,
+        estoque: item.estoque,
+        modulo: item.modulo,
+        posicao: item.posicao,
+        refAtual: item.refAtual,
+        refNova: item.refNova,
+        saldoAntes: item.saldoAntes,
+        movimentacao: item.movimentacao,
+        saldoFinal: item.saldoFinal,
+      }));
+
+    return JSON.stringify(
+      {
+        pergunta: question,
+        resultadoDeterministico: deterministicResponse,
+        produto: relevantProduct
+          ? {
+              referencia: relevantProduct.referencia,
+              descricao: relevantProduct.descricao,
+              paletizacao: relevantProduct.paletizacao ?? null,
+            }
+          : null,
+        posicoesRelevantes: relevantSlots,
+        divergenciasAbertasRelevantes: openDivergencias,
+        observacao:
+          "Os dados acima são um recorte do estado atual do sistema. Não invente fatos fora deles.",
+      },
+      null,
+      2
+    ).slice(0, 9000);
+  };
+
+  const requestGenerativeConsultor = async (
+    question: string,
+    deterministicResponse: string
+  ): Promise<string | null> => {
+    setChatAiLoading(true);
+
+    try {
+      const context = buildConsultorAiContext(question, deterministicResponse);
+
+      const { data, error } = await supabase.functions.invoke("consultor-ai", {
+        body: {
+          question,
+          deterministicResponse,
+          context,
+        },
+      });
+
+      if (error) {
+        console.error("Erro ao consultar a IA do Consultor:", error);
+        return null;
+      }
+
+      const answer =
+        typeof data?.answer === "string" ? data.answer.trim() : "";
+
+      return answer || null;
+    } catch (error) {
+      console.error("Falha inesperada ao consultar a IA do Consultor:", error);
+      return null;
+    } finally {
+      setChatAiLoading(false);
+    }
+  };
+
+  const handleSendChatMessage = async (messageOverride?: string) => {
+    let userMessage = (
+      typeof messageOverride === "string" ? messageOverride : chatInput
+    ).trim();
+
     if (!userMessage) return;
+
     setChatMessages(prev => [...prev, { sender: "user", text: userMessage }]);
     setChatInput("");
 
-    setTimeout(() => {
-      let responseText = "";
-      
-      const lower = userMessage.toLowerCase().trim();
+    let responseText = "";
+
+    const isStorageIntent =
+      userMessage.toLowerCase().includes("onde armazenar") ||
+      userMessage.toLowerCase().includes("onde devo armazenar") ||
+      userMessage.toLowerCase().includes("melhor posição") ||
+      userMessage.toLowerCase().includes("melhor posicao") ||
+      userMessage.toLowerCase().includes("melhor local");
+
+    const isSeparationIntent =
+      userMessage.toLowerCase().includes("onde separar") ||
+      userMessage.toLowerCase().includes("melhor palete") ||
+      userMessage.toLowerCase().includes("separação") ||
+      userMessage.toLowerCase().includes("separacao");
+
+    if (pendingConsultorRequest && !isStorageIntent && !isSeparationIntent) {
+      const parsedSku = findSkuInChatText(userMessage);
+      const parsedQuantity = parseConsultorQuantity(userMessage, true);
+      const parsedStructure = parseConsultorStructure(userMessage);
+
+      const parsedPalletCount = parseConsultorPalletCount(userMessage);
+
+      const nextPending =
+        pendingConsultorRequest.kind === "storage"
+          ? {
+              kind: "storage" as const,
+              sku: parsedSku || pendingConsultorRequest.sku,
+              quantity: parsedQuantity ?? pendingConsultorRequest.quantity,
+              palletCount:
+                parsedPalletCount ?? pendingConsultorRequest.palletCount,
+              structure:
+                parsedStructure ?? pendingConsultorRequest.structure,
+            }
+          : {
+              kind: "separation" as const,
+              sku: parsedSku || pendingConsultorRequest.sku,
+              quantity: parsedQuantity ?? pendingConsultorRequest.quantity,
+            };
+
+      if (nextPending.kind === "storage") {
+        if (!nextPending.sku) {
+          setPendingConsultorRequest(nextPending);
+          responseText =
+            "Informe o SKU ou a descrição do produto que deseja armazenar.";
+        } else if (!nextPending.quantity && !nextPending.palletCount) {
+          setPendingConsultorRequest(nextPending);
+          responseText =
+            "Informe a quantidade em peças ou a quantidade de paletes que deseja armazenar.";
+        } else if (!nextPending.structure) {
+          setPendingConsultorRequest(nextPending);
+          responseText =
+            "Informe se o armazenamento será em palete (E2) ou gaiola (E3).";
+        } else {
+          userMessage = nextPending.palletCount
+            ? `Onde devo armazenar ${nextPending.palletCount} paletes do SKU ${nextPending.sku} ${
+                nextPending.structure === "2" ? "no palete (E2)" : "em gaiola (E3)"
+              }`
+            : `Onde devo armazenar ${nextPending.quantity} peças do SKU ` +
+              `${nextPending.sku} no ${
+                nextPending.structure === "2" ? "palete (E2)" : "gaiola (E3)"
+              }`;
+          setPendingConsultorRequest(null);
+        }
+      } else if (!nextPending.sku) {
+        setPendingConsultorRequest(nextPending);
+        responseText =
+          "Informe o SKU ou a descrição do produto que deseja separar.";
+      } else if (!nextPending.quantity) {
+        setPendingConsultorRequest(nextPending);
+        responseText = "Informe a quantidade que deseja separar.";
+      } else {
+        userMessage =
+          `Onde separar ${nextPending.quantity} peças do SKU ${nextPending.sku}`;
+        setPendingConsultorRequest(null);
+      }
+
+      if (responseText) {
+        setChatMessages(prev => [
+          ...prev,
+          { sender: "system", text: responseText },
+        ]);
+        return;
+      }
+    }
+
+    const lower = userMessage.toLowerCase().trim();
+
 
       if (lower === "próximo" || lower === "proximo" || lower === "outra opção" || lower === "outra opcao") {
         if (recommendationQueue.length > 0) {
@@ -3591,100 +3932,505 @@ if (refRaw) {
         const skuRecommendation = findSkuInChatText(userMessage);
 
         if (!skuRecommendation) {
-          responseText = "Informe o SKU ou a descrição do produto para eu calcular a melhor posição de armazenamento.";
+          setPendingConsultorRequest({
+            kind: "storage",
+            sku: null,
+            quantity: parseConsultorQuantity(userMessage),
+            palletCount: parseConsultorPalletCount(userMessage),
+            structure: parseConsultorStructure(userMessage),
+          });
+          responseText =
+            "Informe o SKU ou a descrição do produto para eu calcular a melhor posição de armazenamento.";
         } else {
           const product = productsList.find(
             item => item.referencia.toUpperCase() === skuRecommendation.toUpperCase()
           );
-          const requestedQtyMatch = userMessage.match(/(\d[\d.]*)\s*(?:pç|pçs|peças|pecas|unidades|un)/i);
-          const requestedQty = requestedQtyMatch
-            ? Number(requestedQtyMatch[1].replace(/\./g, ""))
-            : 1;
-          const requestedType =
-            /gaiola|aranha/i.test(userMessage) ? "3" :
-            /palete/i.test(userMessage) ? "2" :
-            null;
+          const requestedQty = parseConsultorQuantity(userMessage);
+          const requestedPalletCount = parseConsultorPalletCount(userMessage);
+          const requestedType = parseConsultorStructure(userMessage);
 
-          const exitsLast7Days = history.filter(item => {
-            const movementDate = new Date(item.data);
-            const daysAgo = (Date.now() - movementDate.getTime()) / 86400000;
-            return (
-              item.referencia.toUpperCase() === skuRecommendation.toUpperCase() &&
-              item.tipo === "Saída" &&
-              daysAgo >= 0 &&
-              daysAgo <= 7
-            );
-          }).length;
+          if (requestedPalletCount && requestedPalletCount > 0 && !product?.paletizacao) {
+            setPendingConsultorRequest(null);
+            responseText =
+              `O SKU ${skuRecommendation} não possui paletização cadastrada. ` +
+              `Não vou estimar a quantidade física de paletes sem esse dado.`;
+          } else if (
+            requestedPalletCount &&
+            requestedPalletCount > 0 &&
+            requestedType === "3" &&
+            requestedPalletCount % 2 !== 0
+          ) {
+            setPendingConsultorRequest(null);
+            responseText =
+              `Uma gaiola é formada por 2 paletes. Para armazenar ${requestedPalletCount} paletes em gaiolas ` +
+              `é necessário informar uma quantidade par de paletes.`;
+          } else if (!requestedQty && !requestedPalletCount) {
+            setPendingConsultorRequest({
+              kind: "storage",
+              sku: skuRecommendation,
+              quantity: null,
+              palletCount: null,
+              structure: requestedType,
+            });
+            responseText =
+              "Informe a quantidade em peças ou a quantidade de paletes que deseja armazenar.";
+          } else if (!requestedType) {
+            setPendingConsultorRequest({
+              kind: "storage",
+              sku: skuRecommendation,
+              quantity: requestedQty,
+              palletCount: requestedPalletCount,
+              structure: null,
+            });
+            responseText =
+              "Informe se o armazenamento será em palete (E2) ou gaiola (E3).";
+          } else {
+            setPendingConsultorRequest(null);
 
-          const candidates = slots
-            .filter(slot => {
-              if (slot.estoque === "1") return false;
-              if (requestedType && slot.estoque !== requestedType) return false;
-              if (slot.saldo > 0 && slot.referencia.toUpperCase() !== skuRecommendation.toUpperCase()) return false;
-              if (product?.paletizacao && slot.saldo + requestedQty > product.paletizacao) return false;
+            const normalizedSku = skuRecommendation.toUpperCase();
+            const capacity = product?.paletizacao || 0;
+            const compatibleSingleSlots = slots.filter(slot => {
+              if (slot.estoque !== "2") return false;
+              if (!isConsultorPhysicalPositionActive(slot)) return false;
+
+              const ref = String(slot.referencia || "").trim().toUpperCase();
+              const sameSku = ref === normalizedSku;
+              const empty = slot.saldo <= 0 && !ref;
+
+              if (slot.saldo > 0 && !sameSku) return false;
+              if (slot.saldo <= 0 && ref && !sameSku) return false;
+
               return true;
-            })
-            .map(slot => {
-              const sameSku = slot.referencia.toUpperCase() === skuRecommendation.toUpperCase() && slot.saldo > 0;
-              const free = slot.saldo === 0;
-              let score = 0;
-              if (sameSku) score += 100;
-              if (free) score += 35;
-              if (product?.paletizacao) {
-                const remaining = product.paletizacao - slot.saldo - requestedQty;
-                score += Math.max(0, 25 - Math.min(25, Math.abs(remaining)));
-              }
-              score += Math.min(20, exitsLast7Days * 2);
-              if (requestedType === slot.estoque) score += 20;
-              return { slot, score, sameSku, free };
-            })
-            .sort((a, b) => {
-              if (b.score !== a.score) return b.score - a.score;
-              return Number(a.slot.modulo) - Number(b.slot.modulo);
             });
 
-          if (candidates.length === 0) {
-            responseText = `Não encontrei uma posição válida para ${skuRecommendation} com os critérios atuais.`;
-          } else {
-            const [best, ...alternatives] = candidates;
-            const reasons = [
-              best.sameSku ? "consolida o SKU em uma posição que já possui o item" : "posição disponível para receber o item",
-              product?.paletizacao ? `respeita a paletização cadastrada de ${product.paletizacao} pçs` : "não há paletização cadastrada para limitar a capacidade",
-              exitsLast7Days > 0 ? `${exitsLast7Days} saída(s) do SKU nos últimos 7 dias` : "não há saídas recentes registradas para o SKU",
-              best.slot.estoque === "2" ? "estrutura de palete (Estoque 2)" : "estrutura de gaiola/aranha (Estoque 3)",
-            ];
+            const singleCandidates = compatibleSingleSlots
+              .map(slot => {
+                const sameSku = String(slot.referencia || "").trim().toUpperCase() === normalizedSku &&
+                  slot.saldo > 0;
+                const freeCapacity = capacity > 0
+                  ? Math.max(0, capacity - slot.saldo)
+                  : Number.POSITIVE_INFINITY;
 
-            responseText =
-              `MELHOR POSIÇÃO PARA ${skuRecommendation}\n\n` +
-              `${formatMobileSlot(best.slot)}\n` +
-              `${best.slot.descricao || product?.descricao || "Produto"}\n\n` +
-              `Critérios considerados:\n• ${reasons.join("\n• ")}\n\n` +
-              `A recomendação usa somente o estado registrado do estoque.`;
+                return {
+                  slot,
+                  sameSku,
+                  freeCapacity,
+                  remainingCapacity:
+                    capacity > 0 && requestedQty
+                      ? Math.max(0, freeCapacity - requestedQty)
+                      : freeCapacity,
+                  occupiedCount: slot.saldo > 0 ? 1 : 0,
+                };
+              })
+              .filter(candidate => {
+                if (requestedPalletCount) {
+                  return Boolean(capacity) &&
+                    candidate.slot.saldo === 0 &&
+                    !candidate.slot.referencia &&
+                    candidate.freeCapacity >= capacity;
+                }
 
-            setRecommendationQueue(
-              alternatives.slice(0, 4).map((candidate, index) =>
-                `PRÓXIMA OPÇÃO ${index + 2}\n\n${formatMobileSlot(candidate.slot)}\n${candidate.slot.descricao || product?.descricao || "Produto"}\n\nSaldo atual: ${candidate.slot.saldo.toLocaleString("pt-BR")} pçs.`
-              )
-            );
+                return requestedQty
+                  ? candidate.freeCapacity >= requestedQty
+                  : true;
+              })
+              .sort((a, b) => {
+                if (a.sameSku !== b.sameSku) return a.sameSku ? -1 : 1;
+                if (a.remainingCapacity !== b.remainingCapacity) {
+                  return a.remainingCapacity - b.remainingCapacity;
+                }
+                if (a.occupiedCount !== b.occupiedCount) {
+                  return b.occupiedCount - a.occupiedCount;
+                }
+                const moduleDiff = Number(a.slot.modulo) - Number(b.slot.modulo);
+                if (moduleDiff !== 0) return moduleDiff;
+                return String(a.slot.posicao || "").localeCompare(
+                  String(b.slot.posicao || ""),
+                  "pt-BR",
+                  { numeric: true }
+                );
+              });
+
+            if (requestedPalletCount) {
+              if (requestedType === "3") {
+                const requiredCages = Math.ceil(requestedPalletCount / 2);
+                const e2SlotsForCages = slots
+                  .filter(slot =>
+                    slot.estoque === "2" &&
+                    isConsultorPhysicalPositionActive(slot)
+                  )
+                  .sort((a, b) => {
+                    const moduleDiff = Number(a.modulo) - Number(b.modulo);
+                    if (moduleDiff !== 0) return moduleDiff;
+                    return String(a.posicao || "").localeCompare(
+                      String(b.posicao || ""),
+                      "pt-BR",
+                      { numeric: true }
+                    );
+                  });
+
+                const cageSlotByKey = new globalThis.Map<string, WarehouseSlot>(
+                  e2SlotsForCages.map(slot => [
+                    normalizeConsultorPosition(slot),
+                    slot,
+                  ] as [string, WarehouseSlot])
+                );
+
+                const emptyCageCandidates = e2SlotsForCages
+                  .map(slot => {
+                    const pair = getConsultorCagePair(String(slot.posicao || ""));
+                    if (!pair) return null;
+
+                    const counterpart = cageSlotByKey.get(
+                      `2-${Number(slot.modulo)}-${pair.counterpartPrefix}`
+                    );
+                    if (!counterpart) return null;
+
+                    if (
+                      normalizeConsultorPosition(slot) >=
+                      normalizeConsultorPosition(counterpart)
+                    ) {
+                      return null;
+                    }
+
+                    const firstEmpty =
+                      slot.saldo <= 0 && !String(slot.referencia || "").trim();
+                    const secondEmpty =
+                      counterpart.saldo <= 0 && !String(counterpart.referencia || "").trim();
+
+                    if (!firstEmpty || !secondEmpty) return null;
+
+                    return {
+                      key: pair.key,
+                      slot,
+                      counterpart,
+                    };
+                  })
+                  .filter(Boolean) as Array<{
+                    key: string;
+                    slot: WarehouseSlot;
+                    counterpart: WarehouseSlot;
+                  }>;
+
+                if (emptyCageCandidates.length < requiredCages) {
+                  responseText =
+                    `Encontrei ${emptyCageCandidates.length} gaiola(s) completa(s) disponível(is), ` +
+                    `mas a solicitação exige ${requiredCages} gaiola(s) para ${requestedPalletCount} paletes. ` +
+                    `A busca considera somente pares físicos A+B, C+D e E+F, no mesmo módulo, ` +
+                    `com as duas posições E2 vazias e ativas.`;
+                } else {
+                  const allocations: Array<typeof emptyCageCandidates> = [];
+                  const seen = new Set<string>();
+
+                  for (
+                    let offset = 0;
+                    offset < Math.min(3, emptyCageCandidates.length);
+                    offset += 1
+                  ) {
+                    const rotated = [
+                      ...emptyCageCandidates.slice(offset),
+                      ...emptyCageCandidates.slice(0, offset),
+                    ];
+                    const allocation = rotated.slice(0, requiredCages);
+                    if (allocation.length !== requiredCages) continue;
+
+                    const key = allocation
+                      .map(candidate =>
+                        `${normalizeConsultorPosition(candidate.slot)}+${normalizeConsultorPosition(candidate.counterpart)}`
+                      )
+                      .sort()
+                      .join("|");
+
+                    if (!seen.has(key)) {
+                      seen.add(key);
+                      allocations.push(allocation);
+                    }
+                  }
+
+                  const topAllocations = allocations.slice(0, 3);
+
+                  responseText =
+                    `OPÇÕES DE GAIOLA PARA ${requestedPalletCount.toLocaleString("pt-BR")} PALETES DO SKU ${skuRecommendation}
+
+` +
+                    topAllocations.map((allocation, index) =>
+                      `OPÇÃO ${index + 1}
+` +
+                      `Quantidade: ${allocation.length * 2} posições-palet (E2) = ${allocation.length} gaiola(s) E3
+` +
+                      allocation
+                        .map(candidate =>
+                          `• Chave ${candidate.key}: ${formatMobileSlot(candidate.slot)} + ${formatMobileSlot(candidate.counterpart)}`
+                        )
+                        .join("\n")
+                    ).join("\n\n") +
+                    `\n\nCritérios: gaiola = 2 paletes; chaves obrigatórias A+B, C+D e E+F; mesmo módulo; duas posições E2 vazias e ativas; sem mistura de SKU.`;
+
+                  setRecommendationQueue([]);
+                }
+              } else {
+                const requiredPallets = requestedPalletCount;
+              const availablePalletSlots = singleCandidates.length;
+
+              if (availablePalletSlots < requiredPallets) {
+                responseText =
+                  `Encontrei ${availablePalletSlots} posição(ões) E2 vazia(s) compatível(is), ` +
+                  `mas a solicitação exige ${requiredPallets} paletes do SKU ${skuRecommendation}. ` +
+                  `Não vou completar a alocação com posições ocupadas nem misturar E2/E3.`;
+              } else {
+                const buildPalletAllocation = (offset: number) => {
+                  const rotated = [
+                    ...singleCandidates.slice(offset),
+                    ...singleCandidates.slice(0, offset),
+                  ];
+                  return rotated.slice(0, requiredPallets);
+                };
+
+                const allocations: Array<typeof singleCandidates> = [];
+                const seen = new Set<string>();
+
+                for (let offset = 0; offset < Math.min(3, singleCandidates.length); offset += 1) {
+                  const allocation = buildPalletAllocation(offset);
+                  if (allocation.length !== requiredPallets) continue;
+
+                  const key = allocation
+                    .map(candidate => normalizeConsultorPosition(candidate.slot))
+                    .sort()
+                    .join("|");
+
+                  if (!seen.has(key)) {
+                    seen.add(key);
+                    allocations.push(allocation);
+                  }
+                }
+
+                const topAllocations = allocations.slice(0, 3);
+
+                responseText =
+                  `OPÇÕES DE ARMAZENAMENTO PARA ${requestedPalletCount.toLocaleString("pt-BR")} PALETES DO SKU ${skuRecommendation}\n\n` +
+                  topAllocations.map((allocation, index) => {
+                    const modules = [...new Set(allocation.map(candidate => Number(candidate.slot.modulo)))];
+                    return (
+                      `OPÇÃO ${index + 1}\n` +
+                      `Quantidade: ${allocation.length} paletes\n` +
+                      `Estrutura: Estoque 2 (E2) — palete\n` +
+                      `Módulos envolvidos: ${modules.join(", ")}\n` +
+                      allocation
+                        .map((candidate, palletIndex) =>
+                          `• Palete ${palletIndex + 1}: ${formatMobileSlot(candidate.slot)}`
+                        )
+                        .join("\n")
+                    );
+                  }).join("\n\n") +
+                  `\n\nCritérios: somente posições E2 ativas e vazias; uma posição física por palete; sem mistura de SKU; distribuição calculada a partir do cadastro físico atual.`;
+
+                setRecommendationQueue([]);
+              }
+              }
+            } else if (requestedType === "3") {
+              if (!capacity) {
+                responseText =
+                  `O SKU ${skuRecommendation} não possui paletização cadastrada. ` +
+                  `Não vou calcular uma gaiola sem a capacidade por palete.`;
+              } else {
+                const e2Slots = slots
+                  .filter(slot =>
+                    slot.estoque === "2" &&
+                    isConsultorPhysicalPositionActive(slot)
+                  )
+                  .sort((a, b) => {
+                    const moduleDiff = Number(a.modulo) - Number(b.modulo);
+                    if (moduleDiff !== 0) return moduleDiff;
+                    return String(a.posicao || "").localeCompare(
+                      String(b.posicao || ""),
+                      "pt-BR",
+                      { numeric: true }
+                    );
+                  });
+
+                const slotByKey = new globalThis.Map<string, WarehouseSlot>(
+                  e2Slots.map(slot => [
+                    normalizeConsultorPosition(slot),
+                    slot,
+                  ] as [string, WarehouseSlot])
+                );
+
+                const cageCandidates = e2Slots
+                  .map(slot => {
+                    const pair = getConsultorCagePair(String(slot.posicao || ""));
+                    if (!pair) return null;
+
+                    const pairPositionKey =
+                      `2-${Number(slot.modulo)}-${pair.counterpartPrefix}`;
+
+                    const counterpart = slotByKey.get(pairPositionKey);
+                    if (!counterpart) return null;
+
+                    if (
+                      normalizeConsultorPosition(slot) >=
+                      normalizeConsultorPosition(counterpart)
+                    ) {
+                      return null;
+                    }
+
+                    const slotRef = String(slot.referencia || "").trim().toUpperCase();
+                    const counterpartRef = String(counterpart.referencia || "").trim().toUpperCase();
+
+                    const slotCompatible =
+                      slot.saldo <= 0 ||
+                      slotRef === normalizedSku;
+                    const counterpartCompatible =
+                      counterpart.saldo <= 0 ||
+                      counterpartRef === normalizedSku;
+
+                    if (!slotCompatible || !counterpartCompatible) return null;
+
+                    const slotFree = Math.max(0, capacity - slot.saldo);
+                    const counterpartFree = Math.max(0, capacity - counterpart.saldo);
+                    const combinedFree = slotFree + counterpartFree;
+
+                    if (requestedQty && combinedFree < requestedQty) return null;
+
+                    const sameSkuCount =
+                      (slotRef === normalizedSku && slot.saldo > 0 ? 1 : 0) +
+                      (counterpartRef === normalizedSku && counterpart.saldo > 0 ? 1 : 0);
+
+                    return {
+                      key: pair.key,
+                      slot,
+                      counterpart,
+                      combinedFree,
+                      combinedSaldo: slot.saldo + counterpart.saldo,
+                      sameSkuCount,
+                      remainingCapacity: Math.max(0, combinedFree - (requestedQty || 0)),
+                    };
+                  })
+                  .filter(Boolean) as Array<{
+                    key: string;
+                    slot: WarehouseSlot;
+                    counterpart: WarehouseSlot;
+                    combinedFree: number;
+                    combinedSaldo: number;
+                    sameSkuCount: number;
+                    remainingCapacity: number;
+                  }>;
+
+                cageCandidates.sort((a, b) => {
+                  if (a.sameSkuCount !== b.sameSkuCount) {
+                    return b.sameSkuCount - a.sameSkuCount;
+                  }
+                  if (a.remainingCapacity !== b.remainingCapacity) {
+                    return a.remainingCapacity - b.remainingCapacity;
+                  }
+                  const moduleDiff = Number(a.slot.modulo) - Number(b.slot.modulo);
+                  if (moduleDiff !== 0) return moduleDiff;
+                  return a.key.localeCompare(b.key);
+                });
+
+                if (cageCandidates.length === 0) {
+                  responseText =
+                    `Não encontrei uma gaiola válida para ${skuRecommendation}` +
+                    (requestedQty ? ` com ${requestedQty.toLocaleString("pt-BR")} peças` : "") +
+                    `. A busca considera obrigatoriamente os pares A+B, C+D e E+F no mesmo módulo, ` +
+                    `somente posições E2 ativas e compatíveis com o SKU.`;
+                } else {
+                  const topOptions = cageCandidates.slice(0, 3);
+
+                  responseText =
+                    `OPÇÕES DE GAIOLA PARA ${skuRecommendation}\n\n` +
+                    topOptions.map((candidate, index) => {
+                      const totalFree = candidate.combinedFree.toLocaleString("pt-BR");
+                      const totalSaldo = candidate.combinedSaldo.toLocaleString("pt-BR");
+
+                      return (
+                        `OPÇÃO ${index + 1} — CHAVE ${candidate.key}\n` +
+                        `${formatMobileSlot(candidate.slot)} + ${formatMobileSlot(candidate.counterpart)}\n` +
+                        `Saldo atual combinado: ${totalSaldo} pçs\n` +
+                        `Capacidade livre combinada: ${totalFree} pçs\n` +
+                        `Quantidade solicitada: ${requestedQty?.toLocaleString("pt-BR") || "não informada"} pçs\n` +
+                        `Atende: ${requestedQty ? (candidate.combinedFree >= requestedQty ? "SIM" : "NÃO") : "aguardando quantidade"}\n` +
+                        `Critérios: chave ${candidate.key}; mesmo módulo; duas posições E2; sem mistura de SKU; capacidade calculada pela paletização cadastrada.`
+                      );
+                    }).join("\n\n") +
+                    `\n\nRegra de gaiola: 2 paletes. Chaves físicas consideradas: A+B, C+D e E+F.`;
+                  setRecommendationQueue([]);
+                }
+              }
+            } else if (singleCandidates.length === 0) {
+              responseText =
+                `Não encontrei uma posição E2 válida para ${skuRecommendation} com os critérios atuais. ` +
+                `A posição precisa estar ativa, vazia ou já conter o mesmo SKU, e ter capacidade para a quantidade solicitada.`;
+            } else {
+              const topOptions = singleCandidates.slice(0, 3);
+
+              responseText =
+                `OPÇÕES DE ARMAZENAMENTO PARA ${skuRecommendation}\n\n` +
+                topOptions.map((candidate, index) => {
+                  const afterBalance = candidate.slot.saldo + (requestedQty || 0);
+                  const remaining =
+                    capacity > 0
+                      ? Math.max(0, capacity - afterBalance)
+                      : null;
+
+                  const criteria = [
+                    candidate.sameSku
+                      ? "consolida o SKU na posição já ocupada"
+                      : "posição E2 vazia compatível",
+                    "estrutura exatamente igual à solicitada: palete (E2)",
+                    capacity > 0
+                      ? `capacidade após armazenamento: ${afterBalance.toLocaleString("pt-BR")} / ${capacity.toLocaleString("pt-BR")} pçs`
+                      : "sem paletização cadastrada",
+                    remaining !== null
+                      ? `espaço restante: ${remaining.toLocaleString("pt-BR")} pçs`
+                      : "espaço restante não calculado",
+                  ];
+
+                  return (
+                    `OPÇÃO ${index + 1}\n` +
+                    `${formatMobileSlot(candidate.slot)}\n` +
+                    `${candidate.slot.descricao || product?.descricao || "Produto"}\n` +
+                    `Saldo atual: ${candidate.slot.saldo.toLocaleString("pt-BR")} pçs\n` +
+                    `Quantidade solicitada: ${requestedQty?.toLocaleString("pt-BR") || "não informada"} pçs\n` +
+                    `Critérios: ${criteria.join("; ")}`
+                  );
+                }).join("\n\n") +
+                `\n\nRegra de seleção: estrutura solicitada → posição física ativa → compatibilidade de SKU → capacidade → consolidação → melhor aproveitamento → menor módulo/posição como desempate.`;
+
+              setRecommendationQueue([]);
+            }
           }
-        }
+      }
       } else if (
         lower.includes("melhor palete") ||
         lower.includes("melhor palete para separ") ||
         lower.includes("qual palete") ||
+        lower.includes("onde separar") ||
         lower.includes("separação") ||
         lower.includes("separacao")
       ) {
         const skuRecommendation = findSkuInChatText(userMessage);
 
         if (!skuRecommendation) {
-          responseText = "Informe o SKU ou a descrição do produto para eu selecionar o melhor palete.";
+          setPendingConsultorRequest({
+            kind: "separation",
+            sku: null,
+            quantity: parseConsultorQuantity(userMessage),
+          });
+          responseText =
+            "Informe o SKU ou a descrição do produto para eu selecionar o melhor palete.";
         } else {
-          const requestedQtyMatch = userMessage.match(/(\d[\d.]*)\s*(?:pç|pçs|peças|pecas|unidades|un)/i);
-          const requestedQty = requestedQtyMatch
-            ? Number(requestedQtyMatch[1].replace(/\./g, ""))
-            : 1;
+          const requestedQty = parseConsultorQuantity(userMessage);
 
+          if (!requestedQty || requestedQty <= 0) {
+            setPendingConsultorRequest({
+              kind: "separation",
+              sku: skuRecommendation,
+              quantity: null,
+            });
+            responseText =
+              "Informe a quantidade que deseja separar, por exemplo: 300 peças.";
+          } else {
+            setPendingConsultorRequest(null);
           const candidates = slots
             .filter(slot =>
               slot.referencia.toUpperCase() === skuRecommendation.toUpperCase() &&
@@ -3711,20 +4457,21 @@ if (refRaw) {
             responseText = `Não encontrei paletes com saldo do SKU ${skuRecommendation}.`;
           } else {
             const [best, ...alternatives] = candidates;
-            responseText =
-              `MELHOR PALETE PARA SEPARAÇÃO\n\n` +
-              `${formatMobileSlot(best.slot)}\n` +
-              `SKU ${best.slot.referencia} • ${best.slot.saldo.toLocaleString("pt-BR")} pçs\n` +
-              `Data de chacote: ${best.slot.dataChacote || "não registrada"}\n\n` +
-              `Critérios: FIFO pela data de chacote registrada + quantidade disponível.\n` +
-              `${best.enough ? "Atende a quantidade solicitada." : "Não atende integralmente a quantidade solicitada; veja a próxima opção."}\n\n` +
-              `Se a condição física estiver diferente do sistema, use Próximo.`;
+            const topOptions = [best, ...alternatives].slice(0, 3);
 
-            setRecommendationQueue(
-              alternatives.slice(0, 4).map((candidate, index) =>
-                `PRÓXIMA OPÇÃO ${index + 2}\n\n${formatMobileSlot(candidate.slot)}\nSKU ${candidate.slot.referencia} • ${candidate.slot.saldo.toLocaleString("pt-BR")} pçs\nData de chacote: ${candidate.slot.dataChacote || "não registrada"}`
-              )
-            );
+            responseText =
+              `OPÇÕES DE SEPARAÇÃO PARA ${skuRecommendation}\n\n` +
+              topOptions.map((candidate, index) =>
+                `OPÇÃO ${index + 1}\n` +
+                `${formatMobileSlot(candidate.slot)}\n` +
+                `SKU ${candidate.slot.referencia} • ${candidate.slot.saldo.toLocaleString("pt-BR")} pçs\n` +
+                `Data de chacote: ${candidate.slot.dataChacote || "não registrada"}\n` +
+                `Atende a quantidade solicitada: ${candidate.enough ? "SIM" : "NÃO"}`
+              ).join("\n\n") +
+              `\n\nCritério de ordenação: atendimento da quantidade + FIFO pela data de chacote registrada + saldo disponível.`;
+
+            setRecommendationQueue([]);
+          }
           }
         }
       } else if (
@@ -4281,8 +5028,21 @@ if (refRaw) {
         responseText = `Entendido. Registrei sua solicitação operacional. O lote sequencial ativo no momento está mapeado e pronto para consolidação lógica. Você pode consultar o Gêmeo Digital ou me enviar novas perguntas.`;
       }
 
-      setChatMessages(prev => [...prev, { sender: "system", text: responseText }]);
-    }, 600);
+    if (
+      shouldUseGenerativeConsultor(userMessage) ||
+      responseText.startsWith("Entendido. Registrei sua solicitação operacional.")
+    ) {
+      const aiResponse = await requestGenerativeConsultor(
+        userMessage,
+        responseText
+      );
+
+      if (aiResponse) {
+        responseText = aiResponse;
+      }
+    }
+
+    setChatMessages(prev => [...prev, { sender: "system", text: responseText }]);
   };
 
 
@@ -6278,7 +7038,7 @@ const pct = total > 0 ? (occupied / total) * 100 : 0;
               <div className="bg-white border border-slate-200 rounded-xl p-6 shadow-xs flex flex-col md:flex-row gap-6 items-stretch">
                 
                 {/* Chat section */}
-                <div className="flex-1 border border-slate-300 rounded-xl flex flex-col h-[420px] overflow-hidden shadow-inner bg-slate-50 font-sans">
+                <div className="flex-1 min-w-0 border border-slate-300 rounded-xl flex flex-col h-[65vh] min-h-[520px] max-h-[760px] overflow-hidden shadow-inner bg-slate-50 font-sans">
                   
                   <div className="bg-slate-900 border-b border-slate-950 p-4 font-sans text-white flex items-center justify-between">
                     <div className="flex items-center gap-2">
@@ -6310,14 +7070,15 @@ const pct = total > 0 ? (occupied / total) * 100 : 0;
                       value={chatInput}
                       onChange={(e) => setChatInput(e.target.value)}
                       onKeyDown={(e) => e.key === "Enter" && handleSendChatMessage()}
-                      placeholder="Qual SKU está mais estocado? Indique posições livres..."
+                      placeholder="Ex.: Onde separar 300 peças do SKU 441401G?"
                       className="flex-1 bg-slate-50 border border-slate-350 rounded-lg p-2 text-xs focus:outline-none"
                     />
                     <button
-                      onClick={handleSendChatMessage}
+                      onClick={() => handleSendChatMessage()}
+                      disabled={chatAiLoading}
                       className="bg-indigo-600 hover:bg-indigo-750 bg-indigo-700 text-white px-4 py-2 rounded-lg text-xs font-bold transition cursor-pointer"
                     >
-                      Enviar
+                      {chatAiLoading ? "Consultando..." : "Enviar"}
                     </button>
                   </div>
 
@@ -6332,32 +7093,25 @@ const pct = total > 0 ? (occupied / total) * 100 : 0;
 
                   <div className="space-y-2 text-[11px] font-sans">
                     <button
-                    onClick={() => setChatInput("Qual SKU está mais pulverizado?")}
-                    className="w-full text-left bg-white hover:bg-slate-100 p-2 border border-slate-200 rounded-lg transition font-bold text-slate-700"
-                  >
-                    📦 SKU mais pulverizado
-                  </button>
-                  
-                  <button
-                    onClick={() => setChatInput("Onde posso liberar espaço?")}
-                    className="w-full text-left bg-white hover:bg-slate-100 p-2 border border-slate-200 rounded-lg transition font-bold text-slate-700"
-                  >
-                    📊 Onde posso liberar espaço?
-                  </button>
-                  
-                  <button
-                  onClick={() => setChatInput("Gerar plano de consolidação")}
-                  className="w-full text-left bg-white hover:bg-slate-100 p-2 border border-slate-200 rounded-lg transition font-bold text-slate-700"
-                >
-                  📄 Gerar plano de consolidação
-                </button>
+                      onClick={() => setChatInput("Onde devo armazenar este SKU?")}
+                      className="w-full text-left bg-white hover:bg-slate-100 p-2 border border-slate-200 rounded-lg transition font-bold text-slate-700"
+                    >
+                      📍 Onde devo armazenar este SKU?
+                    </button>
 
                     <button
-                  onClick={handleExportConsolidationPDF}
-                  className="w-full text-left bg-white hover:bg-slate-100 p-2 border border-slate-200 rounded-lg transition font-bold text-slate-700"
-                >
-                  🖨️ Exportar plano PDF
-                </button>
+                      onClick={() => setChatInput("Onde separar este SKU?")}
+                      className="w-full text-left bg-white hover:bg-slate-100 p-2 border border-slate-200 rounded-lg transition font-bold text-slate-700"
+                    >
+                      📦 Onde separar este SKU?
+                    </button>
+
+                    <button
+                      onClick={() => setChatInput("Qual seria a melhor estratégia para organizar este SKU?")}
+                      className="w-full text-left bg-white hover:bg-slate-100 p-2 border border-slate-200 rounded-lg transition font-bold text-slate-700"
+                    >
+                      💡 Melhor estratégia para este SKU
+                    </button>
                   </div>
                 </div>
 
