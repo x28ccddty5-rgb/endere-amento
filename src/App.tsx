@@ -18,7 +18,8 @@ import {
   Product,
   Galpao,
   Restricao,
-  WarehouseLayoutEntry
+  WarehouseLayoutEntry,
+  WarehousePositionConfig
 } from "./types";
 import { PRODUCT_CATALOG, findProductInList } from "./data/products";
 import { normalizeRole, canExecuteOperations, isAdmin, isReadOnlyRole } from "./constants/permissions";
@@ -28,10 +29,10 @@ import { AdminUsersManagement, AppUser } from "./components/AdminUsersManagement
 import { DivergenciasPanel } from "./components/DivergenciasPanel";
 import { MobileShell } from "./components/mobile/MobileShell";
 import { readOfflineSnapshot, saveOfflineSnapshot } from "./lib/offlineCache";
-import { getPhysicalAddressKey } from "./lib/slotUtils";
 import { BaseDeDadosPanel } from "./components/BaseDeDadosPanel";
 import { WarehouseLayoutPanel } from "./components/WarehouseLayoutPanel";
 import { getDefaultE1Layout, getE1CapacityMap, getE1TotalCapacity, loadWarehouseLayout, saveWarehouseLayout } from "./lib/warehouseLayout";
+import { deleteWarehouseModule, deleteWarehousePosition, loadWarehousePositions, saveWarehousePositions } from "./lib/warehousePositions";
 import { 
   LayoutDashboard, 
   Search, 
@@ -864,6 +865,29 @@ useEffect(() => {
 }, [authUserId]);
 
 useEffect(() => {
+  if (!authUserId) return;
+
+  let cancelled = false;
+
+  const loadPositions = async () => {
+    setWarehousePositionsLoading(true);
+    const result = await loadWarehousePositions();
+
+    if (cancelled) return;
+
+    setWarehousePositions(result.data);
+    setWarehousePositionsError(result.error);
+    setWarehousePositionsLoading(false);
+  };
+
+  loadPositions();
+
+  return () => {
+    cancelled = true;
+  };
+}, [authUserId]);
+
+useEffect(() => {
   if (activeTab !== "dashboard" && activeTab !== "histórico" && activeTab !== "ai") {
     return;
   }
@@ -1142,6 +1166,10 @@ const deleteProduct = async (
   const [warehouseLayoutLoading, setWarehouseLayoutLoading] = useState(false);
   const [warehouseLayoutSaving, setWarehouseLayoutSaving] = useState(false);
   const [warehouseLayoutError, setWarehouseLayoutError] = useState<string | null>(null);
+  const [warehousePositions, setWarehousePositions] = useState<WarehousePositionConfig[]>([]);
+  const [warehousePositionsLoading, setWarehousePositionsLoading] = useState(false);
+  const [warehousePositionsSaving, setWarehousePositionsSaving] = useState(false);
+  const [warehousePositionsError, setWarehousePositionsError] = useState<string | null>(null);
 
   const [history, setHistory] = useState<HistoricoMov[]>([]);
 
@@ -1196,7 +1224,107 @@ const deleteProduct = async (
     setWarehouseLayout(result.data);
     setWarehouseLayoutError(null);
     setWarehouseLayoutSaving(false);
-    alert("Configuração física dos estoques salva com sucesso.");
+    return true;
+  };
+
+  const handleSaveWarehousePositions = async (
+    entries: WarehousePositionConfig[]
+  ): Promise<boolean> => {
+    if (!authUserId || !isAdmin(currentUser?.role)) {
+      alert("Somente usuários Administrador podem alterar a configuração física.");
+      return false;
+    }
+
+    setWarehousePositionsSaving(true);
+
+    const result = await saveWarehousePositions(entries, authUserId);
+
+    if (result.error || !result.data) {
+      setWarehousePositionsSaving(false);
+      alert(
+        `Não foi possível salvar as posições físicas dos estoques.\n\n${result.error || "Erro desconhecido."}`
+      );
+      return false;
+    }
+
+    setWarehousePositions(result.data);
+    setWarehousePositionsError(null);
+    setWarehousePositionsSaving(false);
+    return true;
+  };
+
+  const handleDeleteWarehousePosition = async (
+    estoque: string,
+    modulo: string,
+    posicao: string
+  ): Promise<boolean> => {
+    if (!authUserId || !isAdmin(currentUser?.role)) {
+      alert("Somente usuários Administrador podem excluir posições.");
+      return false;
+    }
+
+    const result = await deleteWarehousePosition(estoque, modulo, posicao);
+
+    if (result.error) {
+      alert(
+        `Não foi possível excluir a posição ${posicao} do módulo ${modulo}.\n\n${result.error}`
+      );
+      return false;
+    }
+
+    setWarehousePositions(current =>
+      current.filter(
+        position =>
+          !(
+            position.estoque === String(estoque).replace(/^E/i, "") &&
+            String(Number(position.modulo)) === String(Number(modulo)) &&
+            position.posicao === posicao.trim().toUpperCase()
+          )
+      )
+    );
+    return true;
+  };
+
+  const handleDeleteWarehouseModule = async (
+    estoque: string,
+    modulo: string
+  ): Promise<boolean> => {
+    if (!authUserId || !isAdmin(currentUser?.role)) {
+      alert("Somente usuários Administrador podem excluir módulos.");
+      return false;
+    }
+
+    const result = await deleteWarehouseModule(estoque, modulo);
+
+    if (result.error) {
+      alert(
+        `Não foi possível excluir o módulo ${modulo} do Estoque ${estoque}.\n\n${result.error}`
+      );
+      return false;
+    }
+
+    const normalizedEstoque = String(estoque).replace(/^E/i, "");
+    const normalizedModulo = String(Number(modulo));
+
+    setWarehousePositions(current =>
+      current.filter(
+        position =>
+          !(
+            position.estoque === normalizedEstoque &&
+            String(Number(position.modulo)) === normalizedModulo
+          )
+      )
+    );
+    setWarehouseLayout(current =>
+      current.filter(
+        entry =>
+          !(
+            entry.estoque === normalizedEstoque &&
+            String(Number(entry.modulo)) === normalizedModulo
+          )
+      )
+    );
+
     return true;
   };
 
@@ -1507,6 +1635,22 @@ const deleteProduct = async (
       }, 0);
   }, [slots, productsList, warehouseLayout]);
   
+  const activePhysicalPositionKeys = useMemo(() => {
+    const result = {
+      "2": new Set<string>(),
+      "3": new Set<string>(),
+    };
+
+    warehousePositions.forEach(position => {
+      if (!position.ativo || (position.estoque !== "2" && position.estoque !== "3")) return;
+      result[position.estoque].add(
+        `${position.estoque}-${Number(position.modulo)}-${position.posicao.trim().toUpperCase()}`
+      );
+    });
+
+    return result;
+  }, [warehousePositions]);
+
   // --- SYSTEM LOG OPERATOR RESPONSIBLES ---
   const operator = currentUser?.name || "Administrador Geral";
   const launchDate = new Date().toISOString().split("T")[0];
@@ -2014,7 +2158,8 @@ if (
           true,
           slots,
           getE1CapacityMap(warehouseLayout),
-          warehouseLayout
+          warehouseLayout,
+          warehousePositions
         );
         allErrors = [...allErrors, ...rowErrors];
 
@@ -2171,7 +2316,8 @@ if (
       true,
       slots,
       getE1CapacityMap(warehouseLayout),
-      warehouseLayout
+      warehouseLayout,
+      warehousePositions
     );
 
     if (errors.length > 0) {
@@ -4247,9 +4393,11 @@ if (refRaw) {
     }
   };
 
-  const mobileActiveTab = (
-    ["endereçamento", "lançamento", "divergências", "histórico", "ai"] as const
-  ).includes(activeTab as any)
+  const mobileAllowedTabs = isAdmin(currentUser.role)
+    ? ["endereçamento", "lançamento", "divergências", "histórico", "ai", "base", "configuracao"]
+    : ["endereçamento", "lançamento", "divergências", "histórico", "ai"];
+
+  const mobileActiveTab = mobileAllowedTabs.includes(activeTab)
     ? activeTab
     : "endereçamento";
 
@@ -4277,6 +4425,29 @@ if (refRaw) {
         recommendationAvailable={recommendationQueue.length > 0}
         onNextRecommendation={handleNextRecommendation}
         onLogout={handleLogout}
+        baseDataProps={{
+          productsList,
+          slots,
+          onRegisterProduct: registerNewProduct,
+          onUpdateProduct: updateProduct,
+          onDeleteProduct: deleteProduct,
+          hasAccess,
+          currentUser,
+        }}
+        warehouseConfigProps={{
+          layout: warehouseLayout,
+          slots,
+          positions: warehousePositions,
+          productsList,
+          currentUser,
+          loading: warehouseLayoutLoading || warehousePositionsLoading,
+          saving: warehouseLayoutSaving || warehousePositionsSaving,
+          loadError: warehouseLayoutError || warehousePositionsError,
+          onSave: handleSaveWarehouseLayout,
+          onSavePositions: handleSaveWarehousePositions,
+          onDeletePosition: handleDeleteWarehousePosition,
+          onDeleteModule: handleDeleteWarehouseModule,
+        }}
       />
     );
   }
@@ -4565,6 +4736,7 @@ if (refRaw) {
                 productsList={productsList}
                 occupiedPalletsE1={occupiedPalletsE1}
                 e1CapacityTotal={getE1TotalCapacity(warehouseLayout)}
+                warehousePositions={warehousePositions}
                 appMode="avancado"
                 canPerformActions={canExecuteOperations(currentUser?.role)}
               />
@@ -4592,25 +4764,27 @@ if (refRaw) {
                           occupied = occupiedPalletsE1;
                         }
                         
-                        if (est === "2") {
-                          total = 1373;
+                        if (est === "2" || est === "3") {
+                          const configured = activePhysicalPositionKeys[est];
+                          total = configured.size;
                           occupied = new Set(
                             slots
-                              .filter(s => s.estoque === "2" && s.saldo > 0)
-                              .map(getPhysicalAddressKey)
+                              .filter(
+                                slot =>
+                                  slot.estoque === est &&
+                                  slot.saldo > 0 &&
+                                  configured.has(
+                                    `${est}-${Number(slot.modulo)}-${String(slot.posicao || "").trim().toUpperCase()}`
+                                  )
+                              )
+                              .map(
+                                slot =>
+                                  `${est}-${Number(slot.modulo)}-${String(slot.posicao || "").trim().toUpperCase()}`
+                              )
                           ).size;
                         }
-                        
-                        if (est === "3") {
-                          total = 1288;
-                          occupied = new Set(
-                            slots
-                              .filter(s => s.estoque === "3" && s.saldo > 0)
-                              .map(getPhysicalAddressKey)
-                          ).size;
-                        }
-                        
-                        const pct = total > 0 ? (occupied / total) * 100 : 0;
+
+const pct = total > 0 ? (occupied / total) * 100 : 0;
                 
                         return (
                           <div key={est} className="flex items-center gap-3">
@@ -6038,12 +6212,16 @@ if (refRaw) {
             <WarehouseLayoutPanel
               layout={warehouseLayout}
               slots={slots}
+              positions={warehousePositions}
               productsList={productsList}
               currentUser={currentUser}
-              loading={warehouseLayoutLoading}
-              saving={warehouseLayoutSaving}
-              loadError={warehouseLayoutError}
+              loading={warehouseLayoutLoading || warehousePositionsLoading}
+              saving={warehouseLayoutSaving || warehousePositionsSaving}
+              loadError={warehouseLayoutError || warehousePositionsError}
               onSave={handleSaveWarehouseLayout}
+              onSavePositions={handleSaveWarehousePositions}
+              onDeletePosition={handleDeleteWarehousePosition}
+              onDeleteModule={handleDeleteWarehouseModule}
             />
           )}
 
@@ -6088,6 +6266,7 @@ if (refRaw) {
               productsList={productsList}
               currentUser={currentUser}
               e1Layout={warehouseLayout}
+              warehousePositions={warehousePositions}
               />
             </div>
           )}

@@ -47,6 +47,49 @@ const mapRow = (row: any): WarehouseLayoutEntry => ({
 });
 
 
+
+export const normalizeWarehouseLayoutEntries = (
+  entries: WarehouseLayoutEntry[]
+): WarehouseLayoutEntry[] => {
+  const grouped = new Map<string, WarehouseLayoutEntry>();
+
+  for (const entry of entries) {
+    const estoque = String(entry.estoque).replace(/^E/i, "");
+    const modulo = String(entry.modulo).trim().replace(/^0+/, "") || "0";
+    const key = `${estoque}-${modulo}`;
+    const current = grouped.get(key);
+
+    if (!current) {
+      grouped.set(key, {
+        ...entry,
+        id: `${estoque}-${modulo}`,
+        estoque,
+        modulo,
+      });
+      continue;
+    }
+
+    grouped.set(key, {
+      ...current,
+      id: `${estoque}-${modulo}`,
+      estoque,
+      modulo,
+      capacidade:
+        estoque === "1"
+          ? Math.max(Number(current.capacidade || 0), Number(entry.capacidade || 0))
+          : Math.max(Number(current.capacidade || 0), Number(entry.capacidade || 0)),
+      ativo: Boolean(current.ativo || entry.ativo),
+      updatedAt: current.updatedAt || entry.updatedAt,
+    });
+  }
+
+  return [...grouped.values()].sort(
+    (a, b) =>
+      Number(a.estoque) - Number(b.estoque) ||
+      Number(a.modulo) - Number(b.modulo)
+  );
+};
+
 export async function loadWarehouseLayout(): Promise<{
   data: WarehouseLayoutEntry[];
   error: string | null;
@@ -66,19 +109,16 @@ export async function loadWarehouseLayout(): Promise<{
     };
   }
 
-  const mapped = (data || [])
-    .map(mapRow)
-    .sort(
-      (a, b) =>
-        Number(a.estoque) - Number(b.estoque) ||
-        Number(a.modulo) - Number(b.modulo)
-    );
+  const mapped = normalizeWarehouseLayoutEntries((data || []).map(mapRow));
 
   const e1 = mapped.filter(entry => entry.estoque === "1");
   return {
     data: e1.length > 0
       ? mapped
-      : [...getDefaultE1Layout(), ...mapped.filter(entry => entry.estoque !== "1")],
+      : normalizeWarehouseLayoutEntries([
+          ...getDefaultE1Layout(),
+          ...mapped.filter(entry => entry.estoque !== "1"),
+        ]),
     error: null,
   };
 }
@@ -113,13 +153,7 @@ export async function saveWarehouseLayout(
   }
 
   return {
-    data: (data || [])
-      .map(mapRow)
-      .sort(
-        (a, b) =>
-          Number(a.estoque) - Number(b.estoque) ||
-          Number(a.modulo) - Number(b.modulo)
-      ),
+    data: normalizeWarehouseLayoutEntries((data || []).map(mapRow)),
     error: null,
   };
 }

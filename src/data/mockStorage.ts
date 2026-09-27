@@ -1,4 +1,4 @@
-import { Product, WarehouseSlot, LancamentoRow, HistoricoMov, Divergencia, Restricao, WarehouseLayoutEntry } from "../types";
+import { Product, WarehouseSlot, LancamentoRow, HistoricoMov, Divergencia, Restricao, WarehouseLayoutEntry, WarehousePositionConfig } from "../types";
 import { findProductInList } from "./products";
 import { E1_CAPACITY } from "../constants/layout";
 
@@ -21,11 +21,8 @@ const sameNumericModule = (left: string, right: string): boolean => {
  * - Estoque: mandatory (1, 2, 3)
  * - Módulo/Rua: mandatory (without R/M prefix under the hood, but normalized automatically if entered)
  *    Estoque 1: ruas cadastradas e ativas na configuração física
- *    Estoque 2: 1 to 172
- *    Estoque 3: 1 to 112
- * - Posição: mandatory for Estoque 2 and 3 ONLY
- *    Estoque 2: A1-E1, A2-E2 (A1, B1, C1, D1, E1, A2, B2, C2, D2, E2)
- *    Estoque 3: A1-F1, A2-F2 (A1, B1, C1, D1, E1, F1, A2, B2, C2, D2, E2, F2)
+ *    Estoque 2/3: módulo ativo na configuração física
+ * - Posição: mandatory for Estoque 2 and 3 ONLY, and must be active in the physical configuration
  * - Ref (SKU): mandatory (automatically stripped of "S" if typed/pasted)
  * - Quantidade: mandatory & positive (saldo logistico em peças)
  * - Tipo: mandatory (Entrada/Saída)
@@ -93,7 +90,8 @@ export function validateLancamentoRow(
   isAdvanced = false,
   currentSlots?: WarehouseSlot[],
   e1Capacity: Record<string, number> = E1_CAPACITY,
-  warehouseLayout: WarehouseLayoutEntry[] = []
+  warehouseLayout: WarehouseLayoutEntry[] = [],
+  warehousePositions: WarehousePositionConfig[] = []
 ): string[] {
   const errors: string[] = [];
 
@@ -134,33 +132,34 @@ export function validateLancamentoRow(
         !isConfiguredModuleActive(warehouseLayout, est, String(modNum))
       ) {
         errors.push(`Linha ${rowNumber}: o módulo ${modNum} está inativo na configuração física do Estoque ${est}.`);
-      } else if (est === "2" && (modNum < 1 || modNum > 172)) {
-        errors.push(`Linha ${rowNumber}: Para o Estoque 2, o módulo deve ser de 1 a 172.`);
-      } else if (est === "3" && (modNum < 1 || modNum > 112)) {
-        errors.push(`Linha ${rowNumber}: Para o Estoque 3, o módulo deve ser de 1 a 112.`);
       }
     }
   }
 
   // 4. Posição (Obrigatório apenas para Estoque 2 e 3; em corredor / vão livre no modo avançado pode vir vazio)
   const pos = row.posicao ? row.posicao.trim().toUpperCase() : "";
-  if (est === "2") {
-    const validPositionsE2 = ["A1", "B1", "C1", "D1", "E1", "A2", "B2", "C2", "D2", "E2"];
+  if (est === "2" || est === "3") {
+    const moduleConfig = warehousePositions.filter(
+      position =>
+        position.estoque === est &&
+        sameNumericModule(position.modulo, mod)
+    );
+    const activePositions = moduleConfig
+      .filter(position => position.ativo)
+      .map(position => position.posicao.toUpperCase());
+
     if (!pos) {
       if (!isAdvanced || currentSlots) {
-        errors.push(`Linha ${rowNumber}: Posição é obrigatória para o Estoque 2.`);
+        errors.push(`Linha ${rowNumber}: Posição é obrigatória para o Estoque ${est}.`);
       }
-    } else if (!validPositionsE2.includes(pos)) {
-      errors.push(`Linha ${rowNumber}: Posição '${pos}' inválida para o Estoque 2. Escolha entre A1-E1 ou A2-E2.`);
-    }
-  } else if (est === "3") {
-    const validPositionsE3 = ["A1", "B1", "C1", "D1", "E1", "F1", "A2", "B2", "C2", "D2", "E2", "F2"];
-    if (!pos) {
-      if (!isAdvanced || currentSlots) {
-        errors.push(`Linha ${rowNumber}: Posição é obrigatória para o Estoque 3.`);
-      }
-    } else if (!validPositionsE3.includes(pos)) {
-      errors.push(`Linha ${rowNumber}: Posição '${pos}' inválida para o Estoque 3. Escolha entre A1-F1 ou A2-F2.`);
+    } else if (moduleConfig.length > 0 && !activePositions.includes(pos)) {
+      errors.push(
+        `Linha ${rowNumber}: Posição '${pos}' não está ativa na configuração física do Estoque ${est}, módulo ${mod}.`
+      );
+    } else if (moduleConfig.length === 0) {
+      errors.push(
+        `Linha ${rowNumber}: O módulo ${mod} do Estoque ${est} não possui posições configuradas.`
+      );
     }
   } else {
     // Estoque 1

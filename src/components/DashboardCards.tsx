@@ -21,7 +21,7 @@ import {
   CheckCircle, 
   Percent 
 } from "lucide-react";
-import { WarehouseSlot, HistoricoMov, Divergencia } from "../types";
+import { WarehouseSlot, HistoricoMov, Divergencia, WarehousePositionConfig } from "../types";
 
 const normalizeReferencia = (value: string | null | undefined): string =>
   (value || "").trim().toUpperCase();
@@ -80,6 +80,7 @@ interface DashboardCardsProps {
   productsList: any[];
   occupiedPalletsE1: number;
   e1CapacityTotal: number;
+  warehousePositions: WarehousePositionConfig[];
   appMode?: string;
   canPerformActions?: boolean;
 }
@@ -91,6 +92,7 @@ export const DashboardCards: React.FC<DashboardCardsProps> = ({
   productsList,
   occupiedPalletsE1,
   e1CapacityTotal,
+  warehousePositions,
   appMode,
   canPerformActions = false
 }) => {
@@ -107,10 +109,26 @@ export const DashboardCards: React.FC<DashboardCardsProps> = ({
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedDays, setSelectedDays] = useState(7);
   
-  // 1. Calculate slot statuses
+  // 1. Calculate slot statuses using the official physical configuration.
+  const activePhysicalPositions = useMemo(() => {
+    const result = {
+      "2": new Set<string>(),
+      "3": new Set<string>(),
+    };
+
+    warehousePositions.forEach(position => {
+      if (!position.ativo || (position.estoque !== "2" && position.estoque !== "3")) return;
+      result[position.estoque].add(
+        `${position.estoque}-${Number(position.modulo)}-${position.posicao.trim().toUpperCase()}`
+      );
+    });
+
+    return result;
+  }, [warehousePositions]);
+
   const totalSlotsE1 = e1CapacityTotal;
-  const totalSlotsE2 = 1373;
-  const totalSlotsE3 = 1288;
+  const totalSlotsE2 = activePhysicalPositions["2"].size;
+  const totalSlotsE3 = activePhysicalPositions["3"].size;
   const totalSlots = totalSlotsE1 + totalSlotsE2 + totalSlotsE3;
 
   const slotSummary = useMemo(() => {
@@ -126,8 +144,14 @@ export const DashboardCards: React.FC<DashboardCardsProps> = ({
 
       storedQuantity += slot.saldo;
 
-      if (slot.estoque === "2") occupiedE2++;
-      if (slot.estoque === "3") occupiedE3++;
+      if (slot.estoque === "2") {
+        const key = `2-${Number(slot.modulo)}-${String(slot.posicao || "").trim().toUpperCase()}`;
+        if (activePhysicalPositions["2"].has(key)) occupiedE2++;
+      }
+      if (slot.estoque === "3") {
+        const key = `3-${Number(slot.modulo)}-${String(slot.posicao || "").trim().toUpperCase()}`;
+        if (activePhysicalPositions["3"].has(key)) occupiedE3++;
+      }
 
       const referencia = normalizeReferencia(slot.referencia);
       if (!referencia) continue;

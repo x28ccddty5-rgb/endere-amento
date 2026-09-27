@@ -1,18 +1,12 @@
-import React, { useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { calcularPaletes } from "../lib/palletUtils";
 import { Search } from "lucide-react";
 import { jsPDF } from "jspdf";
-import { WarehouseLayoutEntry, WarehouseSlot, Product } from "../types";
+import { WarehouseLayoutEntry, WarehousePositionConfig, WarehouseSlot, Product } from "../types";
 import { Map, Info, User, Calendar, Sliders, Check, Hammer, Package } from "lucide-react";
 import { VerticalModuleMap } from "./VerticalModuleMap";
 import { isAdmin } from "../constants/permissions";
 import { getE1ActiveLayout, getE1CapacityMap, getE1TotalCapacity } from "../lib/warehouseLayout";
-
-import {
-  E2_BLOCKED_POSITIONS,
-  E3_BLOCKED_POSITIONS,
-  E3_EXTRA_POSITIONS
-} from "../constants/layout";
 
 interface InteractiveMapaProps {
   slots: WarehouseSlot[];
@@ -20,6 +14,7 @@ interface InteractiveMapaProps {
   productsList: Product[];
   currentUser: any;
   e1Layout: WarehouseLayoutEntry[];
+  warehousePositions: WarehousePositionConfig[];
 }
 
 export const InteractiveMapa: React.FC<InteractiveMapaProps> = ({
@@ -27,7 +22,8 @@ export const InteractiveMapa: React.FC<InteractiveMapaProps> = ({
   onQuickUpdateSlot,
   productsList,
   currentUser,
-  e1Layout
+  e1Layout,
+  warehousePositions
 }) => {
 
   const isReadOnly = !isAdmin(currentUser?.role);
@@ -54,6 +50,57 @@ export const InteractiveMapa: React.FC<InteractiveMapaProps> = ({
   const activeE1Layout = getE1ActiveLayout(e1Layout);
   const e1CapacityMap = getE1CapacityMap(e1Layout);
   const capacidadeTotalE1 = getE1TotalCapacity(e1Layout);
+  const e1Ruas = activeE1Layout.map(entry => String(Number(entry.modulo)));
+
+  const activeE2Modules = useMemo(
+    () =>
+      e1Layout
+        .filter(entry => entry.estoque === "2" && entry.ativo)
+        .map(entry => Number(entry.modulo))
+        .filter(Number.isFinite)
+        .sort((a, b) => a - b),
+    [e1Layout]
+  );
+
+  const activeE3Modules = useMemo(
+    () =>
+      e1Layout
+        .filter(entry => entry.estoque === "3" && entry.ativo)
+        .map(entry => Number(entry.modulo))
+        .filter(Number.isFinite)
+        .sort((a, b) => a - b),
+    [e1Layout]
+  );
+
+  const activePhysicalPositionKeys = useMemo(() => {
+    const result = {
+      "2": new Set<string>(),
+      "3": new Set<string>(),
+    };
+
+    warehousePositions.forEach(position => {
+      if (!position.ativo || (position.estoque !== "2" && position.estoque !== "3")) return;
+      result[position.estoque].add(
+        `${position.estoque}-${Number(position.modulo)}-${position.posicao.trim().toUpperCase()}`
+      );
+    });
+
+    return result;
+  }, [warehousePositions]);
+
+  useEffect(() => {
+    if (activeE2Modules.length > 0 && !activeE2Modules.includes(selectedE2Module)) {
+      setSelectedE2Module(activeE2Modules[0]);
+      setSelectedSlotId(null);
+    }
+  }, [activeE2Modules, selectedE2Module]);
+
+  useEffect(() => {
+    if (activeE3Modules.length > 0 && !activeE3Modules.includes(selectedE3Module)) {
+      setSelectedE3Module(activeE3Modules[0]);
+      setSelectedSlotId(null);
+    }
+  }, [activeE3Modules, selectedE3Module]);
   
   const activeSlots = slots.filter(s => s.estoque === selectedEstoque);
   const selectedSlot = slots.find(s => s.id === selectedSlotId);
@@ -91,41 +138,50 @@ export const InteractiveMapa: React.FC<InteractiveMapaProps> = ({
   const livresRua =
   capacidadeRuaSelecionada - paletesRua;
   
-  // Lists definitions (plain numbers!)
-  const e1Ruas = activeE1Layout.map(entry => String(Number(entry.modulo)));
-  
-  const e2Positions = ["A1", "B1", "C1", "D1", "E1", "A2", "B2", "C2", "D2", "E2"];
-  const e3Positions = ["A1", "B1", "C1", "D1", "E1", "F1", "A2", "B2", "C2", "D2", "E2", "F2"];
-  
-    const blockedE2Positions =
-  E2_BLOCKED_POSITIONS[selectedE2Module] || [];
+  // E2/E3 physical positions come from the official configuration.
+  const getModulePositions = (estoque: "2" | "3", modulo: number) =>
+    warehousePositions
+      .filter(
+        position =>
+          position.estoque === estoque &&
+          Number(position.modulo) === modulo
+      )
+      .sort((a, b) => {
+        const letterA = a.posicao.charCodeAt(0);
+        const letterB = b.posicao.charCodeAt(0);
+        if (letterA !== letterB) return letterA - letterB;
+        return Number(a.posicao.slice(1)) - Number(b.posicao.slice(1));
+      });
 
-  const blockedE3Positions =
-    E3_BLOCKED_POSITIONS[selectedE3Module] || [];
 
-  const extraE3Positions =
-    E3_EXTRA_POSITIONS[selectedE3Module] || [];
+  const selectedModule =
+    selectedEstoque === "2" ? selectedE2Module : selectedE3Module;
+
+  const selectedModulePositions =
+    selectedEstoque === "2" || selectedEstoque === "3"
+      ? getModulePositions(selectedEstoque, selectedModule)
+      : [];
+
+  const activeModulePositions = selectedModulePositions
+    .filter(position => position.ativo)
+    .map(position => position.posicao);
+
+  const inactiveModulePositions = selectedModulePositions
+    .filter(position => !position.ativo)
+    .map(position => position.posicao);
 
   const buildVerticalRows = (positions: string[]) => {
+    const ruas = [...new Set(positions.map(pos => pos[0]))].sort().reverse();
+    return ruas.map(rua => ({
+      rua,
+      andar1: `${rua}1`,
+      andar2: `${rua}2`,
+    }));
+  };
 
-    const ruas = [...new Set(
-    positions.map(pos => pos[0])
-  )].sort().reverse();
-
-  return ruas.map((rua) => ({
-    rua,
-    andar1: `${rua}1`,
-    andar2: `${rua}2`,
-  }));
-};
-    
-  const verticalRows =
-  selectedEstoque === "2"
-    ? buildVerticalRows(e2Positions)
-    : buildVerticalRows([
-        ...e3Positions,
-        ...extraE3Positions
-      ]);
+  const verticalRows = buildVerticalRows(
+    selectedModulePositions.map(position => position.posicao)
+  );
 
   const getOccupancyStatus = (
   slot: WarehouseSlot,
@@ -441,27 +497,32 @@ if (estoque === "2") {
   
    }, 0);
 
-  // Occupancy summary
+  // Ocupação física E2/E3 usa somente posições ativas da configuração oficial.
   const occupiedCount =
-  selectedEstoque === "1"
-    ? occupiedPalletsE1
-    : activeSlots.filter(
-        s =>
-          s.referencia &&
-          s.referencia.trim() !== "" &&
-          s.saldo > 0
-      ).length;
-  
-  console.log("Total slots E2:", activeSlots.length);
-  console.log("Ocupados:", occupiedCount);
-  
-  // Estimated representative total
+    selectedEstoque === "1"
+      ? occupiedPalletsE1
+      : new Set(
+          activeSlots
+            .filter(
+              slot =>
+                slot.referencia &&
+                slot.referencia.trim() !== "" &&
+                slot.saldo > 0 &&
+                activePhysicalPositionKeys[selectedEstoque as "2" | "3"].has(
+                  `${selectedEstoque}-${Number(slot.modulo)}-${String(slot.posicao || "").trim().toUpperCase()}`
+                )
+            )
+            .map(
+              slot =>
+                `${selectedEstoque}-${Number(slot.modulo)}-${String(slot.posicao || "").trim().toUpperCase()}`
+            )
+        ).size;
+
+  // Total físico oficial: E2/E3 vêm da quantidade de posições ativas configuradas.
   const totalCount =
-  selectedEstoque === "1"
-    ? capacidadeTotalE1
-    : selectedEstoque === "2"
-      ? 1373
-      : 112 * 12;
+    selectedEstoque === "1"
+      ? capacidadeTotalE1
+      : activePhysicalPositionKeys[selectedEstoque as "2" | "3"].size;
 
   const occRate = totalCount > 0 ? (occupiedCount / totalCount) * 100 : 0;
 
@@ -546,9 +607,9 @@ if (estoque === "2") {
           <div>
             <span className="text-[10px] text-slate-400 block font-bold uppercase">Estrutura de Armazenamento</span>
             <span className="text-xs font-bold text-slate-600 leading-tight">
-              {selectedEstoque === "1" && "21 Ruas (Sem posições definidas)"}
-              {selectedEstoque === "2" && "172 Módulos (Capacidade ajustada para túneis e pilares)"}
-              {selectedEstoque === "3" && "112 Módulos (Capacidade ajustada para túneis, pilares e módulos especiais)"}
+              {selectedEstoque === "1" && "Ruas (Sem posições definidas)"}
+              {selectedEstoque === "2" && `${activeE2Modules.length} módulos • posições ativas conforme configuração`}
+              {selectedEstoque === "3" && `${activeE3Modules.length} módulos • posições ativas conforme configuração`}
             </span>
           </div>
           <div>
@@ -681,29 +742,43 @@ if (estoque === "2") {
                 <div className="flex items-center gap-2">
                   {selectedEstoque === "2" ? (
                     <>
-                      <label className="text-xs font-bold text-slate-600">Módulo (1 a 172):</label>
-                      <input 
-                        type="number" 
-                        min="1" 
-                        max="172" 
+                      <label className="text-xs font-bold text-slate-600">Módulo:</label>
+                      <select
                         value={selectedE2Module}
-                        onChange={(e) => {
-                          const val = Math.max(1, Math.min(172, Number(e.target.value)));
-                          setSelectedE2Module(val);
+                        onChange={e => {
+                          setSelectedE2Module(Number(e.target.value));
                           setSelectedSlotId(null);
                         }}
-                        className="w-20 bg-white border border-slate-300 rounded px-2 py-1 text-xs font-bold focus:outline-none focus:ring-1 focus:ring-blue-500"
-                      />
+                        className="w-24 bg-white border border-slate-300 rounded px-2 py-1 text-xs font-bold focus:outline-none focus:ring-1 focus:ring-blue-500"
+                      >
+                        {activeE2Modules.map(module => (
+                          <option key={module} value={module}>{module}</option>
+                        ))}
+                      </select>
                       <div className="flex gap-1">
-                        <button 
-                          onClick={() => { setSelectedE2Module(m => Math.max(1, m - 1)); setSelectedSlotId(null); }}
-                          className="px-2 py-1 bg-white border border-slate-300 text-xs rounded hover:bg-slate-100 font-bold cursor-pointer"
+                        <button
+                          disabled={activeE2Modules.length === 0}
+                          onClick={() => {
+                            const index = activeE2Modules.indexOf(selectedE2Module);
+                            if (index > 0) {
+                              setSelectedE2Module(activeE2Modules[index - 1]);
+                              setSelectedSlotId(null);
+                            }
+                          }}
+                          className="px-2 py-1 bg-white border border-slate-300 text-xs rounded hover:bg-slate-100 font-bold disabled:opacity-40"
                         >
                           -1
                         </button>
-                        <button 
-                          onClick={() => { setSelectedE2Module(m => Math.min(172, m + 1)); setSelectedSlotId(null); }}
-                          className="px-2 py-1 bg-white border border-slate-300 text-xs rounded hover:bg-slate-100 font-bold cursor-pointer"
+                        <button
+                          disabled={activeE2Modules.length === 0}
+                          onClick={() => {
+                            const index = activeE2Modules.indexOf(selectedE2Module);
+                            if (index >= 0 && index < activeE2Modules.length - 1) {
+                              setSelectedE2Module(activeE2Modules[index + 1]);
+                              setSelectedSlotId(null);
+                            }
+                          }}
+                          className="px-2 py-1 bg-white border border-slate-300 text-xs rounded hover:bg-slate-100 font-bold disabled:opacity-40"
                         >
                           +1
                         </button>
@@ -711,29 +786,43 @@ if (estoque === "2") {
                     </>
                   ) : (
                     <>
-                      <label className="text-xs font-bold text-slate-600">Módulo (1 a 112):</label>
-                      <input 
-                        type="number" 
-                        min="1" 
-                        max="112" 
+                      <label className="text-xs font-bold text-slate-600">Módulo:</label>
+                      <select
                         value={selectedE3Module}
-                        onChange={(e) => {
-                          const val = Math.max(1, Math.min(112, Number(e.target.value)));
-                          setSelectedE3Module(val);
+                        onChange={e => {
+                          setSelectedE3Module(Number(e.target.value));
                           setSelectedSlotId(null);
                         }}
-                        className="w-20 bg-white border border-slate-300 rounded px-2 py-1 text-xs font-bold focus:outline-none focus:ring-1 focus:ring-blue-500"
-                      />
+                        className="w-24 bg-white border border-slate-300 rounded px-2 py-1 text-xs font-bold focus:outline-none focus:ring-1 focus:ring-blue-500"
+                      >
+                        {activeE3Modules.map(module => (
+                          <option key={module} value={module}>{module}</option>
+                        ))}
+                      </select>
                       <div className="flex gap-1">
-                        <button 
-                          onClick={() => { setSelectedE3Module(m => Math.max(1, m - 1)); setSelectedSlotId(null); }}
-                          className="px-2 py-1 bg-white border border-slate-300 text-xs rounded hover:bg-slate-100 font-bold cursor-pointer"
+                        <button
+                          disabled={activeE3Modules.length === 0}
+                          onClick={() => {
+                            const index = activeE3Modules.indexOf(selectedE3Module);
+                            if (index > 0) {
+                              setSelectedE3Module(activeE3Modules[index - 1]);
+                              setSelectedSlotId(null);
+                            }
+                          }}
+                          className="px-2 py-1 bg-white border border-slate-300 text-xs rounded hover:bg-slate-100 font-bold disabled:opacity-40"
                         >
                           -1
                         </button>
-                        <button 
-                          onClick={() => { setSelectedE3Module(m => Math.min(112, m + 1)); setSelectedSlotId(null); }}
-                          className="px-2 py-1 bg-white border border-slate-300 text-xs rounded hover:bg-slate-100 font-bold cursor-pointer"
+                        <button
+                          disabled={activeE3Modules.length === 0}
+                          onClick={() => {
+                            const index = activeE3Modules.indexOf(selectedE3Module);
+                            if (index >= 0 && index < activeE3Modules.length - 1) {
+                              setSelectedE3Module(activeE3Modules[index + 1]);
+                              setSelectedSlotId(null);
+                            }
+                          }}
+                          className="px-2 py-1 bg-white border border-slate-300 text-xs rounded hover:bg-slate-100 font-bold disabled:opacity-40"
                         >
                           +1
                         </button>
@@ -753,11 +842,7 @@ if (estoque === "2") {
                 <VerticalModuleMap
                   rows={verticalRows}
 
-                  blockedPositions={
-                  selectedEstoque === "2"
-                    ? blockedE2Positions
-                    : blockedE3Positions
-                }
+                  blockedPositions={inactiveModulePositions}
                   
                   selectedEstoque={selectedEstoque}
                 
@@ -782,9 +867,7 @@ if (estoque === "2") {
                 <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
                   {selectedEstoque === "2" ? (
                     
-                    e2Positions
-                      .filter((pos) => !blockedE2Positions.includes(pos))
-                      .map((pos) => {
+                    activeModulePositions.map((pos) => {
                       const modStr = String(selectedE2Module);
                       const s = getOrCreateSlotOnMap("2", modStr, pos);
                       const isOccupied = s.saldo > 0;
@@ -842,9 +925,7 @@ if (estoque === "2") {
                       );
                     })
                   ) : (
-                    [...e3Positions, ...extraE3Positions]
-                    .filter((pos) => !blockedE3Positions.includes(pos))
-                    .map((pos) => {
+                    activeModulePositions.map((pos) => {
                         
                       const modStr = String(selectedE3Module);
                       const s = getOrCreateSlotOnMap("3", modStr, pos);

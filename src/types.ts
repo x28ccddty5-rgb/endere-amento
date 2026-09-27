@@ -11,6 +11,15 @@ export interface WarehouseLayoutEntry {
   updatedAt?: string;
 }
 
+export interface WarehousePositionConfig {
+  id: string;
+  estoque: string;
+  modulo: string;
+  posicao: string;
+  ativo: boolean;
+  updatedAt?: string;
+}
+
 export interface Product {
   referencia: string;
   descricao: string;
