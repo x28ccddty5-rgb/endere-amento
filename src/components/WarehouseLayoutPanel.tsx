@@ -1,147 +1,72 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { Check, CircleAlert, Plus, Save, Warehouse } from "lucide-react";
+import { Check, CircleAlert, Plus, Save, Trash2, Warehouse } from "lucide-react";
 import { calcularPaletes } from "../lib/palletUtils";
 import { isAdmin } from "../constants/permissions";
-import {
-  E2_BLOCKED_POSITIONS,
-  E3_BLOCKED_POSITIONS,
-  E3_EXTRA_POSITIONS,
-} from "../constants/layout";
-import { WarehouseLayoutEntry, WarehouseSlot, Product } from "../types";
+import { WarehouseLayoutEntry, WarehousePositionConfig, WarehouseSlot, Product } from "../types";
+import { normalizeWarehouseLayoutEntries } from "../lib/warehouseLayout";
 
 interface WarehouseLayoutPanelProps {
   layout: WarehouseLayoutEntry[];
   slots: WarehouseSlot[];
+  positions: WarehousePositionConfig[];
   productsList: Product[];
   currentUser: any;
   loading?: boolean;
   saving?: boolean;
   loadError?: string | null;
   onSave: (entries: WarehouseLayoutEntry[]) => Promise<boolean>;
+  onSavePositions: (entries: WarehousePositionConfig[]) => Promise<boolean>;
+  onDeletePosition: (estoque: string, modulo: string, posicao: string) => Promise<boolean>;
+  onDeleteModule: (estoque: string, modulo: string) => Promise<boolean>;
 }
 
-const E23_BASE_POSITIONS: Record<"2" | "3", string[]> = {
-  "2": ["A1", "B1", "C1", "D1", "E1", "A2", "B2", "C2", "D2", "E2"],
-  "3": ["A1", "B1", "C1", "D1", "E1", "F1", "A2", "B2", "C2", "D2", "E2", "F2"],
-};
-
-const E23_MODULE_LIMITS = { "2": 172, "3": 112 } as const;
-
 const normalizeModule = (value: string) =>
-  value.trim().replace(/^0+/, "") || "0";
+  value.trim();
 
-const getDefaultE23Layout = (
-  estoque: "2" | "3",
-  slots: WarehouseSlot[]
-): WarehouseLayoutEntry[] => {
-  const moduleNumbers = new Set<number>();
+const isCanonicalModule = (value: string) =>
+  /^[1-9][0-9]*$/.test(value.trim());
 
-  for (let module = 1; module <= E23_MODULE_LIMITS[estoque]; module += 1) {
-    moduleNumbers.add(module);
-  }
+const normalizePosition = (value: string) =>
+  value.trim().toUpperCase();
 
-  slots
-    .filter(slot => slot.estoque === estoque)
-    .forEach(slot => {
-      const module = Number(slot.modulo);
-      if (Number.isInteger(module) && module > 0) moduleNumbers.add(module);
-    });
-
-  return [...moduleNumbers]
-    .sort((a, b) => a - b)
-    .map(module => {
-      const positions = getModulePositions(estoque, String(module), slots);
-      return {
-        id: `${estoque}-${module}`,
-        estoque,
-        modulo: String(module),
-        capacidade: positions.length,
-        ativo: true,
-      };
-    });
-};
-
-const getModulePositions = (
-  estoque: "2" | "3",
-  modulo: string,
-  slots: WarehouseSlot[]
-): string[] => {
-  const moduleNumber = Number(modulo);
-  const blocked =
-    estoque === "2"
-      ? E2_BLOCKED_POSITIONS[moduleNumber] || []
-      : E3_BLOCKED_POSITIONS[moduleNumber] || [];
-  const extras =
-    estoque === "3" ? E3_EXTRA_POSITIONS[moduleNumber] || [] : [];
-
-  const result = new Set<string>();
-
-  E23_BASE_POSITIONS[estoque]
-    .filter(position => !blocked.includes(position))
-    .forEach(position => result.add(position));
-
-  extras.forEach(position => result.add(position));
-
-  slots
-    .filter(
-      slot =>
-        slot.estoque === estoque &&
-        String(Number(slot.modulo)) === String(moduleNumber) &&
-        slot.posicao
-    )
-    .forEach(slot => result.add(slot.posicao.toUpperCase()));
-
-  return [...result].sort((a, b) => {
-    const letterA = a.charCodeAt(0);
-    const letterB = b.charCodeAt(0);
-    if (letterA !== letterB) return letterA - letterB;
-    return Number(a.slice(1)) - Number(b.slice(1));
-  });
+const positionSort = (a: string, b: string) => {
+  const letterA = a.charCodeAt(0);
+  const letterB = b.charCodeAt(0);
+  if (letterA !== letterB) return letterA - letterB;
+  return Number(a.slice(1)) - Number(b.slice(1));
 };
 
 export const WarehouseLayoutPanel: React.FC<WarehouseLayoutPanelProps> = ({
   layout,
   slots,
+  positions,
   productsList,
   currentUser,
   loading = false,
   saving = false,
   loadError = null,
   onSave,
+  onSavePositions,
+  onDeletePosition,
+  onDeleteModule,
 }) => {
   const [selectedEstoque, setSelectedEstoque] = useState<"1" | "2" | "3">("1");
   const [draft, setDraft] = useState<WarehouseLayoutEntry[]>(layout);
+  const [positionDraft, setPositionDraft] = useState<WarehousePositionConfig[]>(positions);
   const [newModule, setNewModule] = useState("");
   const [newCapacity, setNewCapacity] = useState("33");
   const [moduleSearch, setModuleSearch] = useState("");
+  const [newPositionByModule, setNewPositionByModule] = useState<Record<string, string>>({});
 
   const admin = isAdmin(currentUser?.role);
 
   useEffect(() => {
-    const normalized = [...layout];
+    setDraft(normalizeWarehouseLayoutEntries(layout));
+  }, [layout]);
 
-    for (const estoque of ["2", "3"] as const) {
-      const existing = normalized.filter(entry => entry.estoque === estoque);
-      if (existing.length === 0) {
-        normalized.push(...getDefaultE23Layout(estoque, slots));
-      } else {
-        const existingModules = new Set(existing.map(entry => String(Number(entry.modulo))));
-        getDefaultE23Layout(estoque, slots).forEach(entry => {
-          if (!existingModules.has(String(Number(entry.modulo)))) {
-            normalized.push(entry);
-          }
-        });
-      }
-    }
-
-    setDraft(
-      normalized.sort(
-        (a, b) =>
-          Number(a.estoque) - Number(b.estoque) ||
-          Number(a.modulo) - Number(b.modulo)
-      )
-    );
-  }, [layout, slots]);
+  useEffect(() => {
+    setPositionDraft([...positions]);
+  }, [positions]);
 
   const occupancyByModule = useMemo(() => {
     const productsByReference = new Map<string, Product>(
@@ -166,22 +91,22 @@ export const WarehouseLayoutPanel: React.FC<WarehouseLayoutPanelProps> = ({
   }, [slots, productsList]);
 
   const positionsByModule = useMemo(() => {
-    const result: Record<string, string[]> = {};
+    const result: Record<string, WarehousePositionConfig[]> = {};
 
-    for (const estoque of ["2", "3"] as const) {
-      draft
-        .filter(entry => entry.estoque === estoque)
-        .forEach(entry => {
-          result[`${estoque}-${entry.modulo}`] = getModulePositions(
-            estoque,
-            entry.modulo,
-            slots
-          );
-        });
-    }
+    positionDraft
+      .filter(position => position.estoque === "2" || position.estoque === "3")
+      .forEach(position => {
+        const key = `${position.estoque}-${position.modulo}`;
+        if (!result[key]) result[key] = [];
+        result[key].push(position);
+      });
+
+    Object.values(result).forEach(list =>
+      list.sort((a, b) => positionSort(a.posicao, b.posicao))
+    );
 
     return result;
-  }, [draft, slots]);
+  }, [positionDraft]);
 
   const updateEntry = (
     id: string,
@@ -196,15 +121,9 @@ export const WarehouseLayoutPanel: React.FC<WarehouseLayoutPanelProps> = ({
 
   const handleAddModule = () => {
     const modulo = normalizeModule(newModule);
-    const capacidade = Number(newCapacity);
 
-    if (!/^\d+$/.test(modulo) || Number(modulo) <= 0) {
-      alert("Informe uma rua/módulo válido maior que zero.");
-      return;
-    }
-
-    if (!Number.isInteger(capacidade) || capacidade <= 0) {
-      alert("Informe uma capacidade inteira maior que zero.");
+    if (!isCanonicalModule(modulo)) {
+      alert("Informe o módulo sem zeros à esquerda. Exemplos válidos: 1, 2, 10, 172.");
       return;
     }
 
@@ -212,30 +131,145 @@ export const WarehouseLayoutPanel: React.FC<WarehouseLayoutPanelProps> = ({
       draft.some(
         entry =>
           entry.estoque === selectedEstoque &&
-          String(Number(entry.modulo)) === modulo
+          String(entry.modulo) === modulo
       )
     ) {
       alert(`O módulo ${modulo} já está cadastrado no Estoque ${selectedEstoque}.`);
       return;
     }
 
-    setDraft(current => [
-      ...current,
+    const capacidadeInicial =
+      selectedEstoque === "1"
+        ? Number(newCapacity)
+        : selectedEstoque === "2"
+          ? 10
+          : 12;
+
+    if (selectedEstoque === "1" && (!Number.isInteger(capacidadeInicial) || capacidadeInicial <= 0)) {
+      alert("Informe uma capacidade inteira maior que zero.");
+      return;
+    }
+
+    setDraft(current =>
+      [
+        ...current,
+        {
+          id: `${selectedEstoque}-${modulo}`,
+          estoque: selectedEstoque,
+          modulo,
+          capacidade: capacidadeInicial,
+          ativo: true,
+        },
+      ].sort(
+        (a, b) =>
+          Number(a.estoque) - Number(b.estoque) ||
+          Number(a.modulo) - Number(b.modulo)
+      )
+    );
+
+    if (selectedEstoque === "2" || selectedEstoque === "3") {
+      const defaultPositions =
+        selectedEstoque === "2"
+          ? ["A1", "A2", "B1", "B2", "C1", "C2", "D1", "D2", "E1", "E2"]
+          : ["A1", "A2", "B1", "B2", "C1", "C2", "D1", "D2", "E1", "E2", "F1", "F2"];
+
+      setPositionDraft(current =>
+        [
+          ...current,
+          ...defaultPositions.map(posicao => ({
+            id: `${selectedEstoque}-${modulo}-${posicao}`,
+            estoque: selectedEstoque,
+            modulo,
+            posicao,
+            ativo: true,
+          })),
+        ]
+          .filter(
+            (position, index, list) =>
+              list.findIndex(item => item.id === position.id) === index
+          )
+          .sort(
+            (a, b) =>
+              Number(a.estoque) - Number(b.estoque) ||
+              Number(a.modulo) - Number(b.modulo) ||
+              positionSort(a.posicao, b.posicao)
+          )
+      );
+    }
+
+    setNewModule("");
+    setNewCapacity("33");
+  };
+
+  const hasOccupancy = (estoque: string, modulo: string, posicao?: string) => {
+    const normalizedEstoque = String(estoque).replace(/^E/i, "");
+    const normalizedModulo = String(Number(modulo));
+
+    return slots.some(slot =>
+      String(slot.estoque).replace(/^E/i, "") === normalizedEstoque &&
+      String(Number(slot.modulo)) === normalizedModulo &&
+      (!posicao ||
+        String(slot.posicao || "").trim().toUpperCase() === posicao.trim().toUpperCase()) &&
+      Number(slot.saldo || 0) > 0
+    );
+  };
+
+  const togglePosition = (id: string) => {
+    const position = positionDraft.find(item => item.id === id);
+    if (!position) return;
+
+    if (position.ativo && hasOccupancy(position.estoque, position.modulo, position.posicao)) {
+      alert(
+        `A posição ${position.posicao} do módulo ${position.modulo} possui estoque registrado. ` +
+        "Transfira o estoque antes de desativá-la."
+      );
+      return;
+    }
+
+    setPositionDraft(current =>
+      current.map(item =>
+        item.id === id ? { ...item, ativo: !item.ativo } : item
+      )
+    );
+  };
+
+  const handleAddPosition = (estoque: "2" | "3", modulo: string) => {
+    const key = `${estoque}-${modulo}`;
+    const posicao = normalizePosition(newPositionByModule[key] || "");
+
+    if (!/^[A-Z]+[1-9][0-9]*$/.test(posicao)) {
+      alert("Informe uma posição válida, por exemplo A1, B2 ou G1.");
+      return;
+    }
+
+    if (positionDraft.some(
+      position =>
+        position.estoque === estoque &&
+        String(Number(position.modulo)) === String(Number(modulo)) &&
+        position.posicao === posicao
+    )) {
+      alert(`A posição ${posicao} já está cadastrada no módulo ${modulo}.`);
+      return;
+    }
+
+    const next = [
+      ...positionDraft,
       {
-        id: `${selectedEstoque}-${modulo}`,
-        estoque: selectedEstoque,
-        modulo,
-        capacidade,
+        id: `${estoque}-${Number(modulo)}-${posicao}`,
+        estoque,
+        modulo: String(Number(modulo)),
+        posicao,
         ativo: true,
       },
     ].sort(
       (a, b) =>
         Number(a.estoque) - Number(b.estoque) ||
-        Number(a.modulo) - Number(b.modulo)
-    ));
+        Number(a.modulo) - Number(b.modulo) ||
+        positionSort(a.posicao, b.posicao)
+    );
 
-    setNewModule("");
-    setNewCapacity(selectedEstoque === "1" ? "33" : "10");
+    setNewPositionByModule(current => ({ ...current, [key]: "" }));
+    setPositionDraft(next);
   };
 
   const handleSave = async () => {
@@ -247,12 +281,11 @@ export const WarehouseLayoutPanel: React.FC<WarehouseLayoutPanelProps> = ({
     const seen = new Set<string>();
 
     for (const entry of draft) {
-      const modulo = String(Number(entry.modulo));
-      const capacidade = Number(entry.capacidade);
+      const modulo = String(entry.modulo).trim();
       const key = `${entry.estoque}-${modulo}`;
 
-      if (!/^\d+$/.test(modulo) || Number(modulo) <= 0) {
-        alert(`O módulo ${entry.modulo} é inválido.`);
+      if (!isCanonicalModule(modulo)) {
+        alert(`O módulo ${entry.modulo} é inválido. Use somente números sem zeros à esquerda.`);
         return;
       }
 
@@ -262,51 +295,141 @@ export const WarehouseLayoutPanel: React.FC<WarehouseLayoutPanelProps> = ({
       }
       seen.add(key);
 
-      if (!Number.isInteger(capacidade) || capacidade <= 0) {
-        alert(`A capacidade do módulo ${modulo} deve ser um número inteiro maior que zero.`);
-        return;
-      }
-
       if (entry.estoque === "1") {
-        const occupied = occupancyByModule[modulo] || 0;
-        if (!entry.ativo && occupied > 0) {
+        const capacidade = Number(entry.capacidade);
+
+        // O Estoque 1 trabalha com capacidade média/estimada por rua.
+        // A ocupação real pode ficar acima ou abaixo desse valor e isso
+        // não deve impedir a configuração. Mantemos apenas a validação
+        // estrutural de que a capacidade informada é um inteiro positivo.
+        if (!Number.isInteger(capacidade) || capacidade <= 0) {
+          alert(`A capacidade da rua ${modulo} deve ser um número inteiro maior que zero.`);
+          return;
+        }
+      } else {
+        const modulePositions =
+          positionsByModule[`${entry.estoque}-${modulo}`] || [];
+        const activePositionCount = modulePositions.filter(position => position.ativo).length;
+
+        if (entry.ativo && activePositionCount === 0) {
           alert(
-            `A rua ${modulo} não pode ser desativada porque possui aproximadamente ` +
-            `${occupied} palete(s) registrado(s).`
+            `O módulo ${modulo} do Estoque ${entry.estoque} precisa ter pelo menos uma posição ativa.`
           );
           return;
         }
 
-        if (entry.ativo && capacidade < occupied) {
+        if (!entry.ativo && hasOccupancy(entry.estoque, modulo)) {
           alert(
-            `A capacidade da rua ${modulo} (${capacidade}) não pode ser menor que ` +
-            `a ocupação estimada atual (${occupied}).`
-          );
-          return;
-        }
-      }
-
-      if (entry.estoque !== "1") {
-        const positionCount =
-          positionsByModule[`${entry.estoque}-${entry.modulo}`]?.length || 0;
-
-        if (entry.ativo && capacidade < positionCount) {
-          alert(
-            `O módulo ${entry.modulo} do Estoque ${entry.estoque} possui ` +
-            `${positionCount} posições cadastradas no layout. A capacidade não pode ser menor que esse total.`
+            `O módulo ${modulo} do Estoque ${entry.estoque} não pode ser desativado ` +
+            "porque possui estoque registrado. Transfira o estoque antes."
           );
           return;
         }
       }
     }
 
-    await onSave(
-      draft.map(entry => ({
-        ...entry,
-        estoque: String(entry.estoque).replace(/^E/i, ""),
-        modulo: String(Number(entry.modulo)),
-        capacidade: Number(entry.capacidade),
+    const layoutSaved = await onSave(
+      draft.map(entry => {
+        const normalizedEstoque = String(entry.estoque).replace(/^E/i, "");
+        const normalizedModulo = String(entry.modulo).trim();
+        const activePositionCount =
+          normalizedEstoque === "1"
+            ? Number(entry.capacidade)
+            : (positionsByModule[`${normalizedEstoque}-${normalizedModulo}`] || [])
+                .filter(position => position.ativo).length;
+
+        return {
+          ...entry,
+          estoque: normalizedEstoque,
+          modulo: normalizedModulo,
+          capacidade: activePositionCount,
+        };
+      })
+    );
+
+    if (!layoutSaved) return;
+
+    const positionsSaved = await onSavePositions(
+      positionDraft.map(position => ({
+        ...position,
+        estoque: String(position.estoque).replace(/^E/i, ""),
+        modulo: String(position.modulo).trim(),
+        posicao: position.posicao.trim().toUpperCase(),
       }))
+    );
+
+    if (!positionsSaved) return;
+
+    alert("Configuração física dos estoques salva com sucesso.");
+  };
+
+  const handleDeletePosition = async (
+    position: WarehousePositionConfig
+  ) => {
+    if (!admin) return;
+
+    if (hasOccupancy(position.estoque, position.modulo, position.posicao)) {
+      alert(
+        `A posição ${position.posicao} do módulo ${position.modulo} possui estoque registrado. ` +
+        "Transfira o estoque antes de excluí-la."
+      );
+      return;
+    }
+
+    const confirmed = window.confirm(
+      `Excluir a posição ${position.posicao} do módulo ${position.modulo} do Estoque ${position.estoque}?`
+    );
+    if (!confirmed) return;
+
+    const deleted = await onDeletePosition(
+      position.estoque,
+      position.modulo,
+      position.posicao
+    );
+
+    if (!deleted) return;
+
+    setPositionDraft(current => current.filter(item => item.id !== position.id));
+  };
+
+  const handleDeleteModule = async (entry: WarehouseLayoutEntry) => {
+    if (!admin) return;
+
+    if (hasOccupancy(entry.estoque, entry.modulo)) {
+      alert(
+        `O módulo ${entry.modulo} do Estoque ${entry.estoque} possui estoque registrado. ` +
+        "Transfira o estoque antes de excluí-lo."
+      );
+      return;
+    }
+
+    const confirmed = window.confirm(
+      `Excluir o módulo ${entry.modulo} e todas as suas posições do Estoque ${entry.estoque}?`
+    );
+    if (!confirmed) return;
+
+    const deleted = await onDeleteModule(entry.estoque, entry.modulo);
+
+    if (!deleted) return;
+
+    const normalizedModulo = String(Number(entry.modulo));
+    setDraft(current =>
+      current.filter(
+        item =>
+          !(
+            item.estoque === entry.estoque &&
+            String(Number(item.modulo)) === normalizedModulo
+          )
+      )
+    );
+    setPositionDraft(current =>
+      current.filter(
+        item =>
+          !(
+            item.estoque === entry.estoque &&
+            String(Number(item.modulo)) === normalizedModulo
+          )
+      )
     );
   };
 
@@ -321,10 +444,6 @@ export const WarehouseLayoutPanel: React.FC<WarehouseLayoutPanelProps> = ({
         .sort((a, b) => Number(a.modulo) - Number(b.modulo)),
     [draft, selectedEstoque, moduleSearch]
   );
-
-  const totalCapacity = selectedEntries
-    .filter(entry => entry.ativo)
-    .reduce((total, entry) => total + Number(entry.capacidade || 0), 0);
 
   const totalOccupied = Object.keys(occupancyByModule)
     .filter(key => selectedEstoque === "1" || key)
@@ -347,9 +466,21 @@ export const WarehouseLayoutPanel: React.FC<WarehouseLayoutPanelProps> = ({
 
   const isE1 = selectedEstoque === "1";
 
+  const totalConfigured = isE1
+    ? selectedEntries
+        .filter(entry => entry.ativo)
+        .reduce((total, entry) => total + Number(entry.capacidade || 0), 0)
+    : selectedEntries.reduce(
+        (total, entry) =>
+          total +
+          ((positionsByModule[`${entry.estoque}-${entry.modulo}`] || [])
+            .filter(position => position.ativo).length),
+        0
+      );
+
   return (
     <div className="space-y-6">
-      <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-xs">
+      <div className="rounded-xl border border-slate-200 bg-white p-4 md:p-6 shadow-xs">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
           <div>
             <div className="flex items-center gap-2">
@@ -360,9 +491,8 @@ export const WarehouseLayoutPanel: React.FC<WarehouseLayoutPanelProps> = ({
             </div>
             <p className="mt-2 max-w-4xl text-xs font-medium leading-relaxed text-slate-500">
               O Estoque 1 mantém a configuração de capacidade em paletes. Nos Estoques 2 e 3,
-              os módulos são configurados sem criar posições silenciosamente: a tela mostra a
-              estrutura padrão, posições extras previstas no código e posições já cadastradas
-              no Supabase.
+              módulos e posições físicas vêm da configuração oficial do Supabase. Você pode
+              ativar/desativar posições e adicionar novas posições sem alterar o código.
             </p>
           </div>
 
@@ -409,32 +539,93 @@ export const WarehouseLayoutPanel: React.FC<WarehouseLayoutPanelProps> = ({
           ))}
         </div>
 
-        <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-3">
-          <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
-            <span className="text-[10px] font-black uppercase text-slate-400">
+        <div className="mt-4 grid grid-cols-3 gap-2 sm:gap-3">
+          <div className="min-w-0 rounded-lg border border-slate-200 bg-slate-50 p-2 sm:p-4">
+            <span className="block truncate text-[8px] font-black uppercase leading-tight text-slate-400 sm:text-[10px]">
               {isE1 ? "Ruas ativas" : "Módulos ativos"}
             </span>
-            <strong className="mt-1 block text-2xl font-black text-slate-800">
+            <strong className="mt-1 block truncate text-base font-black text-slate-800 sm:text-2xl">
               {selectedEntries.filter(entry => entry.ativo).length}
             </strong>
           </div>
-          <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
-            <span className="text-[10px] font-black uppercase text-slate-400">
+          <div className="min-w-0 rounded-lg border border-slate-200 bg-slate-50 p-2 sm:p-4">
+            <span className="block truncate text-[8px] font-black uppercase leading-tight text-slate-400 sm:text-[10px]">
               {isE1 ? "Capacidade ativa" : "Posições configuradas"}
             </span>
-            <strong className="mt-1 block text-2xl font-black text-slate-800">
-              {totalCapacity.toLocaleString("pt-BR")}
-              {isE1 ? " paletes" : ""}
+            <strong className="mt-1 block truncate text-base font-black text-slate-800 sm:text-2xl">
+              {totalConfigured.toLocaleString("pt-BR")}
+              {isE1 ? <span className="ml-0.5 text-[9px] font-bold sm:text-sm">pal.</span> : ""}
             </strong>
           </div>
-          <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
-            <span className="text-[10px] font-black uppercase text-slate-400">
+          <div className="min-w-0 rounded-lg border border-slate-200 bg-slate-50 p-2 sm:p-4">
+            <span className="block truncate text-[8px] font-black uppercase leading-tight text-slate-400 sm:text-[10px]">
               {isE1 ? "Ocupação estimada" : "Módulos exibidos"}
             </span>
-            <strong className="mt-1 block text-2xl font-black text-slate-800">
-              {isE1 ? `${totalOccupied.toLocaleString("pt-BR")} paletes` : selectedEntries.length}
+            <strong className="mt-1 block truncate text-base font-black text-slate-800 sm:text-2xl">
+              {isE1 ? (
+                <>
+                  {totalOccupied.toLocaleString("pt-BR")}
+                  <span className="ml-0.5 text-[9px] font-bold sm:text-sm">pal.</span>
+                </>
+              ) : (
+                selectedEntries.length
+              )}
             </strong>
           </div>
+        </div>
+      </div>
+
+      {/* Add module/road first on mobile and desktop. */}
+      <div className="rounded-xl border border-slate-200 bg-white p-3 shadow-xs sm:p-5">
+        <div className="flex items-center gap-2">
+          <Plus className="h-4 w-4 shrink-0 text-blue-600" />
+          <h3 className="text-xs font-black uppercase text-slate-800">Adicionar novo módulo/rua</h3>
+        </div>
+        <p className="mt-1 hidden text-[11px] font-medium text-slate-500 sm:block">
+          Para E2/E3, um novo módulo já recebe automaticamente 10 posições no Estoque 2
+          ou 12 posições no Estoque 3. Depois você pode ativar, desativar, excluir ou adicionar
+          posições conforme a estrutura física real.
+        </p>
+
+        <div className={`mt-3 grid gap-2 ${
+          isE1 ? "grid-cols-2 sm:grid-cols-[160px_220px_auto]" : "grid-cols-[1fr_auto] sm:grid-cols-[220px_auto]"
+        }`}>
+          <input
+            value={newModule}
+            onChange={event => setNewModule(event.target.value.replace(/[^0-9]/g, ""))}
+            placeholder={isE1 ? "Nº da rua" : "Nº do módulo"}
+            inputMode="numeric"
+            className="min-w-0 rounded-lg border border-slate-300 px-3 py-2 text-base font-bold text-slate-800 outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 sm:text-xs"
+          />
+          {isE1 && (
+            <input
+              type="number"
+              min={1}
+              step={1}
+              value={newCapacity}
+              onChange={event => setNewCapacity(event.target.value)}
+              placeholder="Capacidade"
+              className="min-w-0 rounded-lg border border-slate-300 px-3 py-2 text-base font-bold text-slate-800 outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 sm:text-xs"
+            />
+          )}
+          <button
+            type="button"
+            onClick={handleAddModule}
+            className={`inline-flex min-h-10 items-center justify-center gap-2 rounded-lg border border-slate-300 bg-white px-3 py-2 text-[10px] font-black uppercase text-slate-700 transition hover:bg-slate-50 ${
+              isE1 ? "col-span-2 sm:col-span-1" : ""
+            }`}
+          >
+            <Plus className="h-4 w-4" />
+            Adicionar
+          </button>
+        </div>
+
+        <div className="mt-3 hidden items-start gap-2 rounded-lg border border-blue-100 bg-blue-50 p-3 text-[11px] font-semibold leading-relaxed text-blue-800 sm:flex">
+          <Check className="mt-0.5 h-4 w-4 shrink-0" />
+          <span>
+            As posições de E2/E3 são mantidas separadamente dos módulos. Clique em uma posição
+            para ativar/desativar ou use "+ posição" para cadastrar uma nova.
+          </span>
         </div>
       </div>
 
@@ -447,7 +638,7 @@ export const WarehouseLayoutPanel: React.FC<WarehouseLayoutPanelProps> = ({
             <p className="mt-1 text-[10px] font-medium text-slate-500">
               {isE1
                 ? "Capacidade física estimada em paletes."
-                : "As posições são derivadas do layout padrão, exceções do código e registros físicos existentes."}
+                : "As posições abaixo são a configuração física oficial deste módulo."}
             </p>
           </div>
           <input
@@ -459,7 +650,7 @@ export const WarehouseLayoutPanel: React.FC<WarehouseLayoutPanelProps> = ({
           />
         </div>
 
-        <div className="max-h-[min(62vh,560px)] overflow-auto">
+        <div className="hidden md:block max-h-[min(62vh,560px)] overflow-auto">
           <table className="w-full min-w-[900px] text-left">
             <thead className="border-b border-slate-200 bg-white">
               <tr>
@@ -470,32 +661,16 @@ export const WarehouseLayoutPanel: React.FC<WarehouseLayoutPanelProps> = ({
                 <th className="px-4 py-3 text-[10px] font-black uppercase text-slate-500">
                   {isE1 ? "Capacidade (paletes)" : "Posições"}
                 </th>
-                <th className="px-4 py-3 text-[10px] font-black uppercase text-slate-500">
-                  Capacidade configurada
-                </th>
+
                 <th className="px-4 py-3 text-[10px] font-black uppercase text-slate-500">Situação</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
               {selectedEntries.map(entry => {
-                const positions =
+                const modulePositions =
                   !isE1
                     ? positionsByModule[`${entry.estoque}-${entry.modulo}`] || []
                     : [];
-                const blockedPositions =
-                  !isE1
-                    ? entry.estoque === "2"
-                      ? E2_BLOCKED_POSITIONS[Number(entry.modulo)] || []
-                      : E3_BLOCKED_POSITIONS[Number(entry.modulo)] || []
-                    : [];
-                const extraPositions =
-                  !isE1 && entry.estoque === "3"
-                    ? E3_EXTRA_POSITIONS[Number(entry.modulo)] || []
-                    : [];
-                const positionCount = positions.length;
-                const positionMismatch =
-                  !isE1 && Number(entry.capacidade) !== positionCount;
-
                 return (
                   <tr key={entry.id} className={entry.ativo ? "" : "bg-slate-50/80"}>
                     <td className="px-4 py-3 text-xs font-black text-slate-700">E{entry.estoque}</td>
@@ -504,65 +679,108 @@ export const WarehouseLayoutPanel: React.FC<WarehouseLayoutPanelProps> = ({
                     </td>
                     <td className="px-4 py-3">
                       {isE1 ? (
-                        <span className="text-xs font-bold text-slate-500">—</span>
+                        <input
+                          type="number"
+                          min={1}
+                          step={1}
+                          value={entry.capacidade}
+                          onChange={event =>
+                            updateEntry(entry.id, {
+                              capacidade: Number(event.target.value),
+                            })
+                          }
+                          className="w-28 rounded border border-slate-300 bg-white px-2 py-1.5 text-xs font-black text-slate-800 outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+                        />
                       ) : (
-                        <div className="flex max-w-[430px] flex-wrap gap-1">
-                          {positions.map(position => (
-                            <span
-                              key={position}
-                              className={`rounded border px-1.5 py-0.5 font-mono text-[10px] font-black ${
-                                extraPositions.includes(position)
-                                  ? "border-blue-200 bg-blue-50 text-blue-700"
-                                  : "border-slate-200 bg-slate-50 text-slate-600"
-                              }`}
+                        <div className="space-y-2">
+                          <div className="flex max-w-[560px] flex-wrap gap-1">
+                            {modulePositions.map(position => (
+                              <div key={position.id} className="inline-flex items-center gap-0.5">
+                                <button
+                                  type="button"
+                                  onClick={() => togglePosition(position.id)}
+                                  title={position.ativo ? "Desativar posição" : "Ativar posição"}
+                                  className={`rounded border px-1.5 py-0.5 font-mono text-[10px] font-black transition ${
+                                    position.ativo
+                                      ? "border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100"
+                                      : "border-slate-200 bg-slate-100 text-slate-400 line-through hover:bg-slate-200"
+                                  }`}
+                                >
+                                  {position.posicao}
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => handleDeletePosition(position)}
+                                  title="Excluir posição"
+                                  className="rounded border border-red-100 bg-white p-0.5 text-red-500 hover:bg-red-50"
+                                >
+                                  <Trash2 className="h-2.5 w-2.5" />
+                                </button>
+                              </div>
+                            ))}
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <input
+                              value={newPositionByModule[`${entry.estoque}-${entry.modulo}`] || ""}
+                              onChange={event =>
+                                setNewPositionByModule(current => ({
+                                  ...current,
+                                  [`${entry.estoque}-${entry.modulo}`]: event.target.value.toUpperCase(),
+                                }))
+                              }
+                              placeholder="Nova posição"
+                              className="w-28 rounded border border-slate-300 bg-white px-2 py-1 text-[10px] font-black uppercase text-slate-800 outline-none focus:border-blue-500"
+                            />
+                            <button
+                              type="button"
+                              onClick={() => handleAddPosition(entry.estoque as "2" | "3", entry.modulo)}
+                              className="rounded border border-slate-300 bg-white px-2 py-1 text-[10px] font-black uppercase text-slate-600 hover:bg-slate-50"
                             >
-                              {position}
-                              {extraPositions.includes(position) ? " • extra" : ""}
-                            </span>
-                          ))}
-                          {blockedPositions.map(position => (
-                            <span
-                              key={`blocked-${position}`}
-                              className="rounded border border-red-200 bg-red-50 px-1.5 py-0.5 font-mono text-[10px] font-black text-red-600 line-through"
-                            >
-                              {position} • bloqueada
-                            </span>
-                          ))}
+                              + posição
+                            </button>
+                          </div>
                         </div>
                       )}
                     </td>
                     <td className="px-4 py-3">
-                      <input
-                        type="number"
-                        min={isE1 ? 1 : positionCount || 1}
-                        step={1}
-                        value={entry.capacidade}
-                        onChange={event =>
-                          updateEntry(entry.id, {
-                            capacidade: Number(event.target.value),
-                          })
-                        }
-                        className="w-28 rounded border border-slate-300 bg-white px-2 py-1.5 text-xs font-black text-slate-800 outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
-                      />
-                      {!isE1 && positionMismatch && (
-                        <span className="ml-2 text-[9px] font-black uppercase text-amber-700">
-                          {positionCount} detectadas
-                        </span>
-                      )}
-                    </td>
-                    <td className="px-4 py-3">
-                      <button
-                        type="button"
-                        onClick={() => updateEntry(entry.id, { ativo: !entry.ativo })}
-                        className={`inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-[10px] font-black uppercase transition ${
-                          entry.ativo
-                            ? "border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100"
-                            : "border-slate-200 bg-slate-100 text-slate-500 hover:bg-slate-200"
-                        }`}
-                      >
-                        <span className={`h-2 w-2 rounded-full ${entry.ativo ? "bg-emerald-500" : "bg-slate-400"}`} />
-                        {entry.ativo ? "Ativo" : "Inativo"}
-                      </button>
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (
+                              entry.ativo &&
+                              entry.estoque !== "1" &&
+                              hasOccupancy(entry.estoque, entry.modulo)
+                            ) {
+                              alert(
+                                `O módulo ${entry.modulo} do Estoque ${entry.estoque} possui estoque registrado. ` +
+                                "Transfira o estoque antes de desativá-lo."
+                              );
+                              return;
+                            }
+                            updateEntry(entry.id, { ativo: !entry.ativo });
+                          }}
+                          className={`inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-[10px] font-black uppercase transition ${
+                            entry.ativo
+                              ? "border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100"
+                              : "border-slate-200 bg-slate-100 text-slate-500 hover:bg-slate-200"
+                          }`}
+                        >
+                          <span className={`h-2 w-2 rounded-full ${entry.ativo ? "bg-emerald-500" : "bg-slate-400"}`} />
+                          {entry.ativo ? "Ativo" : "Inativo"}
+                        </button>
+                        {entry.estoque !== "1" && (
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteModule(entry)}
+                            title="Excluir módulo"
+                            className="inline-flex items-center gap-1 rounded border border-red-100 bg-white px-2 py-1.5 text-[10px] font-black uppercase text-red-600 hover:bg-red-50"
+                          >
+                            <Trash2 className="h-3 w-3" />
+                            Excluir
+                          </button>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 );
@@ -570,53 +788,159 @@ export const WarehouseLayoutPanel: React.FC<WarehouseLayoutPanelProps> = ({
             </tbody>
           </table>
         </div>
+
+        <div className="md:hidden max-h-[58vh] overflow-y-auto p-3 space-y-3">
+          {selectedEntries.map(entry => {
+            const modulePositions =
+              !isE1
+                ? positionsByModule[`${entry.estoque}-${entry.modulo}`] || []
+                : [];
+            const activePositionCount = modulePositions.filter(position => position.ativo).length;
+
+            return (
+              <article
+                key={entry.id}
+                className={`rounded-xl border p-3 ${
+                  entry.ativo
+                    ? "border-slate-200 bg-white"
+                    : "border-slate-200 bg-slate-50"
+                }`}
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <div>
+                    <div className="text-[9px] font-black uppercase text-slate-400">
+                      {isE1 ? "Rua" : `Estoque ${entry.estoque}`}
+                    </div>
+                    <div className="mt-0.5 font-mono text-lg font-black text-slate-800">
+                      {isE1 ? `R${entry.modulo}` : `M${entry.modulo}`}
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (
+                          entry.ativo &&
+                          entry.estoque !== "1" &&
+                          hasOccupancy(entry.estoque, entry.modulo)
+                        ) {
+                          alert(
+                            `O módulo ${entry.modulo} do Estoque ${entry.estoque} possui estoque registrado. ` +
+                            "Transfira o estoque antes de desativá-lo."
+                          );
+                          return;
+                        }
+                        updateEntry(entry.id, { ativo: !entry.ativo });
+                      }}
+                      className={`inline-flex min-h-9 items-center gap-1.5 rounded-full border px-3 text-[9px] font-black uppercase ${
+                        entry.ativo
+                          ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                          : "border-slate-200 bg-slate-100 text-slate-500"
+                      }`}
+                    >
+                      <span className={`h-1.5 w-1.5 rounded-full ${entry.ativo ? "bg-emerald-500" : "bg-slate-400"}`} />
+                      {entry.ativo ? "Ativo" : "Inativo"}
+                    </button>
+
+                    {entry.estoque !== "1" && (
+                      <button
+                        type="button"
+                        onClick={() => handleDeleteModule(entry)}
+                        className="inline-flex min-h-9 items-center gap-1 rounded-lg border border-red-100 bg-red-50 px-2.5 text-[9px] font-black uppercase text-red-600"
+                        title="Excluir módulo"
+                      >
+                        <Trash2 className="h-3 w-3" />
+                        Excluir
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                {isE1 ? (
+                  <div className="mt-3 rounded-lg border border-slate-200 bg-slate-50 p-3">
+                    <div className="text-[9px] font-black uppercase text-slate-400">
+                      Capacidade configurada
+                    </div>
+                    <input
+                      type="number"
+                      min={1}
+                      step={1}
+                      value={entry.capacidade}
+                      onChange={event =>
+                        updateEntry(entry.id, {
+                          capacidade: Number(event.target.value),
+                        })
+                      }
+                      className="mt-1 h-10 w-full rounded-lg border border-slate-300 bg-white px-3 text-sm font-black text-slate-800 outline-none focus:border-blue-500"
+                    />
+                  </div>
+                ) : (
+                  <>
+                    <div className="mt-3 flex items-center justify-between">
+                      <span className="text-[9px] font-black uppercase text-slate-400">
+                        Posições
+                      </span>
+                      <span className="text-[10px] font-black text-slate-500">
+                        {activePositionCount} ativas
+                      </span>
+                    </div>
+
+                    <div className="mt-2 flex flex-wrap gap-1.5">
+                      {modulePositions.map(position => (
+                        <div key={position.id} className="inline-flex items-center gap-0.5">
+                          <button
+                            type="button"
+                            onClick={() => togglePosition(position.id)}
+                            title={position.ativo ? "Desativar posição" : "Ativar posição"}
+                            className={`min-h-8 rounded-md border px-2 font-mono text-[10px] font-black ${
+                              position.ativo
+                                ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                                : "border-slate-200 bg-slate-100 text-slate-400 line-through"
+                            }`}
+                          >
+                            {position.posicao}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleDeletePosition(position)}
+                            title="Excluir posição"
+                            className="flex h-8 w-6 items-center justify-center rounded-md border border-red-100 bg-white text-red-500"
+                          >
+                            <Trash2 className="h-3 w-3" />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+
+                    <div className="mt-3 grid grid-cols-[1fr_auto] gap-2">
+                      <input
+                        value={newPositionByModule[`${entry.estoque}-${entry.modulo}`] || ""}
+                        onChange={event =>
+                          setNewPositionByModule(current => ({
+                            ...current,
+                            [`${entry.estoque}-${entry.modulo}`]: event.target.value.toUpperCase(),
+                          }))
+                        }
+                        placeholder="Nova posição (ex.: G1)"
+                        className="h-10 min-w-0 rounded-lg border border-slate-300 bg-white px-3 text-[10px] font-black uppercase text-slate-800 outline-none focus:border-blue-500"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => handleAddPosition(entry.estoque as "2" | "3", entry.modulo)}
+                        className="h-10 rounded-lg border border-slate-300 bg-white px-3 text-[9px] font-black uppercase text-slate-700"
+                      >
+                        + Posição
+                      </button>
+                    </div>
+                  </>
+                )}
+              </article>
+            );
+          })}
+        </div>
       </div>
 
-      <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-xs">
-        <div className="flex items-center gap-2">
-          <Plus className="h-4 w-4 text-blue-600" />
-          <h3 className="text-xs font-black uppercase text-slate-800">Adicionar novo módulo/rua</h3>
-        </div>
-        <p className="mt-1 text-[11px] font-medium text-slate-500">
-          A nova entrada é criada somente na configuração física. Para E2/E3, as posições exibidas
-          continuam sendo derivadas da estrutura conhecida e dos registros existentes.
-        </p>
-
-        <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-[160px_220px_auto]">
-          <input
-            value={newModule}
-            onChange={event => setNewModule(event.target.value)}
-            placeholder={isE1 ? "Nº da rua" : "Nº do módulo"}
-            inputMode="numeric"
-            className="rounded-lg border border-slate-300 px-3 py-2 text-xs font-bold text-slate-800 outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
-          />
-          <input
-            type="number"
-            min={1}
-            step={1}
-            value={newCapacity}
-            onChange={event => setNewCapacity(event.target.value)}
-            placeholder={isE1 ? "Capacidade" : "Qtd. posições"}
-            className="rounded-lg border border-slate-300 px-3 py-2 text-xs font-bold text-slate-800 outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
-          />
-          <button
-            type="button"
-            onClick={handleAddModule}
-            className="inline-flex items-center justify-center gap-2 rounded-lg border border-slate-300 bg-white px-4 py-2 text-xs font-black uppercase text-slate-700 transition hover:bg-slate-50"
-          >
-            <Plus className="h-4 w-4" />
-            Adicionar
-          </button>
-        </div>
-
-        <div className="mt-4 flex items-start gap-2 rounded-lg border border-blue-100 bg-blue-50 p-3 text-[11px] font-semibold leading-relaxed text-blue-800">
-          <Check className="mt-0.5 h-4 w-4 shrink-0" />
-          <span>
-            Nenhuma posição física do E2/E3 é criada automaticamente pela configuração. O layout
-            apenas centraliza a visão dos módulos, posições e estado ativo/inativo.
-          </span>
-        </div>
-      </div>
     </div>
   );
 };

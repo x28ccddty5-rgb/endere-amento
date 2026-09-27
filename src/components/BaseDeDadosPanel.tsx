@@ -94,10 +94,10 @@ const canEditBase =
   return (
     <div className="space-y-6 animate-fade-in font-sans">
       
-      <div className="bg-white border border-slate-200 rounded-xl p-6 shadow-xs">
+      <div className="bg-white border border-slate-200 rounded-xl p-4 md:p-6 shadow-xs">
         
         {/* Title Area */}
-        <div className="pb-4 border-b border-slate-100 flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-6">
+        <div className="pb-4 border-b border-slate-100 flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-5 md:mb-6">
           <div>
             <h3 className="text-md font-bold text-slate-800 flex items-center gap-2">
               <Database className="w-5 h-5 text-indigo-600 font-bold" />
@@ -191,15 +191,14 @@ const canEditBase =
 
           {/* List Side - Items List */}
           <div className="lg:col-span-3 space-y-3">
-            <div className="flex items-center justify-between text-xs text-slate-500 pb-1 font-bold">
+            <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between text-xs text-slate-500 pb-1 font-bold">
               <span>Filtro Ativo: exibindo <strong>{filteredProducts.length}</strong> itens de {productsList.length}</span>
               <span>Linguagem: Padrão Digital</span>
             </div>
 
-            <div className="divide-y divide-slate-100 bg-white border border-slate-200 rounded-xl overflow-hidden shadow-xs max-h-[520px] overflow-y-auto pr-1">
+            <div className="hidden md:block divide-y divide-slate-100 bg-white border border-slate-200 rounded-xl overflow-hidden shadow-xs max-h-[520px] overflow-y-auto pr-1">
               {filteredProducts.length > 0 ? (
                 filteredProducts.map((p) => {
-                  // Compute total inventory balance dynamically for this references item across all active slots
                   const countBalance = slots
                     .filter(s => {
                       let sRef = s.referencia.toUpperCase();
@@ -236,56 +235,130 @@ const canEditBase =
                             Sem estoque
                           </span>
                         )}
-                          {canEditBase && (
-                            <>
-                              <button
-                                onClick={() => {
-                          
-                                  const novaDescricao = prompt(
-                                    "Nova descrição:",
-                                    p.descricao
+
+                        {canEditBase && (
+                          <>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const novaDescricao = prompt("Nova descrição:", p.descricao);
+                                const novaPaletizacao = prompt("Nova paletização:", String(p.paletizacao || 0));
+                                if (novaDescricao && novaPaletizacao) {
+                                  void onUpdateProduct(
+                                    p.referencia,
+                                    novaDescricao,
+                                    Number(novaPaletizacao)
                                   );
-                          
-                                  const novaPaletizacao = prompt(
-                                    "Nova paletização:",
-                                    String(p.paletizacao || 0)
-                                  );
-                          
-                                  if (
-                                    novaDescricao &&
-                                    novaPaletizacao
-                                  ) {
-                                    onUpdateProduct(
-                                      p.referencia,
-                                      novaDescricao,
-                                      Number(novaPaletizacao)
-                                    );
-                                  }
-                                }}
-                                className="bg-blue-100 text-blue-700 border border-blue-200 text-[10px] font-black px-2 py-1 rounded-md"
-                              >
-                                Editar
-                              </button>
-                          
-                              <button
-                                onClick={() =>
-                                  onDeleteProduct(
-                                    p.referencia
-                                  )
                                 }
-                                className="bg-red-100 text-red-700 border border-red-200 text-[10px] font-black px-2 py-1 rounded-md"
-                              >
-                                Excluir
-                              </button>
-                            </>
-                          )}
-                        
+                              }}
+                              className="bg-blue-100 text-blue-700 border border-blue-200 text-[10px] font-black px-2 py-1 rounded-md"
+                            >
+                              Editar
+                            </button>
+
+                            <button
+                              type="button"
+                              onClick={() => void onDeleteProduct(p.referencia)}
+                              className="bg-red-100 text-red-700 border border-red-200 text-[10px] font-black px-2 py-1 rounded-md"
+                            >
+                              Excluir
+                            </button>
+                          </>
+                        )}
                       </div>
                     </div>
                   );
                 })
               ) : (
                 <div className="py-20 text-center text-slate-400 font-bold bg-slate-50 leading-relaxed font-sans">
+                  Nenhum código SKU correspondente aos filtros foi localizado na base.
+                </div>
+              )}
+            </div>
+
+            <div className="md:hidden max-h-[58vh] overflow-y-auto space-y-2 pr-0.5">
+              {filteredProducts.length > 0 ? (
+                filteredProducts.map((p) => {
+                  const countBalance = slots
+                    .filter(s => {
+                      let sRef = s.referencia.toUpperCase();
+                      if (sRef.startsWith("S")) sRef = sRef.slice(1);
+                      let pRef = p.referencia.toUpperCase();
+                      if (pRef.startsWith("S")) pRef = pRef.slice(1);
+                      return sRef === pRef;
+                    })
+                    .reduce((acc, s) => acc + s.saldo, 0);
+
+                  return (
+                    <article
+                      key={p.referencia}
+                      className="rounded-xl border border-slate-200 bg-white p-3 shadow-sm"
+                    >
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="min-w-0">
+                          <span className="inline-flex max-w-full rounded-md border border-indigo-200 bg-indigo-50 px-2.5 py-1 font-mono text-xs font-black tracking-wide text-indigo-700">
+                            {p.referencia}
+                          </span>
+                          <h4 className="mt-2 break-words text-sm font-extrabold uppercase leading-snug text-slate-800">
+                            {p.descricao}
+                          </h4>
+                          <p className="mt-1 text-[9px] font-semibold uppercase text-slate-400">
+                            Peça acabada • Porto Brasil
+                          </p>
+                        </div>
+
+                        {countBalance > 0 ? (
+                          <span className="shrink-0 rounded-md border border-emerald-200 bg-emerald-50 px-2 py-1 text-[9px] font-black text-emerald-800">
+                            {countBalance.toLocaleString()} pçs
+                          </span>
+                        ) : (
+                          <span className="shrink-0 rounded-md border border-slate-200 bg-slate-100 px-2 py-1 text-[9px] font-bold text-slate-400">
+                            Sem estoque
+                          </span>
+                        )}
+                      </div>
+
+                      <div className="mt-3 grid grid-cols-1 gap-2">
+                        <div className="flex items-center justify-between rounded-lg border border-blue-100 bg-blue-50 px-3 py-2">
+                          <span className="text-[9px] font-black uppercase text-blue-700">Paletização</span>
+                          <span className="text-xs font-black text-blue-900">{p.paletizacao ?? 0}</span>
+                        </div>
+
+                        {canEditBase && (
+                          <div className="grid grid-cols-2 gap-2">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const novaDescricao = prompt("Nova descrição:", p.descricao);
+                                const novaPaletizacao = prompt("Nova paletização:", String(p.paletizacao || 0));
+                                if (novaDescricao && novaPaletizacao) {
+                                  void onUpdateProduct(
+                                    p.referencia,
+                                    novaDescricao,
+                                    Number(novaPaletizacao)
+                                  );
+                                }
+                              }}
+                              className="min-h-10 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-[10px] font-black uppercase text-blue-700"
+                            >
+                              Editar
+                            </button>
+
+                            <button
+                              type="button"
+                              onClick={() => void onDeleteProduct(p.referencia)}
+                              className="min-h-10 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-[10px] font-black uppercase text-red-700"
+                            >
+                              Excluir
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    </article>
+                  );
+                })
+              ) : (
+                <div className="rounded-xl border border-slate-200 bg-slate-50 py-16 text-center text-xs font-bold leading-relaxed text-slate-400">
                   Nenhum código SKU correspondente aos filtros foi localizado na base.
                 </div>
               )}

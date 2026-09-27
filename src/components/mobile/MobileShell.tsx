@@ -1,8 +1,10 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { ComponentProps, useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertOctagon,
   ArrowLeftRight,
   Bot,
+  Database,
+  Settings2,
   Camera,
   Check,
   ChevronRight,
@@ -19,8 +21,11 @@ import {
 } from "lucide-react";
 import type { Divergencia, Galpao, HistoricoMov, Product, Restricao, WarehouseSlot } from "../../types";
 import type { AppUser } from "../AdminUsersManagement";
+import { BaseDeDadosPanel } from "../BaseDeDadosPanel";
+import { WarehouseLayoutPanel } from "../WarehouseLayoutPanel";
+import { isAdmin } from "../../constants/permissions";
 
-type MobileTab = "endereçamento" | "lançamento" | "divergências" | "histórico" | "ai";
+type MobileTab = "endereçamento" | "lançamento" | "divergências" | "histórico" | "ai" | "base" | "configuracao";
 
 interface MobileShellProps {
   currentUser: AppUser;
@@ -60,6 +65,8 @@ interface MobileShellProps {
   recommendationAvailable: boolean;
   onNextRecommendation: () => void;
   onLogout: () => Promise<void>;
+  baseDataProps: ComponentProps<typeof BaseDeDadosPanel>;
+  warehouseConfigProps: ComponentProps<typeof WarehouseLayoutPanel>;
 }
 
 type ScanTarget = "sku" | "position";
@@ -201,6 +208,8 @@ export function MobileShell({
   recommendationAvailable,
   onNextRecommendation,
   onLogout,
+  baseDataProps,
+  warehouseConfigProps,
 }: MobileShellProps) {
   const [search, setSearch] = useState("");
   const [searchFiltersOpen, setSearchFiltersOpen] = useState(false);
@@ -896,6 +905,12 @@ export function MobileShell({
     { id: "divergências", label: "Divergências", icon: AlertOctagon, badge: openDivergencias.length },
     { id: "histórico", label: "Histórico", icon: History },
     { id: "ai", label: "IA", icon: Bot },
+    ...(isAdmin(currentUser?.role)
+      ? [
+          { id: "base" as const, label: "Base", icon: Database },
+          { id: "configuracao" as const, label: "Config.", icon: Settings2 },
+        ]
+      : []),
   ];
 
   return (
@@ -936,7 +951,7 @@ export function MobileShell({
 
       <main
         className={`min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 pt-4 ${
-          keyboardOpen ? "pb-6" : "pb-20"
+          keyboardOpen ? "pb-6" : (isAdmin(currentUser?.role) ? "pb-32" : "pb-20")
         }`}
       >
         {activeTab === "endereçamento" && (
@@ -2197,6 +2212,34 @@ export function MobileShell({
             )}
           </section>
         )}
+        {activeTab === "base" && isAdmin(currentUser?.role) && (
+          <section className="space-y-4 [&_input]:text-base [&_textarea]:text-base [&_select]:text-base">
+            <div>
+              <h1 className="text-xl font-black tracking-tight">Base de Dados</h1>
+              <p className="mt-1 text-xs font-medium text-slate-500">
+                Administração da base de referências pelo celular.
+              </p>
+            </div>
+            <div className="-mx-4">
+              <BaseDeDadosPanel {...baseDataProps} />
+            </div>
+          </section>
+        )}
+
+        {activeTab === "configuracao" && isAdmin(currentUser?.role) && (
+          <section className="space-y-4 [&_input]:text-base [&_textarea]:text-base [&_select]:text-base">
+            <div>
+              <h1 className="text-xl font-black tracking-tight">Configuração de Estoque</h1>
+              <p className="mt-1 text-xs font-medium text-slate-500">
+                Ajuste módulos e posições físicas E2/E3 diretamente pelo celular.
+              </p>
+            </div>
+            <div className="-mx-4">
+              <WarehouseLayoutPanel {...warehouseConfigProps} />
+            </div>
+          </section>
+        )}
+
       </main>
 
       <nav
@@ -2206,29 +2249,55 @@ export function MobileShell({
         aria-hidden={keyboardOpen}
       >
         <div className="grid grid-cols-5">
-          {navItems.map(item => {
-            const Icon = item.icon;
-            const active = activeTab === item.id;
-            return (
-              <button
-                key={item.id}
-                type="button"
-                onClick={() => onTabChange(item.id)}
-                className={`relative flex min-h-14 flex-col items-center justify-center gap-1 text-[9px] font-black uppercase ${
-                  active ? "text-blue-600" : "text-slate-400"
-                }`}
-              >
-                <Icon className={`h-5 w-5 ${active ? "stroke-[2.5]" : ""}`} />
-                {item.badge ? (
-                  <span className="absolute right-[22%] top-2 min-w-4 rounded-full bg-red-500 px-1 text-[8px] leading-4 text-white">
-                    {item.badge}
-                  </span>
-                ) : null}
-                <span>{item.label}</span>
-              </button>
-            );
-          })}
+          {navItems
+            .filter(item => item.id !== "base" && item.id !== "configuracao")
+            .map(item => {
+              const Icon = item.icon;
+              const active = activeTab === item.id;
+              return (
+                <button
+                  key={item.id}
+                  type="button"
+                  onClick={() => onTabChange(item.id)}
+                  className={`relative flex min-h-14 flex-col items-center justify-center gap-1 px-1 text-[9px] font-black uppercase ${
+                    active ? "text-blue-600" : "text-slate-400"
+                  }`}
+                >
+                  <Icon className={`h-5 w-5 ${active ? "stroke-[2.5]" : ""}`} />
+                  {item.badge ? (
+                    <span className="absolute right-[22%] top-2 min-w-4 rounded-full bg-red-500 px-1 text-[8px] leading-4 text-white">
+                      {item.badge}
+                    </span>
+                  ) : null}
+                  <span>{item.label}</span>
+                </button>
+              );
+            })}
         </div>
+
+        {isAdmin(currentUser?.role) && (
+          <div className="grid grid-cols-2 border-t border-slate-100 bg-slate-50">
+            {navItems
+              .filter(item => item.id === "base" || item.id === "configuracao")
+              .map(item => {
+                const Icon = item.icon;
+                const active = activeTab === item.id;
+                return (
+                  <button
+                    key={item.id}
+                    type="button"
+                    onClick={() => onTabChange(item.id)}
+                    className={`flex min-h-12 items-center justify-center gap-2 px-2 text-[9px] font-black uppercase ${
+                      active ? "bg-blue-50 text-blue-700" : "text-slate-500"
+                    }`}
+                  >
+                    <Icon className={`h-4 w-4 ${active ? "stroke-[2.5]" : ""}`} />
+                    <span>{item.label}</span>
+                  </button>
+                );
+              })}
+          </div>
+        )}
       </nav>
 
       {scannerTarget && (
