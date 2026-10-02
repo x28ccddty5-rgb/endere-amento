@@ -244,12 +244,33 @@ const saveSlotsToSupabase = async (slotsData: WarehouseSlot[]): Promise<boolean>
 
   slotsLoadPromise = null;
 
+  const seenIds = new Set<string>();
+  const duplicatedIds = new Set<string>();
+
+  for (const slot of slotsData) {
+    if (seenIds.has(slot.id)) duplicatedIds.add(slot.id);
+    seenIds.add(slot.id);
+  }
+
+  if (duplicatedIds.size > 0) {
+    console.error(
+      "Persistência de slots abortada: IDs duplicados no payload.",
+      Array.from(duplicatedIds)
+    );
+    return false;
+  }
+
   const { error } = await supabase
     .from("slots")
     .upsert(slotsData);
 
   if (error) {
-    console.error("Erro ao salvar slots:", error);
+    console.error("Erro ao salvar slots:", {
+      code: error.code,
+      message: error.message,
+      details: error.details,
+      hint: error.hint,
+    });
     return false;
   }
 

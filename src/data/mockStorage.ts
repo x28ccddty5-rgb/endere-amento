@@ -572,24 +572,36 @@ export function processLancamentosInSequence(
     if (row.tipo === "Entrada") {
       if (estVal === "1") {
         if (exactSlotIdx === -1) {
-          const newSlot: WarehouseSlot = {
-            id: `${estVal}-${modVal}-${refUpper}`,
-            estoque: estVal,
-            modulo: modVal,
-            posicao: "",
-            referencia: "",
-            descricao: "",
-            saldo: 0,
-            dataChacote: "",
-            ultimaData: "",
-            ultimaHora: "",
-            ultimoResponsavel: "",
-            galpao: row.galpao || "3",
-            restricao: requestedRestricao,
-            observacao: row.observacao?.trim() || "",
-          };
-          slots.push(newSlot);
-          exactSlotIdx = slots.length - 1;
+          // E1 has one logical row per Rua + SKU. If a previous saída
+          // reduced that logical item to zero, reuse its deterministic ID
+          // instead of creating a second in-memory object with the same ID.
+          const reusableE1Idx = slots.findIndex(slot =>
+            slot.id === `${estVal}-${modVal}-${refUpper}` &&
+            slot.saldo === 0
+          );
+
+          if (reusableE1Idx >= 0) {
+            exactSlotIdx = reusableE1Idx;
+          } else {
+            const newSlot: WarehouseSlot = {
+              id: `${estVal}-${modVal}-${refUpper}`,
+              estoque: estVal,
+              modulo: modVal,
+              posicao: "",
+              referencia: "",
+              descricao: "",
+              saldo: 0,
+              dataChacote: "",
+              ultimaData: "",
+              ultimaHora: "",
+              ultimoResponsavel: "",
+              galpao: row.galpao || "3",
+              restricao: requestedRestricao,
+              observacao: row.observacao?.trim() || "",
+            };
+            slots.push(newSlot);
+            exactSlotIdx = slots.length - 1;
+          }
         }
       } else {
         const occupiedAtAddress = addressSlots.filter(slot => slot.saldo > 0);
