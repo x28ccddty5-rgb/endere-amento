@@ -138,7 +138,13 @@ const deleteLancamentoDraftFromSupabase = async (
   return true;
 };
 
-const getTodayIsoDate = (): string => new Date().toISOString().slice(0, 10);
+const getTodayIsoDate = (date = new Date()): string => {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+
+  return `${year}-${month}-${day}`;
+};
 
 const formatDateMask = (value: string): string => {
   const digits = value.replace(/\D/g, "").slice(0, 8);
@@ -193,7 +199,7 @@ const normalizeTypedMovementType = (
 const getIsoDateDaysAgo = (days: number): string => {
   const date = new Date();
   date.setDate(date.getDate() - days);
-  return date.toISOString().slice(0, 10);
+  return getTodayIsoDate(date);
 };
 
 let slotsLoadPromise: Promise<WarehouseSlot[]> | null = null;
@@ -1687,7 +1693,7 @@ const deleteProduct = async (
 
   // --- SYSTEM LOG OPERATOR RESPONSIBLES ---
   const operator = currentUser?.name || "Administrador Geral";
-  const launchDate = new Date().toISOString().split("T")[0];
+  const launchDate = getTodayIsoDate();
 
   // --- FILTERED VIEWS ---
   // Product Search Coordinates (Pesquisa Produtos) Filters
