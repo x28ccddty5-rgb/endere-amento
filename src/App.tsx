@@ -4847,11 +4847,15 @@ if (refRaw) {
         
         <div className="bg-slate-800 border border-slate-700 rounded-2xl p-8 max-w-md w-full shadow-2xl space-y-6">
           <div className="text-center space-y-1.5">
-            <div className="w-12 h-12 bg-blue-600 rounded-xl mx-auto flex items-center justify-center text-white text-xl font-black shadow-md border border-blue-500">
-              PB
+            <div className="w-12 h-12 bg-blue-600 rounded-xl mx-auto flex items-center justify-center shadow-md border border-blue-500 overflow-hidden">
+              <img
+                src="/pb-192.png"
+                alt="Estoque de Chacote"
+                className="w-full h-full object-cover"
+              />
             </div>
-            <h1 className="text-xl font-bold tracking-tight text-white uppercase pt-2">Porto Brasil Cerâmica</h1>
-            <p className="text-xs text-slate-400 font-medium font-sans">Controle Físico e Lógico de Endereçamento</p>
+            <h1 className="text-xl font-bold tracking-tight text-white uppercase pt-2">Estoque de Chacote</h1>
+            <p className="text-xs text-slate-400 font-medium font-sans">Gestão de Estoque e Armazenagem</p>
           </div>
 
           <form onSubmit={handleLoginSubmit} className="space-y-4">
@@ -5014,10 +5018,16 @@ if (refRaw) {
         
         {/* App Title Header Banner */}
         <div className="p-4 border-b border-slate-800 flex items-center space-x-2.5">
-          <div className="w-7 h-7 bg-blue-600 rounded flex items-center justify-center font-bold text-white shadow shadow-blue-500/20">P</div>
+          <div className="w-7 h-7 bg-blue-600 rounded overflow-hidden shadow shadow-blue-500/20 shrink-0">
+            <img
+              src="/pb-192.png"
+              alt="Estoque de Chacote"
+              className="w-full h-full object-cover"
+            />
+          </div>
           <div className="leading-tight">
-            <span className="block font-black text-xs tracking-tight text-white uppercase">Porto Brasil</span>
-            <span className="text-[9px] text-[#4dd0e1] block font-extrabold uppercase">Base Integrada v3.0</span>
+            <span className="block font-black text-xs tracking-tight text-white uppercase">Estoque de Chacote</span>
+            <span className="text-[9px] text-[#4dd0e1] block font-extrabold uppercase">Gestão e Armazenagem</span>
           </div>
         </div>
 
@@ -5219,7 +5229,7 @@ if (refRaw) {
         {/* UPPER STATUS BAR HEADER */}
         <header className="bg-white border-b border-slate-200 px-6 py-3 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 no-print shrink-0 shadow-2xs">
           <div className="flex items-center space-x-3">
-            <h1 className="text-sm font-black text-slate-700 font-sans tracking-tight uppercase">Módulo de Estoque • Porto Brasil</h1>
+            <h1 className="text-sm font-black text-slate-700 font-sans tracking-tight uppercase">Estoque de Chacote</h1>
             {true && (
               <span className="bg-sky-50 text-sky-800 text-[9px] font-black px-2 py-0.5 rounded border border-sky-200 uppercase">
                 Gêmeo Digital Sincronizado
@@ -5260,7 +5270,7 @@ if (refRaw) {
               {/* Linked versions feedback info */}
               <div className="bg-slate-800 rounded-xl p-5 text-white bg-linear-to-r from-slate-900 to-slate-800 shadow-md flex flex-col md:flex-row justify-between items-start md:items-center gap-6 border border-slate-700">
                 <div>
-                  <h3 className="text-md font-extrabold uppercase tracking-wide">Fábrica Integrada • Porto Brasil Cerâmica</h3>
+                  <h3 className="text-md font-extrabold uppercase tracking-wide">Estoque de Chacote • Gestão e Armazenagem</h3>
                   <p className="text-xs text-slate-300 max-w-2xl mt-1 leading-normal font-medium">
                     Plataforma de endereçamento integrada de dados lógicos. A operação utiliza uma única versão integrada: os lançamentos e as correções do módulo de divergências atualizam o Gêmeo Digital em tempo real.
                   </p>
@@ -6851,7 +6861,7 @@ const pct = total > 0 ? (occupied / total) * 100 : 0;
                     <div className="flex items-center gap-2">
                       <div className="w-2.5 h-2.5 bg-emerald-400 rounded-full animate-ping mr-1"></div>
                       <div>
-                        <span className="font-bold text-xs block uppercase">Consultor de Estoque • Porto Brasil</span>
+                        <span className="font-bold text-xs block uppercase">Consultor de Estoque • Estoque de Chacote</span>
                         <span className="text-[10px] text-indigo-300 block">Sincronizado aos Estoques E1, E2, E3</span>
                       </div>
                     </div>

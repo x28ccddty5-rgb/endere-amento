@@ -1,7 +1,7 @@
 {
-  "name": "Porto Brasil • Gestão de Estoque",
-  "short_name": "Porto Brasil Estoque",
-  "description": "Gestão e operação de estoque da Porto Brasil.",
+  "name": "Estoque de Chacote",
+  "short_name": "Estoque Chacote",
+  "description": "Gestão de estoque e armazenagem de chacote.",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",

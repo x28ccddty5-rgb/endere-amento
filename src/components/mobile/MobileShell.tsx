@@ -948,7 +948,7 @@ export function MobileShell({
         <div className="flex items-center justify-between px-4 py-3">
           <div className="min-w-0">
             <div className="text-[11px] font-black uppercase tracking-[0.16em] text-blue-300">
-              Porto Brasil
+              Estoque de Chacote
             </div>
             <div className="truncate text-sm font-bold">
               {currentUser.name || operator}
