@@ -93,8 +93,11 @@ REGRAS OBRIGATÓRIAS:
 - Seja objetivo e operacional.
 - Não faça mais de uma recomendação principal quando os dados permitirem uma conclusão clara.
 - Quando uma recomendação depender de condição física não registrada, deixe essa limitação explícita.
+- Para estratégia de estoque, explique a concentração real do SKU, a proximidade dos módulos, a consolidação, a redução de dispersão, a ocupação/capacidade e as restrições. Não transforme a análise em uma opinião genérica.
+- Para armazenagem, trate o plano determinístico como fonte de verdade: uma "opção" é um plano completo, não uma única vaga.
 - Para armazenagem em gaiola, trate E3 como uma combinação física de 2 paletes E2. As chaves válidas são A+B, C+D e E+F no mesmo módulo. Não invente outras combinações.
 - Quando o resultado determinístico apresentar várias opções ou uma distribuição de múltiplos paletes, preserve exatamente as posições, quantidades e combinações fornecidas.
+- Se o resultado já apresentar concentração, ranking, plano ou roteiro, explique esses dados em vez de substituí-los por outra estratégia.
 
 PERGUNTA:
 ${question}

@@ -1,18 +1,21 @@
 import { ComponentProps, useEffect, useMemo, useRef, useState } from "react";
 import {
-  AlertOctagon,
   ArrowLeftRight,
-  Bot,
-  Database,
-  Settings2,
   Camera,
   Check,
   ChevronRight,
   History,
+  ClipboardList,
   Loader2,
   Filter,
   LogOut,
   Package,
+  PackagePlus,
+  PackageSearch,
+  BrainCircuit,
+  Boxes,
+  Warehouse,
+  TriangleAlert,
   Search,
   Send,
   Wifi,
@@ -56,7 +59,10 @@ interface MobileShellProps {
     action: "sobrescrever" | "descartar",
     sku: string,
     quantity: number,
-    dataChacote: string
+    dataChacote: string,
+    galpao: Galpao,
+    restricao: Restricao,
+    observacao: string
   ) => Promise<boolean>;
   chatMessages: Array<{ sender: string; text: string }>;
   chatInput: string;
@@ -256,10 +262,15 @@ export function MobileShell({
   const [divergenciaResolveSku, setDivergenciaResolveSku] = useState("");
   const [divergenciaResolveQty, setDivergenciaResolveQty] = useState("");
   const [divergenciaResolveChacote, setDivergenciaResolveChacote] = useState("");
+  const [divergenciaResolveGalpao, setDivergenciaResolveGalpao] = useState<Galpao>("3");
+  const [divergenciaResolveRestricao, setDivergenciaResolveRestricao] = useState<Restricao>("nenhuma");
+  const [divergenciaResolveObservacao, setDivergenciaResolveObservacao] = useState("");
   const [resolvingDivergencia, setResolvingDivergencia] = useState(false);
   const [keyboardOpen, setKeyboardOpen] = useState(false);
   const [editingSlotId, setEditingSlotId] = useState<string | null>(null);
   const [editingChacote, setEditingChacote] = useState("");
+  const [editingGalpao, setEditingGalpao] = useState<Galpao>("3");
+  const [editingRestricao, setEditingRestricao] = useState<Restricao>("nenhuma");
   const [editingObservacao, setEditingObservacao] = useState("");
 
   const videoRef = useRef<HTMLVideoElement | null>(null);
@@ -534,6 +545,21 @@ export function MobileShell({
     setDivergenciaResolveSku(div.refNova || (div.refAtual === "Vazio" ? "" : div.refAtual) || "");
     setDivergenciaResolveQty(String(Math.abs(div.movimentacao)));
     setDivergenciaResolveChacote(div.dataChacote || "");
+    const targetSlot = slots.find(slot =>
+      div.slotId
+        ? slot.id === div.slotId
+        : slot.estoque === div.estoque &&
+          slot.modulo === div.modulo &&
+          slot.posicao === div.posicao
+    );
+    const initialGalpao = (targetSlot?.galpao || (div.restricao === "autorizacao" ? "12" : "3")) as Galpao;
+    setDivergenciaResolveGalpao(initialGalpao);
+    setDivergenciaResolveRestricao(
+      initialGalpao === "12"
+        ? "autorizacao"
+        : (targetSlot?.restricao || div.restricao || "nenhuma")
+    );
+    setDivergenciaResolveObservacao(targetSlot?.observacao || "");
   };
 
   const closeDivergenciaCorrection = () => {
@@ -571,7 +597,10 @@ export function MobileShell({
         divergenciaResolveAction,
         divergenciaResolveSku,
         quantity,
-        divergenciaResolveChacote
+        divergenciaResolveChacote,
+        divergenciaResolveGalpao,
+        divergenciaResolveGalpao === "12" ? "autorizacao" : divergenciaResolveRestricao,
+        divergenciaResolveObservacao.trim()
       );
 
       if (saved) {
@@ -899,16 +928,16 @@ export function MobileShell({
     }
   };
 
-  const navItems: Array<{ id: MobileTab; label: string; icon: typeof Search; badge?: number }> = [
-    { id: "endereçamento", label: "Pesquisa", icon: Search },
-    { id: "lançamento", label: "Lançar", icon: Package },
-    { id: "divergências", label: "Divergências", icon: AlertOctagon, badge: openDivergencias.length },
-    { id: "histórico", label: "Histórico", icon: History },
-    { id: "ai", label: "IA", icon: Bot },
+  const navItems: Array<{ id: MobileTab; label: string; icon: typeof PackageSearch; badge?: number }> = [
+    { id: "endereçamento", label: "Estoque", icon: PackageSearch },
+    { id: "lançamento", label: "Movimentar", icon: PackagePlus },
+    { id: "divergências", label: "Divergências", icon: TriangleAlert, badge: openDivergencias.length },
+    { id: "histórico", label: "Histórico", icon: ClipboardList },
+    { id: "ai", label: "Consultor", icon: BrainCircuit },
     ...(isAdmin(currentUser?.role)
       ? [
-          { id: "base" as const, label: "Base", icon: Database },
-          { id: "configuracao" as const, label: "Config.", icon: Settings2 },
+          { id: "base" as const, label: "SKUs", icon: Boxes },
+          { id: "configuracao" as const, label: "Estrutura", icon: Warehouse },
         ]
       : []),
   ];
@@ -1218,6 +1247,38 @@ export function MobileShell({
                                 className="mt-1 h-10 w-full rounded-xl border border-slate-200 px-3 text-sm font-bold"
                               />
                             </label>
+                            <div className="grid grid-cols-2 gap-2">
+                              <label className="block text-[9px] font-black uppercase text-slate-400">
+                                Galpão
+                                <select
+                                  value={editingGalpao}
+                                  onChange={event => {
+                                    const value = event.target.value as Galpao;
+                                    setEditingGalpao(value);
+                                    if (value === "12") setEditingRestricao("autorizacao");
+                                  }}
+                                  className="mt-1 h-10 w-full rounded-xl border border-slate-200 px-3 text-sm font-bold"
+                                >
+                                  <option value="3">Galpão 3</option>
+                                  <option value="12">Galpão 12</option>
+                                </select>
+                              </label>
+                              <label className="block text-[9px] font-black uppercase text-slate-400">
+                                Restrição
+                                <select
+                                  value={editingGalpao === "12" ? "autorizacao" : editingRestricao}
+                                  onChange={event => setEditingRestricao(event.target.value as Restricao)}
+                                  disabled={editingGalpao === "12"}
+                                  className="mt-1 h-10 w-full rounded-xl border border-slate-200 px-3 text-sm font-bold disabled:bg-slate-100"
+                                >
+                                  <option value="nenhuma">Nenhuma</option>
+                                  <option value="teste">Teste — não separar</option>
+                                  <option value="autorizacao">Solicitar autorização</option>
+                                  <option value="outra">Outra</option>
+                                </select>
+                              </label>
+                            </div>
+
                             <label className="block text-[9px] font-black uppercase text-slate-400">
                               Observação
                               <textarea
@@ -1244,6 +1305,8 @@ export function MobileShell({
                                   const saved = await onUpdateSlot({
                                     ...slot,
                                     dataChacote: nextChacote,
+                                    galpao: editingGalpao,
+                                    restricao: editingGalpao === "12" ? "autorizacao" : editingRestricao,
                                     observacao: editingObservacao.trim(),
                                   });
                                   if (saved) setEditingSlotId(null);
@@ -1267,11 +1330,13 @@ export function MobileShell({
                             onClick={() => {
                               setEditingSlotId(slot.id);
                               setEditingChacote(slot.dataChacote || "");
+                              setEditingGalpao((slot.galpao || "3") as Galpao);
+                              setEditingRestricao(slot.restricao || "nenhuma");
                               setEditingObservacao(slot.observacao || "");
                             }}
                             className="text-[10px] font-black uppercase text-blue-600"
                           >
-                            Editar chacote / observação
+                            Editar galpão / restrição / chacote / observação
                           </button>
                         )}
                       </div>
@@ -1953,6 +2018,56 @@ export function MobileShell({
                           className="min-h-12 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 text-base font-bold text-slate-800 outline-none focus:border-blue-400"
                         />
                       </label>
+                      <div className="grid grid-cols-2 gap-2">
+                        <label className="block">
+                          <span className="mb-1 block text-[9px] font-black uppercase text-slate-500">
+                            Galpão
+                          </span>
+                          <select
+                            value={divergenciaResolveGalpao}
+                            onChange={event => {
+                              const value = event.target.value as Galpao;
+                              setDivergenciaResolveGalpao(value);
+                              if (value === "12") setDivergenciaResolveRestricao("autorizacao");
+                            }}
+                            disabled={resolvingDivergencia}
+                            className="min-h-12 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 text-sm font-bold text-slate-800"
+                          >
+                            <option value="3">Galpão 3</option>
+                            <option value="12">Galpão 12</option>
+                          </select>
+                        </label>
+                        <label className="block">
+                          <span className="mb-1 block text-[9px] font-black uppercase text-slate-500">
+                            Restrição
+                          </span>
+                          <select
+                            value={divergenciaResolveGalpao === "12" ? "autorizacao" : divergenciaResolveRestricao}
+                            onChange={event => setDivergenciaResolveRestricao(event.target.value as Restricao)}
+                            disabled={resolvingDivergencia || divergenciaResolveGalpao === "12"}
+                            className="min-h-12 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 text-sm font-bold text-slate-800 disabled:bg-slate-100"
+                          >
+                            <option value="nenhuma">Nenhuma</option>
+                            <option value="teste">Teste — não separar</option>
+                            <option value="autorizacao">Solicitar autorização</option>
+                            <option value="outra">Outra</option>
+                          </select>
+                        </label>
+                      </div>
+
+                      <label className="block">
+                        <span className="mb-1 block text-[9px] font-black uppercase text-slate-500">
+                          Observação
+                        </span>
+                        <textarea
+                          value={divergenciaResolveObservacao}
+                          onChange={event => setDivergenciaResolveObservacao(event.target.value)}
+                          disabled={resolvingDivergencia}
+                          rows={2}
+                          placeholder="Observação da correção física"
+                          className="w-full resize-none rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm font-semibold text-slate-800"
+                        />
+                      </label>
                     </div>
                   )}
 
@@ -2124,7 +2239,7 @@ export function MobileShell({
         {activeTab === "ai" && (
           <section className="flex min-h-full flex-col">
             <div className="mb-3">
-              <h1 className="text-xl font-black tracking-tight">Consultor IA</h1>
+              <h1 className="text-xl font-black tracking-tight">Consultor de Estoque</h1>
               <p className="mt-1 text-xs font-medium text-slate-500">
                 Inteligência operacional baseada nos dados registrados.
               </p>

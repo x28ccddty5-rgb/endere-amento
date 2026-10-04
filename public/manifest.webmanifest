@@ -1,7 +1,7 @@
 {
-  "name": "Porto Brasil Mobile",
-  "short_name": "Porto Brasil",
-  "description": "Operação mobile do sistema Porto Brasil.",
+  "name": "Porto Brasil • Gestão de Estoque",
+  "short_name": "Porto Brasil Estoque",
+  "description": "Gestão e operação de estoque da Porto Brasil.",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",

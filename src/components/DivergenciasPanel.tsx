@@ -37,8 +37,11 @@ export const DivergenciasPanel: React.FC<DivergenciasPanelProps> = ({
   const [selectedDivergenciaId, setSelectedDivergenciaId] = useState<string | null>(null);
   const [resolveAction, setResolveAction] = useState<"sobrescrever" | "descartar">("sobrescrever");
   const [resolveQty, setResolveQty] = useState<number>(0);
-  const [resolveSkuVal, setResolveSkuVal] = useState<string>(""); // SKU Novo (obrigatório) - Corrigido manualmente
-  const [resolveDataChacoteVal, setResolveDataChacoteVal] = useState<string>(""); // Data Chacote (opcional)
+  const [resolveSkuVal, setResolveSkuVal] = useState<string>("");
+  const [resolveDataChacoteVal, setResolveDataChacoteVal] = useState<string>("");
+  const [resolveGalpao, setResolveGalpao] = useState<"3" | "12">("3");
+  const [resolveRestricao, setResolveRestricao] = useState<"nenhuma" | "teste" | "autorizacao" | "outra">("nenhuma");
+  const [resolveObservacao, setResolveObservacao] = useState<string>("");
 
 
   // Filter to show only "Aberta" divergences first, but user asked:
@@ -91,9 +94,24 @@ export const DivergenciasPanel: React.FC<DivergenciasPanelProps> = ({
   const openCorrectionDialog = (d: Divergencia) => {
     setSelectedDivergenciaId(d.id);
     setResolveAction("sobrescrever");
-    setResolveQty(d.movimentacao);
+    setResolveQty(Math.abs(d.movimentacao));
     setResolveSkuVal(d.refNova || d.refAtual || "");
     setResolveDataChacoteVal(d.dataChacote || "");
+    const targetSlot = slots.find(slot =>
+      d.slotId
+        ? slot.id === d.slotId
+        : slot.estoque === d.estoque &&
+          slot.modulo === d.modulo &&
+          slot.posicao === d.posicao
+    );
+    const initialGalpao = (targetSlot?.galpao || (d.restricao === "autorizacao" ? "12" : "3")) as "3" | "12";
+    setResolveGalpao(initialGalpao);
+    setResolveRestricao(
+      initialGalpao === "12"
+        ? "autorizacao"
+        : (targetSlot?.restricao || d.restricao || "nenhuma")
+    );
+    setResolveObservacao(targetSlot?.observacao || "");
   };
 
   const handleResolveDivergencia = async () => {
@@ -176,7 +194,10 @@ export const DivergenciasPanel: React.FC<DivergenciasPanelProps> = ({
         ultimaData: targetDate,
         ultimaHora: currentHour,
         ultimoResponsavel: operator,
-        dataChacote: resolveDataChacoteVal,
+        dataChacote: resolveDataChacoteVal.trim(),
+        galpao: resolveGalpao,
+        restricao: resolveGalpao === "12" ? "autorizacao" : resolveRestricao,
+        observacao: resolveObservacao.trim(),
       };
     }
 
@@ -199,6 +220,10 @@ export const DivergenciasPanel: React.FC<DivergenciasPanelProps> = ({
         saldoFinal: resolveAction === "descartar" ? 0 : resolveQty,
         dataCorrecao: targetDate,
         corrigidoPor: currentUser?.name || operator,
+        observacao:
+          `${d.observacao || ""} Correção física — Galpão ${resolveGalpao}; ` +
+          `Restrição ${resolveGalpao === "12" ? "autorizacao" : resolveRestricao}. ` +
+          `${resolveObservacao.trim()}`.trim(),
       };
     });
 
@@ -745,6 +770,48 @@ const tempoMedio =
                         onChange={(e) => setResolveDataChacoteVal(e.target.value)}
                         placeholder="Ex: 09/06/2026"
                         className="w-full bg-slate-50 border border-slate-300 rounded p-2 text-xs font-bold text-slate-800 focus:ring-1 focus:ring-blue-500"
+                      />
+                    </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                      <div>
+                        <label className="text-[10px] font-black text-slate-500 uppercase block mb-1">GALPÃO</label>
+                        <select
+                          value={resolveGalpao}
+                          onChange={(e) => {
+                            const value = e.target.value as "3" | "12";
+                            setResolveGalpao(value);
+                            if (value === "12") setResolveRestricao("autorizacao");
+                          }}
+                          className="w-full bg-slate-50 border border-slate-300 rounded p-2 text-xs font-bold text-slate-800"
+                        >
+                          <option value="3">Galpão 3</option>
+                          <option value="12">Galpão 12</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label className="text-[10px] font-black text-slate-500 uppercase block mb-1">RESTRIÇÃO</label>
+                        <select
+                          value={resolveGalpao === "12" ? "autorizacao" : resolveRestricao}
+                          onChange={(e) => setResolveRestricao(e.target.value as typeof resolveRestricao)}
+                          disabled={resolveGalpao === "12"}
+                          className="w-full bg-slate-50 border border-slate-300 rounded p-2 text-xs font-bold text-slate-800 disabled:bg-slate-100"
+                        >
+                          <option value="nenhuma">Nenhuma</option>
+                          <option value="teste">Teste — não separar</option>
+                          <option value="autorizacao">Solicitar autorização</option>
+                          <option value="outra">Outra restrição</option>
+                        </select>
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="text-[10px] font-black text-slate-500 uppercase block mb-1">OBSERVAÇÃO</label>
+                      <textarea
+                        value={resolveObservacao}
+                        onChange={(e) => setResolveObservacao(e.target.value)}
+                        rows={2}
+                        placeholder="Observação da correção física"
+                        className="w-full resize-none bg-slate-50 border border-slate-300 rounded p-2 text-xs font-semibold text-slate-800"
                       />
                     </div>
                   </div>
