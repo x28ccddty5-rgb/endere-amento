@@ -26,7 +26,7 @@ import type { Divergencia, Galpao, HistoricoMov, Product, Restricao, WarehouseSl
 import type { AppUser } from "../AdminUsersManagement";
 import { BaseDeDadosPanel } from "../BaseDeDadosPanel";
 import { WarehouseLayoutPanel } from "../WarehouseLayoutPanel";
-import { isAdmin } from "../../constants/permissions";
+import { isAdmin, normalizeRole } from "../../constants/permissions";
 
 type MobileTab = "endereçamento" | "lançamento" | "divergências" | "histórico" | "ai" | "base" | "configuracao";
 
@@ -267,6 +267,7 @@ export function MobileShell({
   const [divergenciaResolveObservacao, setDivergenciaResolveObservacao] = useState("");
   const [resolvingDivergencia, setResolvingDivergencia] = useState(false);
   const [keyboardOpen, setKeyboardOpen] = useState(false);
+  const [keyboardInset, setKeyboardInset] = useState(0);
   const [editingSlotId, setEditingSlotId] = useState<string | null>(null);
   const [editingChacote, setEditingChacote] = useState("");
   const [editingGalpao, setEditingGalpao] = useState<Galpao>("3");
@@ -659,6 +660,7 @@ export function MobileShell({
       );
 
       setKeyboardOpen(keyboardHeight > 120);
+      setKeyboardInset(keyboardHeight > 120 ? keyboardHeight : 0);
 
       if (keyboardHeight > 120) {
         window.setTimeout(() => {
@@ -928,19 +930,24 @@ export function MobileShell({
     }
   };
 
-  const navItems: Array<{ id: MobileTab; label: string; icon: typeof PackageSearch; badge?: number }> = [
-    { id: "endereçamento", label: "Estoque", icon: PackageSearch },
-    { id: "lançamento", label: "Movimentar", icon: PackagePlus },
-    { id: "divergências", label: "Divergências", icon: TriangleAlert, badge: openDivergencias.length },
-    { id: "histórico", label: "Histórico", icon: ClipboardList },
-    { id: "ai", label: "Consultor", icon: BrainCircuit },
-    ...(isAdmin(currentUser?.role)
-      ? [
-          { id: "base" as const, label: "SKUs", icon: Boxes },
-          { id: "configuracao" as const, label: "Estrutura", icon: Warehouse },
-        ]
-      : []),
-  ];
+  const isProductionRole = normalizeRole(currentUser?.role) === "producao";
+
+  const navItems: Array<{ id: MobileTab; label: string; icon: typeof PackageSearch; badge?: number }> =
+    isProductionRole
+      ? [{ id: "endereçamento", label: "Estoque", icon: PackageSearch }]
+      : [
+          { id: "endereçamento", label: "Estoque", icon: PackageSearch },
+          { id: "lançamento", label: "Movimentar", icon: PackagePlus },
+          { id: "divergências", label: "Divergências", icon: TriangleAlert, badge: openDivergencias.length },
+          { id: "histórico", label: "Histórico", icon: ClipboardList },
+          { id: "ai", label: "Consultor", icon: BrainCircuit },
+          ...(isAdmin(currentUser?.role)
+            ? [
+                { id: "base" as const, label: "SKUs", icon: Boxes },
+                { id: "configuracao" as const, label: "Estrutura", icon: Warehouse },
+              ]
+            : []),
+        ];
 
   return (
     <div className="fixed inset-0 z-[100] flex h-[100dvh] w-full flex-col bg-slate-50 pt-[env(safe-area-inset-top)] text-slate-800">
@@ -2245,26 +2252,38 @@ export function MobileShell({
               </p>
             </div>
 
-            <div className="mb-3 grid grid-cols-1 gap-2">
-              {[
-                "Onde devo armazenar este SKU?",
-                "Onde separar este SKU?",
-                "Qual seria a melhor estratégia para organizar este SKU?",
-              ].map(prompt => (
-                <button
-                  key={prompt}
-                  type="button"
-                  onClick={() => focusConsultorChat(prompt)}
-                  className="rounded-xl border border-indigo-100 bg-indigo-50 px-3 py-2.5 text-left text-[11px] font-bold text-indigo-800"
-                >
-                  {prompt}
-                </button>
-              ))}
+            <div className="mb-3">
+              <label className="block text-[10px] font-black uppercase tracking-wider text-slate-400">
+                Perguntas prontas
+              </label>
+              <select
+                defaultValue=""
+                onChange={event => {
+                  const prompt = event.target.value;
+                  if (!prompt) return;
+                  focusConsultorChat(prompt);
+                  event.currentTarget.value = "";
+                }}
+                className="mt-1 h-12 w-full rounded-xl border border-indigo-100 bg-indigo-50 px-3 text-base font-bold text-indigo-800 outline-none focus:border-indigo-300"
+              >
+                <option value="">Abrir lista e selecionar...</option>
+                <option value="Onde devo armazenar este SKU?">Onde devo armazenar este SKU?</option>
+                <option value="Onde devo armazenar 450 peças do SKU 23101G no palete?">Onde devo armazenar 450 peças do SKU 23101G no palete?</option>
+                <option value="Onde devo armazenar 5 paletes do SKU 23101G?">Onde devo armazenar 5 paletes do SKU 23101G?</option>
+                <option value="Onde devo armazenar 5 gaiolas do SKU 23101G?">Onde devo armazenar 5 gaiolas do SKU 23101G?</option>
+                <option value="Onde separar 300 peças do SKU 23101G?">Onde separar 300 peças do SKU 23101G?</option>
+                <option value="Qual seria a melhor estratégia para organizar este SKU?">Qual seria a melhor estratégia para organizar este SKU?</option>
+                <option value="Qual a concentração atual deste SKU?">Qual a concentração atual deste SKU?</option>
+                <option value="Existem divergências em aberto?">Existem divergências em aberto?</option>
+                <option value="Qual é o item mais estocado?">Qual é o item mais estocado?</option>
+              </select>
             </div>
 
             <div
               ref={chatContainerRef}
-              className="min-h-[45vh] flex-1 space-y-3 rounded-2xl border border-slate-200 bg-white p-3 shadow-sm"
+              className={`min-h-[45vh] flex-1 space-y-3 rounded-2xl border border-slate-200 bg-white p-3 shadow-sm ${
+                keyboardOpen ? "pb-24" : ""
+              }`}
             >
               {chatMessages.map((message, index) => (
                 <div
@@ -2289,7 +2308,12 @@ export function MobileShell({
                 event.preventDefault();
                 onSendChatMessage();
               }}
-              className="sticky bottom-0 mt-3 flex gap-2 bg-slate-50 py-2"
+              className={`mt-3 flex gap-2 bg-slate-50 py-2 ${
+                keyboardOpen
+                  ? "fixed inset-x-4 z-30"
+                  : "sticky bottom-0"
+              }`}
+              style={keyboardOpen ? { bottom: `${keyboardInset}px` } : undefined}
             >
               <input
                 ref={chatInputRef}

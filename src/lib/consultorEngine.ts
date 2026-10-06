@@ -99,15 +99,22 @@ const slotRestriction = (slot: WarehouseSlot): Restricao =>
 const isStorageCandidateAllowed = (slot: WarehouseSlot) =>
   slotRestriction(slot) !== "teste";
 
-const getConcentrationModules = (slots: WarehouseSlot[], sku: string) => {
+const getConcentrationModules = (
+  slots: WarehouseSlot[],
+  sku: string,
+  activePhysicalPositionKeys?: { "2": Set<string>; "3": Set<string> }
+) => {
   const grouped = new Map<number, { saldo: number; posicoes: number }>();
   const normalizedSku = normalizeSku(sku);
 
   for (const slot of slots) {
     if (
-      slot.estoque !== "2" ||
+      (slot.estoque !== "2" && slot.estoque !== "3") ||
       normalizeSku(slot.referencia) !== normalizedSku ||
-      slot.saldo <= 0
+      slot.saldo <= 0 ||
+      slotRestriction(slot) === "teste" ||
+      (activePhysicalPositionKeys &&
+        !isPhysicalPositionActive(slot, activePhysicalPositionKeys))
     ) {
       continue;
     }
@@ -127,11 +134,28 @@ const getConcentrationModules = (slots: WarehouseSlot[], sku: string) => {
 const getConcentrationModule = (slots: WarehouseSlot[], sku: string) =>
   getConcentrationModules(slots, sku)[0]?.modulo ?? null;
 
-const buildDistanceMap = (slots: WarehouseSlot[], sku: string) => {
-  const center = getConcentrationModule(slots, sku);
+const buildDistanceMap = (
+  slots: WarehouseSlot[],
+  sku: string,
+  estoque: "2" | "3",
+  activePhysicalPositionKeys: { "2": Set<string>; "3": Set<string> }
+) => {
+  const concentrationModules = getConcentrationModules(
+    slots.filter(slot => slot.estoque === estoque),
+    sku,
+    activePhysicalPositionKeys
+  );
+  const center = concentrationModules[0]?.modulo ?? null;
   const map = new Map<number, number>();
 
   for (const slot of slots) {
+    if (
+      slot.estoque !== estoque ||
+      !isPhysicalPositionActive(slot, activePhysicalPositionKeys)
+    ) {
+      continue;
+    }
+
     const modulo = moduleNumber(slot);
     map.set(modulo, center === null ? 0 : Math.abs(modulo - center));
   }
@@ -264,12 +288,18 @@ export const buildStoragePlans = ({
           : 0
       : 0;
 
+  const storageEstoque = structure;
   const { map: distanceMap, center: concentrationModule } =
-    buildDistanceMap(slots, normalizedSku);
+    buildDistanceMap(
+      slots,
+      normalizedSku,
+      storageEstoque,
+      activePhysicalPositionKeys
+    );
 
   const baseCandidates = slots
     .filter(slot =>
-      slot.estoque === "2" &&
+      slot.estoque === storageEstoque &&
       isPhysicalPositionActive(slot, activePhysicalPositionKeys) &&
       isStorageCandidateAllowed(slot)
     )
@@ -340,6 +370,28 @@ export const buildStoragePlans = ({
             quantity: capacity,
           }));
 
+      let remainingForValidation =
+        requestedQty ?? selected.length * capacity;
+
+      for (const slot of selected) {
+        if (remainingForValidation <= 0) break;
+
+        const freeCapacity =
+          capacity > 0
+            ? Math.max(0, capacity - Math.max(0, slot.saldo))
+            : remainingForValidation;
+        const requiredOnSlot = Math.min(capacity, remainingForValidation);
+
+        if (freeCapacity < requiredOnSlot) {
+          remainingForValidation = -1;
+          break;
+        }
+
+        remainingForValidation -= requiredOnSlot;
+      }
+
+      if (remainingForValidation !== 0) continue;
+
       if (requestedQty) {
         const allocated = allocations.reduce((sum, item) => sum + item.quantity, 0);
         if (allocated < requestedQty) continue;
@@ -378,9 +430,9 @@ export const buildStoragePlans = ({
     };
   }
 
-  const e2Slots = slots
+  const e3Slots = slots
     .filter(slot =>
-      slot.estoque === "2" &&
+      slot.estoque === "3" &&
       isPhysicalPositionActive(slot, activePhysicalPositionKeys) &&
       isStorageCandidateAllowed(slot)
     )
@@ -393,16 +445,16 @@ export const buildStoragePlans = ({
     );
 
   const byKey = new Map(
-    e2Slots.map(slot => [normalizeConsultorPosition(slot), slot])
+    e3Slots.map(slot => [normalizeConsultorPosition(slot), slot])
   );
 
   const cageCandidates: ConsultorCageCandidate[] = [];
-  for (const slot of e2Slots) {
+  for (const slot of e3Slots) {
     const pair = getCagePair(slot.posicao);
     if (!pair) continue;
 
     const counterpart = byKey.get(
-      `2-${Number(slot.modulo)}-${pair.counterpartPrefix}`
+      `3-${Number(slot.modulo)}-${pair.counterpartPrefix}`
     );
     if (!counterpart) continue;
 
@@ -424,6 +476,10 @@ export const buildStoragePlans = ({
     const secondFree = capacity > 0
       ? Math.max(0, capacity - counterpart.saldo)
       : 0;
+
+    if (capacity > 0 && (firstFree < capacity || secondFree < capacity)) {
+      continue;
+    }
 
     cageCandidates.push({
       key: pair.key,
@@ -511,10 +567,12 @@ export const buildSeparationPlan = ({
   slots,
   sku,
   requestedQty,
+  allowTest = false,
 }: {
   slots: WarehouseSlot[];
   sku: string;
   requestedQty: number;
+  allowTest?: boolean;
 }) => {
   const normalizedSku = normalizeSku(sku);
 
@@ -524,7 +582,7 @@ export const buildSeparationPlan = ({
         slot.estoque === "2" &&
         slot.saldo > 0 &&
         normalizeSku(slot.referencia) === normalizedSku &&
-        slot.restricao !== "teste"
+        slotRestriction(slot) === (allowTest ? "teste" : "nenhuma")
     )
     .map(slot => ({
       slot,
@@ -563,10 +621,12 @@ export const buildStrategyAnalysis = ({
   slots,
   products,
   sku,
+  activePhysicalPositionKeys,
 }: {
   slots: WarehouseSlot[];
   products: Product[];
   sku: string;
+  activePhysicalPositionKeys?: { "2": Set<string>; "3": Set<string> };
 }): ConsultorStrategyAnalysis => {
   const normalizedSku = normalizeSku(sku);
   const product = products.find(
@@ -576,7 +636,11 @@ export const buildStrategyAnalysis = ({
   const skuSlots = slots.filter(
     slot =>
       normalizeSku(slot.referencia) === normalizedSku &&
-      slot.saldo > 0
+      slot.saldo > 0 &&
+      slotRestriction(slot) !== "teste" &&
+      (activePhysicalPositionKeys
+        ? isPhysicalPositionActive(slot, activePhysicalPositionKeys)
+        : true)
   );
 
   const totalSaldo = skuSlots.reduce((sum, slot) => sum + slot.saldo, 0);
@@ -584,7 +648,11 @@ export const buildStrategyAnalysis = ({
   const totalPaletes =
     paletizacao > 0 ? Math.ceil(totalSaldo / paletizacao) : 0;
 
-  const grouped = getConcentrationModules(slots, normalizedSku);
+  const grouped = getConcentrationModules(
+    slots,
+    normalizedSku,
+    activePhysicalPositionKeys
+  );
   const totalGrouped = grouped.reduce((sum, item) => sum + item.saldo, 0);
   const concentrationModule = grouped[0]?.modulo ?? null;
 

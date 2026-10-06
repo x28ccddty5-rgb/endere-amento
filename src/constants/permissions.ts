@@ -48,9 +48,9 @@ export const roleLabel = (role: string):
 export const PERMISSIONS = {
   dashboard: ["administrador", "lideranca", "visualizador"],
   busca: ["administrador", "lideranca", "apoio", "producao", "visualizador"],
-  lancamento: ["administrador", "lideranca", "apoio", "producao", "visualizador"],
-  historico: ["administrador", "lideranca", "apoio", "producao", "visualizador"],
-  divergencias: ["administrador", "lideranca", "apoio", "producao", "visualizador"],
+  lancamento: ["administrador", "lideranca", "apoio", "visualizador"],
+  historico: ["administrador", "lideranca", "apoio", "visualizador"],
+  divergencias: ["administrador", "lideranca", "apoio", "visualizador"],
   baseDados: ["administrador", "lideranca", "visualizador"],
   usuarios: ["administrador"],
   configuracao: ["administrador"],
@@ -66,7 +66,7 @@ export const canAccessPermission = (
 
 export const canExecuteOperations = (role: string | null | undefined): boolean => {
   const normalizedRole = normalizeRole(role);
-  return (["administrador", "lideranca", "apoio", "producao"] as readonly string[]).includes(normalizedRole);
+  return (["administrador", "lideranca", "apoio"] as readonly string[]).includes(normalizedRole);
 };
 
 export const isAdmin = (role: string | null | undefined): boolean =>

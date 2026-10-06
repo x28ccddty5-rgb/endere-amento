@@ -4,6 +4,7 @@ import {
   buildStoragePlans,
   buildSeparationPlan,
   buildStrategyAnalysis,
+  isPhysicalPositionActive,
 } from "./lib/consultorEngine";
 import { jsPDF } from "jspdf";
 import autoTable from "jspdf-autotable";
@@ -2713,56 +2714,52 @@ if (refRaw) {
 };
 
   const handleExportarEnderecamento = () => {
-    const headers = [
-      "ID",
-      "Estoque",
-      "Modulo_Rua",
-      "Posicao",
-      "Referencia_SKU",
-      "Descricao_Produto",
-      "Saldo_Pecas",
-      "Data_Chacote",
-      "Ultima_Movimentacao_Data",
-      "Ultima_Movimentacao_Hora",
-      "Ultimo_Responsavel"
-    ];
-    
-    const rows = slots.map(s => [
-      s.id,
-      `E${s.estoque}`,
-      s.modulo,
-      s.posicao || "Corredor",
-      s.referencia || "",
-      s.descricao || "",
-      String(s.saldo),
-      s.dataChacote || "",
-      s.ultimaData || "",
-      s.ultimaHora || "",
-      s.ultimoResponsavel || ""
-    ]);
+    const rows = filteredSlots.map(s => ({
+      ID: s.id,
+      Estoque: `E${s.estoque}`,
+      Modulo_Rua: s.modulo,
+      Posicao: s.posicao || "Corredor",
+      Referencia_SKU: s.referencia || "",
+      Descricao_Produto: s.descricao || "",
+      Saldo_Pecas: s.saldo,
+      Data_Chacote: s.dataChacote || "",
+      Ultima_Movimentacao_Data: s.ultimaData || "",
+      Ultima_Movimentacao_Hora: s.ultimaHora || "",
+      Ultimo_Responsavel: s.ultimoResponsavel || "",
+      Galpao: s.galpao || "3",
+      Restricao:
+        s.restricao || (s.galpao === "12" ? "autorizacao" : "nenhuma"),
+      Observacao: s.observacao || "",
+    }));
 
-    const csvContent = [
-      headers.join(";"),
-      ...rows.map(row => 
-        row.map(val => {
-          const cleanVal = val === null || val === undefined ? "" : String(val).replace(/"/g, '""');
-          return `"${cleanVal}"`;
-        }).join(";")
-      )
-    ].join("\n");
+    if (rows.length === 0) {
+      alert("Nenhum endereço corresponde aos filtros atuais.");
+      return;
+    }
 
-    const blob = new Blob(["\uFEFF" + csvContent], { type: "text/csv;charset=utf-8;" });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.setAttribute("href", url);
-    link.setAttribute("download", `enderecamento_porto_brasil_${new Date().toISOString().split('T')[0]}.csv`);
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+    const worksheet = XLSX.utils.json_to_sheet(rows);
+    const workbook = XLSX.utils.book_new();
+
+    XLSX.utils.book_append_sheet(
+      workbook,
+      worksheet,
+      "Endereçamento"
+    );
+
+    XLSX.writeFile(
+      workbook,
+      `enderecamento_porto_brasil_${getTodayIsoDate()}.xlsx`
+    );
   };
 
-    
-    const handleExportarEnderecamentoPDF = () => {
+
+  const handleExportarEnderecamentoPDF = () => {
+    const exportSlots = [...filteredSlots];
+
+    if (exportSlots.length === 0) {
+      alert("Nenhum endereço corresponde aos filtros atuais.");
+      return;
+    }
 
         const doc = new jsPDF({
           orientation: "landscape"
@@ -2788,7 +2785,7 @@ if (refRaw) {
 
         if (data.section !== "body") return;
       
-        const slot = filteredSlots[data.row.index];
+        const slot = exportSlots[data.row.index];
       
         const produto = productsList.find(
           p => p.referencia === slot.referencia
@@ -2812,10 +2809,13 @@ if (refRaw) {
             "Saldo",
             "Data Chacote",
             "Última Mov.",
-            "Responsável"
+            "Responsável",
+            "Galpão",
+            "Restrição",
+            "Observação"
           ]],
-      
-          body: filteredSlots.map((s) => [
+
+          body: exportSlots.map((s) => [
             s.estoque,
             s.modulo,
             s.posicao || "-",
@@ -2824,21 +2824,25 @@ if (refRaw) {
             s.saldo.toLocaleString(),
             s.dataChacote || "-",
             s.ultimaData || "-",
-            s.ultimoResponsavel || "-"
+            s.ultimoResponsavel || "-",
+            s.galpao || "3",
+            s.restricao || (s.galpao === "12" ? "autorizacao" : "nenhuma"),
+            s.observacao || "-"
           ]),
-      
+
           styles: {
-            fontSize: 7,
-            cellPadding: 2
+            fontSize: 6.2,
+            cellPadding: 1.5
           },
-      
+
           headStyles: {
             fillColor: [37, 99, 235],
             fontStyle: "bold"
           },
-      
+
           columnStyles: {
-            4: { cellWidth: 70 }, // descrição
+            4: { cellWidth: 50 },
+            11: { cellWidth: 45 },
           }
         });
       
@@ -3731,14 +3735,18 @@ if (refRaw) {
           slots,
           products: productsList,
           sku,
+          activePhysicalPositionKeys,
         })
       : null;
 
     const relevantSlots = slots
       .filter(slot =>
-        normalizedSku
+        (slot.estoque !== "2" && slot.estoque !== "3"
+          ? true
+          : isPhysicalPositionActive(slot, activePhysicalPositionKeys)) &&
+        (normalizedSku
           ? slot.referencia.toUpperCase() === normalizedSku
-          : slot.saldo > 0
+          : slot.saldo > 0)
       )
       .slice(0, normalizedSku ? 20 : 12)
       .map(slot => ({
@@ -3748,6 +3756,9 @@ if (refRaw) {
         referencia: slot.referencia,
         descricao: slot.descricao,
         saldo: slot.saldo,
+        galpao: slot.galpao || "3",
+        restricao: slot.restricao || (slot.galpao === "12" ? "autorizacao" : "nenhuma"),
+        observacao: slot.observacao || "",
         dataChacote: slot.dataChacote || null,
       }));
 
@@ -3859,6 +3870,15 @@ if (refRaw) {
       userMessage.toLowerCase().includes("separação") ||
       userMessage.toLowerCase().includes("separacao");
 
+    const isStrategyIntent =
+      userMessage.toLowerCase().includes("estratégia") ||
+      userMessage.toLowerCase().includes("estrategia") ||
+      userMessage.toLowerCase().includes("organizar este sku") ||
+      userMessage.toLowerCase().includes("organizar o sku");
+
+    const isOperationalConsultorIntent =
+      isStorageIntent || isSeparationIntent || isStrategyIntent;
+
     if (pendingConsultorRequest && !isStorageIntent && !isSeparationIntent) {
       const parsedSku = findSkuInChatText(userMessage);
       const parsedQuantity = parseConsultorQuantity(userMessage, true);
@@ -3965,6 +3985,7 @@ if (refRaw) {
             slots,
             products: productsList,
             sku: strategySku,
+            activePhysicalPositionKeys,
           });
 
           if (analysis.totalSaldo <= 0) {
@@ -4205,10 +4226,12 @@ if (refRaw) {
               "Informe a quantidade que deseja separar, por exemplo: 300 peças.";
           } else {
             setPendingConsultorRequest(null);
+          const explicitTestRequest = /\bteste\b/i.test(userMessage);
           const separation = buildSeparationPlan({
             slots,
             sku: skuRecommendation,
             requestedQty,
+            allowTest: explicitTestRequest,
           });
 
           if (separation.plan.length === 0) {
@@ -4227,7 +4250,7 @@ if (refRaw) {
               `PLANO DE SEPARAÇÃO • ${skuRecommendation}\n\n` +
               `Solicitado: ${requestedQty.toLocaleString("pt-BR")} pçs\n` +
               `Disponível: ${separation.totalAvailable.toLocaleString("pt-BR")} pçs\n\n` +
-              `ROTEIRO FIFO\n${planText}\n\n` +
+              `ROTEIRO FIFO • ${explicitTestRequest ? "TESTE SOLICITADO" : "SEM RESTRIÇÃO"}\n${planText}\n\n` +
               (separation.complete
                 ? "Resultado: quantidade totalmente atendida."
                 : `Atenção: faltam ${separation.remaining.toLocaleString("pt-BR")} pçs.`) +
@@ -4829,8 +4852,11 @@ if (refRaw) {
       }
 
     if (
-      shouldUseGenerativeConsultor(userMessage) ||
-      responseText.startsWith("Entendido. Registrei sua solicitação operacional.")
+      !isOperationalConsultorIntent &&
+      (
+        shouldUseGenerativeConsultor(userMessage) ||
+        responseText.startsWith("Entendido. Registrei sua solicitação operacional.")
+      )
     ) {
       const aiResponse = await requestGenerativeConsultor(
         userMessage,
@@ -4949,7 +4975,7 @@ if (refRaw) {
       case "apoio":
         return ["endereçamento", "lançamento", "histórico", "divergências"].includes(tab);
       case "producao":
-        return ["endereçamento", "lançamento", "histórico", "divergências"].includes(tab);
+        return ["endereçamento"].includes(tab);
       case "visualizador":
         return ["dashboard", "endereçamento", "lançamento", "histórico", "divergências", "base"].includes(tab);
       default:
@@ -4957,9 +4983,12 @@ if (refRaw) {
     }
   };
 
-  const mobileAllowedTabs = isAdmin(currentUser.role)
-    ? ["endereçamento", "lançamento", "divergências", "histórico", "ai", "base", "configuracao"]
-    : ["endereçamento", "lançamento", "divergências", "histórico", "ai"];
+  const mobileAllowedTabs =
+    role === "producao"
+      ? ["endereçamento"]
+      : isAdmin(currentUser.role)
+        ? ["endereçamento", "lançamento", "divergências", "histórico", "ai", "base", "configuracao"]
+        : ["endereçamento", "lançamento", "divergências", "histórico", "ai"];
 
   const mobileActiveTab = mobileAllowedTabs.includes(activeTab)
     ? activeTab
@@ -5430,7 +5459,7 @@ const pct = total > 0 ? (occupied / total) * 100 : 0;
                       className="text-xs text-indigo-600 hover:text-indigo-800 transition font-bold cursor-pointer flex items-center gap-1.5 font-sans uppercase tracking-wider text-[11px]"
                     >
                       <Download className="w-3.5 h-3.5 text-indigo-500" />
-                      Exportar Endereçamento (CSV)
+                      Exportar Endereçamento (Excel)
                     </button>
                   )}
                     <button 
@@ -6856,7 +6885,7 @@ const pct = total > 0 ? (occupied / total) * 100 : 0;
 
           {/* TAB 9: IA CONSULTOR (AI dialogue workspace chat) */}
           {activeTab === "ai" && (
-            <div className="space-y-6">
+            <div className="space-y-6 pt-8">
               
               <div className="bg-white border border-slate-200 rounded-xl p-6 shadow-xs flex flex-col md:flex-row gap-6 items-stretch">
                 
@@ -6915,26 +6944,25 @@ const pct = total > 0 ? (occupied / total) * 100 : 0;
                   </p>
 
                   <div className="space-y-2 text-[11px] font-sans">
-                    <button
-                      onClick={() => setChatInput("Onde devo armazenar este SKU?")}
-                      className="w-full text-left bg-white hover:bg-slate-100 p-2 border border-slate-200 rounded-lg transition font-bold text-slate-700"
-                    >
-                      📍 Onde devo armazenar este SKU?
-                    </button>
-
-                    <button
-                      onClick={() => setChatInput("Onde separar este SKU?")}
-                      className="w-full text-left bg-white hover:bg-slate-100 p-2 border border-slate-200 rounded-lg transition font-bold text-slate-700"
-                    >
-                      📦 Onde separar este SKU?
-                    </button>
-
-                    <button
-                      onClick={() => setChatInput("Qual seria a melhor estratégia para organizar este SKU?")}
-                      className="w-full text-left bg-white hover:bg-slate-100 p-2 border border-slate-200 rounded-lg transition font-bold text-slate-700"
-                    >
-                      💡 Melhor estratégia para este SKU
-                    </button>
+                    {[
+                      ["📍", "Onde devo armazenar este SKU?"],
+                      ["📍", "Onde devo armazenar 450 peças do SKU 23101G no palete?"],
+                      ["📦", "Onde separar 300 peças do SKU 23101G?"],
+                      ["🧺", "Onde devo armazenar 5 gaiolas do SKU 23101G?"],
+                      ["📦", "Onde devo armazenar 5 paletes do SKU 23101G?"],
+                      ["💡", "Qual seria a melhor estratégia para organizar este SKU?"],
+                      ["📊", "Qual a concentração atual deste SKU?"],
+                      ["⚠️", "Existem divergências em aberto?"],
+                      ["🏆", "Qual é o item mais estocado?"],
+                    ].map(([icon, prompt]) => (
+                      <button
+                        key={prompt}
+                        onClick={() => setChatInput(prompt)}
+                        className="w-full text-left bg-white hover:bg-slate-100 p-2 border border-slate-200 rounded-lg transition font-bold text-slate-700"
+                      >
+                        {icon} {prompt}
+                      </button>
+                    ))}
                   </div>
                 </div>
 
