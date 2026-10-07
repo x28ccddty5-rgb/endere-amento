@@ -43,6 +43,35 @@ export default {
       return jsonResponse({ error: "Usuário não autenticado." }, 401);
     }
 
+    const { data: profile, error: profileError } = await ctx.supabaseAdmin
+      .from("profiles")
+      .select("role")
+      .eq("id", userId)
+      .maybeSingle();
+
+    if (profileError) {
+      console.error("Erro ao validar perfil do Consultor:", profileError);
+      return jsonResponse({ error: "Não foi possível validar o perfil do usuário." }, 500);
+    }
+
+    const allowedRoles = [
+      "administrador",
+      "lideranca",
+      "apoio",
+      "producao",
+      "visualizador",
+    ];
+
+    const normalizedRole = String(profile?.role || "")
+      .trim()
+      .toLowerCase()
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "");
+
+    if (!profile || !allowedRoles.includes(normalizedRole)) {
+      return jsonResponse({ error: "Seu perfil não possui acesso ao Consultor de Estoque." }, 403);
+    }
+
     let body: ConsultorBody;
 
     try {
@@ -91,11 +120,16 @@ REGRAS OBRIGATÓRIAS:
 - Não mencione "prompt", "contexto", "modelo", "LLM", "API" ou detalhes internos.
 - Responda em português do Brasil.
 - Seja objetivo e operacional.
+- Não use Markdown. Não use **, ###, títulos com # ou formatação com asteriscos.
+- Use títulos simples em caixa alta e listas iniciadas por "•".
 - Não faça mais de uma recomendação principal quando os dados permitirem uma conclusão clara.
 - Quando uma recomendação depender de condição física não registrada, deixe essa limitação explícita.
 - Para estratégia de estoque, explique a concentração real do SKU, a proximidade dos módulos, a consolidação, a redução de dispersão, a ocupação/capacidade e as restrições. Não transforme a análise em uma opinião genérica.
+- Estratégia de organização não é armazenagem de novo estoque: nunca invente ou recomende uma vaga vazia. Quando falar em organização/consolidação, use somente posições já ocupadas pelo próprio SKU presentes no contexto.
+- Remontagem é diferente de estratégia: remontagem recebe uma quantidade e procura capacidade livre em posições já ocupadas pelo mesmo SKU; estratégia analisa a distribuição atual e orienta a concentração, sem criar um destino vazio.
+- Para consultas de quantidade por data de chacote, preserve exatamente a soma determinística de "sem data" + "com data até o corte" e não substitua o total por uma estimativa.
 - Para armazenagem, trate o plano determinístico como fonte de verdade: uma "opção" é um plano completo, não uma única vaga.
-- Para armazenagem em gaiola, trate E3 como o estoque físico de gaiolas. Cada gaiola é uma combinação de 2 posições E3 no mesmo módulo, usando somente A+B, C+D ou E+F. Não substitua uma recomendação E3 por E2 e não invente outras combinações.
+- Para armazenagem em gaiola, trate E3 como uma combinação física de 2 paletes E2. As chaves válidas são A+B, C+D e E+F no mesmo módulo. Não invente outras combinações.
 - Quando o resultado determinístico apresentar várias opções ou uma distribuição de múltiplos paletes, preserve exatamente as posições, quantidades e combinações fornecidas.
 - Se o resultado já apresentar concentração, ranking, plano ou roteiro, explique esses dados em vez de substituí-los por outra estratégia.
 
@@ -163,6 +197,10 @@ ${context}
       const answer = payload?.candidates?.[0]?.content?.parts
         ?.map((part: { text?: string }) => part.text || "")
         .join("")
+        .replace(/\*\*/g, "")
+        .replace(/^#{1,6}\s*/gm, "")
+        .replace(/^\s*[-*]\s+/gm, "• ")
+        .replace(/\n{3,}/g, "\n\n")
         .trim()
         .slice(0, MAX_RESPONSE_CHARS);
 

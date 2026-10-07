@@ -3,8 +3,11 @@ import { calcularPaletes } from "./lib/palletUtils";
 import {
   buildStoragePlans,
   buildSeparationPlan,
+  buildRemontagemPlan,
   buildStrategyAnalysis,
+  buildChacoteQuantityAnalysis,
   isPhysicalPositionActive,
+  parseChacoteDate,
 } from "./lib/consultorEngine";
 import { jsPDF } from "jspdf";
 import autoTable from "jspdf-autotable";
@@ -1707,6 +1710,7 @@ const deleteProduct = async (
   const [searchModulo, setSearchModulo] = useState("");
   const [searchPosicao, setSearchPosicao] = useState("");
   const [searchPage, setSearchPage] = useState(1);
+  const [searchChacoteSort, setSearchChacoteSort] = useState<"none" | "asc" | "desc">("none");
 
   const [somenteAcimaPaletizacao, setSomenteAcimaPaletizacao] = useState(false);
 
@@ -2714,7 +2718,12 @@ if (refRaw) {
 };
 
   const handleExportarEnderecamento = () => {
-    const rows = filteredSlots.map(s => ({
+    if (filteredSlots.length === 0) {
+      alert("Nenhum endereço corresponde aos filtros atuais.");
+      return;
+    }
+
+    const data = filteredSlots.map(s => ({
       ID: s.id,
       Estoque: `E${s.estoque}`,
       Modulo_Rua: s.modulo,
@@ -2727,17 +2736,13 @@ if (refRaw) {
       Ultima_Movimentacao_Hora: s.ultimaHora || "",
       Ultimo_Responsavel: s.ultimoResponsavel || "",
       Galpao: s.galpao || "3",
-      Restricao:
-        s.restricao || (s.galpao === "12" ? "autorizacao" : "nenhuma"),
+      Restricao: s.galpao === "12"
+        ? "autorizacao"
+        : (s.restricao || "nenhuma"),
       Observacao: s.observacao || "",
     }));
 
-    if (rows.length === 0) {
-      alert("Nenhum endereço corresponde aos filtros atuais.");
-      return;
-    }
-
-    const worksheet = XLSX.utils.json_to_sheet(rows);
+    const worksheet = XLSX.utils.json_to_sheet(data);
     const workbook = XLSX.utils.book_new();
 
     XLSX.utils.book_append_sheet(
@@ -2752,107 +2757,103 @@ if (refRaw) {
     );
   };
 
+    const handleExportarEnderecamentoPDF = () => {
+      if (filteredSlots.length === 0) {
+        alert("Nenhum endereço corresponde aos filtros atuais.");
+        return;
+      }
 
-  const handleExportarEnderecamentoPDF = () => {
-    const exportSlots = [...filteredSlots];
+      const doc = new jsPDF({
+        orientation: "landscape"
+      });
 
-    if (exportSlots.length === 0) {
-      alert("Nenhum endereço corresponde aos filtros atuais.");
-      return;
-    }
+      doc.setFontSize(18);
+      doc.text("PORTO BRASIL", 14, 15);
 
-        const doc = new jsPDF({
-          orientation: "landscape"
-        });
-      
-        doc.setFontSize(18);
-        doc.text("PORTO BRASIL", 14, 15);
-      
-        doc.setFontSize(11);
-        doc.text("Relatório de Endereçamento", 14, 23);
-      
-        doc.setFontSize(8);
-        doc.text(
-          `Gerado em ${new Date().toLocaleString("pt-BR")}`,
-          14,
-          30
-        );
-      
-        autoTable(doc, {
-          startY: 38,
+      doc.setFontSize(11);
+      doc.text("Relatório de Endereçamento", 14, 23);
 
+      doc.setFontSize(8);
+      doc.text(
+        `Registros exportados: ${filteredSlots.length} • Gerado em ${new Date().toLocaleString("pt-BR")}`,
+        14,
+        30
+      );
+
+      autoTable(doc, {
+        startY: 38,
         didParseCell: (data) => {
+          if (data.section !== "body") return;
 
-        if (data.section !== "body") return;
-      
-        const slot = exportSlots[data.row.index];
-      
-        const produto = productsList.find(
-          p => p.referencia === slot.referencia
-        );
-      
-        const acimaPaletizacao =
-          produto?.paletizacao &&
-          slot.saldo > produto.paletizacao;
-      
-        if (acimaPaletizacao) {
-          data.cell.styles.fillColor = [219, 234, 254];
-        }
-      },
-          
-          head: [[
-            "Estoque",
-            "Módulo",
-            "Posição",
-            "SKU",
-            "Descrição",
-            "Saldo",
-            "Data Chacote",
-            "Última Mov.",
-            "Responsável",
-            "Galpão",
-            "Restrição",
-            "Observação"
-          ]],
+          const slot = filteredSlots[data.row.index];
+          if (!slot) return;
 
-          body: exportSlots.map((s) => [
-            s.estoque,
-            s.modulo,
-            s.posicao || "-",
-            s.referencia || "-",
-            s.descricao || "-",
-            s.saldo.toLocaleString(),
-            s.dataChacote || "-",
-            s.ultimaData || "-",
-            s.ultimoResponsavel || "-",
-            s.galpao || "3",
-            s.restricao || (s.galpao === "12" ? "autorizacao" : "nenhuma"),
-            s.observacao || "-"
-          ]),
+          const produto = productsList.find(
+            p => p.referencia === slot.referencia
+          );
 
-          styles: {
-            fontSize: 6.2,
-            cellPadding: 1.5
-          },
+          const acimaPaletizacao =
+            produto?.paletizacao &&
+            slot.saldo > produto.paletizacao;
 
-          headStyles: {
-            fillColor: [37, 99, 235],
-            fontStyle: "bold"
-          },
-
-          columnStyles: {
-            4: { cellWidth: 50 },
-            11: { cellWidth: 45 },
+          if (acimaPaletizacao) {
+            data.cell.styles.fillColor = [219, 234, 254];
           }
-        });
-      
-        doc.save(
-          `Enderecamento_${new Date()
-            .toISOString()
-            .slice(0, 10)}.pdf`
-        );
-      };
-  
+        },
+
+        head: [[
+          "Estoque",
+          "Módulo",
+          "Posição",
+          "SKU",
+          "Descrição",
+          "Saldo",
+          "Data Chacote",
+          "Última Mov.",
+          "Responsável",
+          "Galpão",
+          "Restrição",
+          "Observação"
+        ]],
+
+        body: filteredSlots.map((s) => [
+          s.estoque,
+          s.modulo,
+          s.posicao || "-",
+          s.referencia || "-",
+          s.descricao || "-",
+          s.saldo.toLocaleString("pt-BR"),
+          s.dataChacote || "-",
+          s.ultimaData || "-",
+          s.ultimoResponsavel || "-",
+          s.galpao || "3",
+          s.galpao === "12"
+            ? "autorizacao"
+            : (s.restricao || "nenhuma"),
+          s.observacao || "-"
+        ]),
+
+        styles: {
+          fontSize: 6.5,
+          cellPadding: 1.7
+        },
+
+        headStyles: {
+          fillColor: [37, 99, 235],
+          fontStyle: "bold"
+        },
+
+        columnStyles: {
+          4: { cellWidth: 55 },
+          11: { cellWidth: 55 }
+        }
+      });
+
+      doc.save(
+        `Enderecamento_${getTodayIsoDate()}.pdf`
+      );
+    };
+
   const handleExportarHistorico = async () => {
     if (!historyExportAll && (!histDateStart || !histDateEnd || histDateStart > histDateEnd)) {
       alert("Selecione um período válido para exportação.");
@@ -3087,6 +3088,7 @@ if (refRaw) {
     setSearchObservacao("");
     setSearchModulo("");
     setSearchPosicao("");
+    setSearchChacoteSort("none");
     setSomenteAcimaPaletizacao(false);
     setSearchPage(1);
   };
@@ -3111,7 +3113,7 @@ if (refRaw) {
     const normalizedSearchPosicao = searchPosicao.replace(/^[RMG]/i, "").toUpperCase();
     const normalizedSearchPosicaoText = searchPosicao.trim().toLowerCase();
 
-    return slots.filter(s => {
+    const filtered = slots.filter(s => {
       const matchesRef = normalizedSearchRef
         ? s.referencia.toLowerCase() === normalizedSearchRef
         : true;
@@ -3179,6 +3181,36 @@ if (refRaw) {
         matchesPosicao
       );
     });
+
+    if (searchChacoteSort === "none") {
+      return filtered;
+    }
+
+    return [...filtered].sort((a, b) => {
+      const aTime = parseChacoteDate(a.dataChacote);
+      const bTime = parseChacoteDate(b.dataChacote);
+
+      // No modo "mais antiga", endereços sem data ficam primeiro.
+      // No modo "mais recente", os sem data ficam por último.
+      if (aTime === null && bTime !== null) {
+        return searchChacoteSort === "asc" ? -1 : 1;
+      }
+      if (aTime !== null && bTime === null) {
+        return searchChacoteSort === "asc" ? 1 : -1;
+      }
+
+      if (aTime !== null && bTime !== null && aTime !== bTime) {
+        return searchChacoteSort === "asc"
+          ? aTime - bTime
+          : bTime - aTime;
+      }
+
+      return (
+        Number(a.estoque) - Number(b.estoque) ||
+        Number(a.modulo.replace(/^[RM]/i, "")) - Number(b.modulo.replace(/^[RM]/i, "")) ||
+        a.posicao.localeCompare(b.posicao, "pt-BR", { numeric: true })
+      );
+    });
   }, [
     slots,
     productsByReference,
@@ -3190,6 +3222,7 @@ if (refRaw) {
     searchObservacao,
     searchModulo,
     searchPosicao,
+    searchChacoteSort,
     somenteAcimaPaletizacao
   ]);
 
@@ -3579,11 +3612,21 @@ if (refRaw) {
         palletCount: number | null;
         cageCount: number | null;
         structure: "2" | "3" | null;
+        restriction: Restricao | null;
       }
     | {
         kind: "separation";
         sku: string | null;
         quantity: number | null;
+        structure: "2" | "3" | null;
+        restriction: Restricao | null;
+      }
+    | {
+        kind: "remontagem";
+        sku: string | null;
+        quantity: number | null;
+        structure: "2" | "3" | null;
+        restriction: Restricao | null;
       };
 
   const [pendingConsultorRequest, setPendingConsultorRequest] =
@@ -3591,6 +3634,17 @@ if (refRaw) {
 
   const formatMobileSlot = (slot: WarehouseSlot): string =>
     `E${slot.estoque} • M${slot.modulo}${slot.posicao ? ` • ${slot.posicao}` : ""}`;
+
+  const isStandardConsultorSlot = (slot: WarehouseSlot): boolean =>
+    slot.galpao !== "12" && (slot.restricao || "nenhuma") === "nenhuma";
+
+  const cleanConsultorDisplayText = (text: string): string =>
+    text
+      .replace(/\*\*/g, "")
+      .replace(/^#{1,6}\s*/gm, "")
+      .replace(/^\s*[-*]\s+/gm, "• ")
+      .replace(/\n{3,}/g, "\n\n")
+      .trim();
 
   const findSkuInChatText = (text: string): string | null => {
     const normalizeReference = (value: string) => {
@@ -3689,6 +3743,60 @@ if (refRaw) {
     return Number.isFinite(value) && value > 0 ? value : null;
   };
 
+  const parseConsultorRestriction = (text: string): Restricao | null => {
+    const normalized = text
+      .toLowerCase()
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "");
+
+    if (normalized.includes("teste")) return "teste";
+    if (normalized.includes("autorizacao")) return "autorizacao";
+    if (/(^|\s)outra(\s|$)/.test(normalized) || normalized.includes("outra restricao") || normalized.includes("restricao outra")) {
+      return "outra";
+    }
+
+    return null;
+  };
+
+  const parseConsultorCutoffDate = (
+    text: string
+  ): string | null => {
+    const match =
+      text.match(/(?:até|ate|anterior a|anterior|antes de|antes|em|na data de|data)\s*(?:a|ao)?\s*(\d{2}[\/.\-]\d{2}[\/.\-]\d{4})/i) ||
+      text.match(/\b(\d{2}[\/.\-]\d{2}[\/.\-]\d{4})\b/);
+
+    if (!match) return null;
+
+    const raw = match[1].replace(/[.\-]/g, "/");
+    const [day, month, year] = raw.split("/");
+    const canonical = `${day}/${month}/${year}`;
+
+    return parseChacoteDate(canonical) !== null ? canonical : null;
+  };
+
+  const isChacoteQuantityIntent = (
+    text: string
+  ): boolean => {
+    const normalized = text
+      .toLowerCase()
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "");
+
+    const hasQuantityTerm =
+      normalized.includes("quantas pecas") ||
+      normalized.includes("quantidade") ||
+      normalized.includes("saldo") ||
+      normalized.includes("pecas");
+
+    const hasDateTerm =
+      normalized.includes("anterior a") ||
+      normalized.includes("antes de") ||
+      normalized.includes("ate ") ||
+      normalized.includes("data");
+
+    return hasQuantityTerm && hasDateTerm && parseConsultorCutoffDate(text) !== null;
+  };
+
   const handleNextRecommendation = () => {
     const next = recommendationQueue[0];
     if (!next) return;
@@ -3736,18 +3844,34 @@ if (refRaw) {
           products: productsList,
           sku,
           activePhysicalPositionKeys,
+          requestedRestriction: parseConsultorRestriction(question),
         })
       : null;
 
+    const contextRestriction = parseConsultorRestriction(question);
+
     const relevantSlots = slots
-      .filter(slot =>
-        (slot.estoque !== "2" && slot.estoque !== "3"
-          ? true
-          : isPhysicalPositionActive(slot, activePhysicalPositionKeys)) &&
-        (normalizedSku
-          ? slot.referencia.toUpperCase() === normalizedSku
-          : slot.saldo > 0)
-      )
+      .filter(slot => {
+        if (
+          slot.saldo <= 0 ||
+          !isPhysicalPositionActive(slot, activePhysicalPositionKeys)
+        ) {
+          return false;
+        }
+
+        if (
+          normalizedSku &&
+          slot.referencia.toUpperCase() !== normalizedSku
+        ) {
+          return false;
+        }
+
+        return contextRestriction
+          ? (slot.galpao === "12"
+              ? "autorizacao"
+              : (slot.restricao || "nenhuma")) === contextRestriction
+          : isStandardConsultorSlot(slot);
+      })
       .slice(0, normalizedSku ? 20 : 12)
       .map(slot => ({
         estoque: slot.estoque,
@@ -3756,10 +3880,10 @@ if (refRaw) {
         referencia: slot.referencia,
         descricao: slot.descricao,
         saldo: slot.saldo,
-        galpao: slot.galpao || "3",
-        restricao: slot.restricao || (slot.galpao === "12" ? "autorizacao" : "nenhuma"),
-        observacao: slot.observacao || "",
         dataChacote: slot.dataChacote || null,
+        galpao: slot.galpao || "3",
+        restricao: slot.galpao === "12" ? "autorizacao" : (slot.restricao || "nenhuma"),
+        observacao: slot.observacao || "",
       }));
 
     const relevantProduct = sku
@@ -3870,20 +3994,22 @@ if (refRaw) {
       userMessage.toLowerCase().includes("separação") ||
       userMessage.toLowerCase().includes("separacao");
 
-    const isStrategyIntent =
-      userMessage.toLowerCase().includes("estratégia") ||
-      userMessage.toLowerCase().includes("estrategia") ||
-      userMessage.toLowerCase().includes("organizar este sku") ||
-      userMessage.toLowerCase().includes("organizar o sku");
+    const isRemontagemIntent =
+      userMessage.toLowerCase().includes("remont") ||
+      userMessage.toLowerCase().includes("consolidar") ||
+      userMessage.toLowerCase().includes("liberar posição") ||
+      userMessage.toLowerCase().includes("liberar posicao");
 
-    const isOperationalConsultorIntent =
-      isStorageIntent || isSeparationIntent || isStrategyIntent;
-
-    if (pendingConsultorRequest && !isStorageIntent && !isSeparationIntent) {
+    if (
+      pendingConsultorRequest &&
+      !isStorageIntent &&
+      !isSeparationIntent &&
+      !isRemontagemIntent
+    ) {
       const parsedSku = findSkuInChatText(userMessage);
       const parsedQuantity = parseConsultorQuantity(userMessage, true);
       const parsedStructure = parseConsultorStructure(userMessage);
-
+      const parsedRestriction = parseConsultorRestriction(userMessage);
       const parsedPalletCount = parseConsultorPalletCount(userMessage);
       const parsedCageCount = parseConsultorCageCount(userMessage);
 
@@ -3899,12 +4025,28 @@ if (refRaw) {
                 parsedCageCount ?? pendingConsultorRequest.cageCount,
               structure:
                 parsedStructure ?? pendingConsultorRequest.structure,
+              restriction:
+                parsedRestriction ?? pendingConsultorRequest.restriction,
             }
-          : {
-              kind: "separation" as const,
-              sku: parsedSku || pendingConsultorRequest.sku,
-              quantity: parsedQuantity ?? pendingConsultorRequest.quantity,
-            };
+          : pendingConsultorRequest.kind === "separation"
+            ? {
+                kind: "separation" as const,
+                sku: parsedSku || pendingConsultorRequest.sku,
+                quantity: parsedQuantity ?? pendingConsultorRequest.quantity,
+                structure:
+                  parsedStructure ?? pendingConsultorRequest.structure,
+                restriction:
+                  parsedRestriction ?? pendingConsultorRequest.restriction,
+              }
+            : {
+                kind: "remontagem" as const,
+                sku: parsedSku || pendingConsultorRequest.sku,
+                quantity: parsedQuantity ?? pendingConsultorRequest.quantity,
+                structure:
+                  parsedStructure ?? pendingConsultorRequest.structure,
+                restriction:
+                  parsedRestriction ?? pendingConsultorRequest.restriction,
+              };
 
       if (nextPending.kind === "storage") {
         if (!nextPending.sku) {
@@ -3934,18 +4076,53 @@ if (refRaw) {
                 `${nextPending.sku} no ${
                   nextPending.structure === "2" ? "palete (E2)" : "gaiola (E3)"
                 }`;
+
+          if (nextPending.restriction) {
+            userMessage += ` com restrição ${nextPending.restriction}`;
+          }
+
+          setPendingConsultorRequest(null);
+        }
+      } else if (nextPending.kind === "separation") {
+        if (!nextPending.sku) {
+          setPendingConsultorRequest(nextPending);
+          responseText =
+            "Informe o SKU ou a descrição do produto que deseja separar.";
+        } else if (!nextPending.quantity) {
+          setPendingConsultorRequest(nextPending);
+          responseText = "Informe a quantidade que deseja separar.";
+        } else {
+          userMessage =
+            `Onde separar ${nextPending.quantity} peças do SKU ${nextPending.sku}` +
+            (nextPending.structure === "2"
+              ? " em palete (E2)"
+              : nextPending.structure === "3"
+                ? " em gaiola (E3)"
+                : "") +
+            (nextPending.restriction
+              ? ` com restrição ${nextPending.restriction}`
+              : "");
           setPendingConsultorRequest(null);
         }
       } else if (!nextPending.sku) {
         setPendingConsultorRequest(nextPending);
         responseText =
-          "Informe o SKU ou a descrição do produto que deseja separar.";
+          "Informe o SKU ou a descrição do produto que deseja remontar.";
       } else if (!nextPending.quantity) {
         setPendingConsultorRequest(nextPending);
-        responseText = "Informe a quantidade que deseja separar.";
+        responseText =
+          "Informe a quantidade em peças que deseja remontar.";
       } else {
         userMessage =
-          `Onde separar ${nextPending.quantity} peças do SKU ${nextPending.sku}`;
+          `Onde remontar ${nextPending.quantity} peças do SKU ${nextPending.sku}` +
+          (nextPending.structure === "2"
+            ? " em palete (E2)"
+            : nextPending.structure === "3"
+              ? " em gaiola (E3)"
+              : "") +
+          (nextPending.restriction
+            ? ` com restrição ${nextPending.restriction}`
+            : "");
         setPendingConsultorRequest(null);
       }
 
@@ -3969,6 +4146,33 @@ if (refRaw) {
         } else {
           responseText = "Não há outra recomendação pendente. Faça uma nova pergunta para recalcular as opções.";
         }
+      } else if (isChacoteQuantityIntent(userMessage)) {
+        const quantitySku = findSkuInChatText(userMessage);
+        const cutoffDate = parseConsultorCutoffDate(userMessage);
+
+        if (!quantitySku) {
+          responseText =
+            "Informe o SKU ou a descrição do produto para eu calcular a quantidade por data de chacote.";
+        } else if (!cutoffDate) {
+          responseText =
+            "Informe a data de corte, por exemplo: 31/08/2026.";
+        } else {
+          const analysis = buildChacoteQuantityAnalysis({
+            slots,
+            products: productsList,
+            sku: quantitySku,
+            cutoffDate,
+          });
+
+          responseText =
+            `QUANTIDADE POR DATA DE CHACOTE • ${analysis.sku}\n` +
+            `${analysis.descricao}\n\n` +
+            `Sem data de chacote: ${analysis.withoutChacoteDate.toLocaleString("pt-BR")} pçs\n` +
+            `Com data até ${analysis.cutoffDate}: ${analysis.datedUpToCutoff.toLocaleString("pt-BR")} pçs\n` +
+            `TOTAL CONSIDERADO: ${analysis.totalEligible.toLocaleString("pt-BR")} pçs\n\n` +
+            `Estoque atual total do SKU: ${analysis.totalCurrent.toLocaleString("pt-BR")} pçs\n` +
+            `Critério: somo todo o saldo atual sem data de chacote e, em seguida, os saldos cuja data de chacote é até a data informada.`;
+        }
       } else if (
         lower.includes("estratégia") ||
         lower.includes("estrategia") ||
@@ -3986,6 +4190,7 @@ if (refRaw) {
             products: productsList,
             sku: strategySku,
             activePhysicalPositionKeys,
+            requestedRestriction: parseConsultorRestriction(userMessage),
           });
 
           if (analysis.totalSaldo <= 0) {
@@ -4008,23 +4213,30 @@ if (refRaw) {
             responseText =
               `ESTRATÉGIA DE ESTOQUE • ${analysis.sku}\n` +
               `${analysis.descricao}\n\n` +
-              `Saldo total: ${analysis.totalSaldo.toLocaleString("pt-BR")} pçs\n` +
-              `Paletes estimados: ${analysis.totalPaletes.toLocaleString("pt-BR")}\n\n` +
-              `CONCENTRAÇÃO ATUAL\n${topModules || "Nenhuma posição física encontrada."}\n\n` +
+              `Saldo elegível: ${analysis.totalSaldo.toLocaleString("pt-BR")} pçs\n` +
+              `Paletes estimados: ${analysis.totalPaletes.toLocaleString("pt-BR")}\n` +
+              `Posições ocupadas pelo SKU: ${analysis.totalPosicoes}\n` +
+              `Módulos envolvidos: ${analysis.totalModulos}\n` +
+              `Capacidade teórica dessas posições: ${analysis.capacidadeTotal.toLocaleString("pt-BR")} pçs\n` +
+              `Ocupação média: ${analysis.ocupacaoPercentual.toFixed(1)}%\n` +
+              (analysis.restrictedSaldo > 0
+                ? `Saldo fora da regra padrão (restrito): ${analysis.restrictedSaldo.toLocaleString("pt-BR")} pçs\n`
+                : "") +
+              `\nCONCENTRAÇÃO ATUAL\n${topModules || "Nenhuma posição física elegível encontrada."}\n\n` +
               `CENTRO DE CONCENTRAÇÃO: ${
                 analysis.concentrationModule !== null
                   ? `M${analysis.concentrationModule}`
                   : "não identificado"
               }\n` +
               `PROXIMIDADE: ${nearby}\n\n` +
-              `ORDEM DE DECISÃO\n` +
-              `1. Consolidar o SKU.\n` +
-              `2. Priorizar o módulo de maior concentração.\n` +
-              `3. Avaliar módulos fisicamente próximos.\n` +
-              `4. Reduzir a quantidade de módulos utilizados.\n` +
-              `5. Melhorar ocupação e capacidade.\n` +
-              `6. Respeitar Galpão e restrições.\n` +
-              `7. Evitar dispersão.`;
+              `ORIENTAÇÃO DE ORGANIZAÇÃO\n` +
+              `1. A estratégia analisa somente posições já ocupadas pelo mesmo SKU.\n` +
+              `2. Não indica vaga vazia como destino.\n` +
+              `3. Prioriza a concentração no módulo com maior saldo.\n` +
+              `4. Depois considera módulos fisicamente próximos para reduzir dispersão.\n` +
+              `5. Considera capacidade, ocupação e restrições antes de sugerir uma consolidação.\n\n` +
+              `DIFERENÇA PARA REMONTAGEM\n` +
+              `A estratégia define onde concentrar e como organizar o SKU; a remontagem calcula quanto de uma quantidade informada pode ser absorvido por posições já ocupadas.`;
           }
         }
       } else if (
@@ -4051,6 +4263,7 @@ if (refRaw) {
             palletCount: parseConsultorPalletCount(userMessage),
             cageCount: parseConsultorCageCount(userMessage),
             structure: parseConsultorStructure(userMessage),
+            restriction: parseConsultorRestriction(userMessage),
           });
           responseText =
             "Informe o SKU ou a descrição do produto para eu calcular o melhor plano de armazenamento.";
@@ -4059,6 +4272,7 @@ if (refRaw) {
           const requestedPalletCount = parseConsultorPalletCount(userMessage);
           const requestedCageCount = parseConsultorCageCount(userMessage);
           const requestedType = parseConsultorStructure(userMessage);
+          const requestedRestriction = parseConsultorRestriction(userMessage);
 
           if (!requestedQty && !requestedPalletCount && !requestedCageCount) {
             setPendingConsultorRequest({
@@ -4068,6 +4282,7 @@ if (refRaw) {
               palletCount: null,
               cageCount: null,
               structure: requestedType,
+              restriction: requestedRestriction,
             });
             responseText =
               "Informe a quantidade em peças, paletes ou gaiolas que deseja armazenar.";
@@ -4079,6 +4294,7 @@ if (refRaw) {
               palletCount: requestedPalletCount,
               cageCount: requestedCageCount,
               structure: null,
+              restriction: requestedRestriction,
             });
             responseText =
               "Informe se o armazenamento será em palete (E2) ou gaiola (E3).";
@@ -4094,6 +4310,7 @@ if (refRaw) {
               requestedCageCount,
               structure: requestedType,
               activePhysicalPositionKeys,
+              requestedRestriction,
             });
 
             const product = productsList.find(
@@ -4106,75 +4323,28 @@ if (refRaw) {
                 `O SKU ${skuRecommendation} não possui paletização cadastrada. ` +
                 "Sem esse dado não consigo calcular um plano físico confiável.";
             } else if (result.plans.length === 0) {
-              const unitLabel = requestedType === "3" ? "gaiola(s)" : "posição(ões) de palete";
-              const required = requestedType === "3"
-                ? result.requiredCages
-                : result.requiredPallets;
+              const unitLabel =
+                requestedType === "3"
+                  ? "gaiola(s)"
+                  : "posição(ões) de palete";
+              const required =
+                requestedType === "3"
+                  ? result.requiredCages
+                  : result.requiredPallets;
 
               responseText =
-                `Não encontrei um plano físico completo para ${skuRecommendation}.\n\n` +
-                `Necessidade calculada: ${required.toLocaleString("pt-BR")} ${unitLabel}.\n` +
-                "Considerei somente posições físicas ativas, pares de gaiola A+B / C+D / E+F, " +
-                "compatibilidade de SKU, capacidade e restrições operacionais.";
+                `Não encontrei um plano físico completo para ${skuRecommendation}.
+
+` +
+                `Necessidade calculada: ${required.toLocaleString("pt-BR")} ${unitLabel}.
+` +
+                "Considerei somente posições físicas ativas, livres, sem ocupação física " +
+                "de outro registro e, para gaiolas, somente pares A+B, C+D ou E+F.";
             } else {
-              const concentrationModule = result.concentrationModule;
-              const options = result.plans
-                .map((plan, index) => {
-                  const title =
-                    index === 0
-                      ? "OPÇÃO 1 • RECOMENDADA"
-                      : `OPÇÃO ${index + 1}`;
-
-                  const moduleText = plan.modules.length
-                    ? plan.modules.map(module => `M${module}`).join(", ")
-                    : "não identificado";
-
-                  const reason = index === 0
-                    ? concentrationModule !== null
-                      ? `prioriza a concentração atual do SKU no M${concentrationModule} e reduz a dispersão`
-                      : "melhor combinação disponível entre capacidade, proximidade e concentração"
-                    : "alternativa próxima ao melhor plano, preservando os mesmos critérios";
-
-                  if (requestedType === "3") {
-                    const allocationById = new Map(
-                      plan.allocations.map(item => [item.slot.id, item.quantity])
-                    );
-
-                    return [
-                      title,
-                      `Gaiolas: ${plan.requiredCages}`,
-                      `Paletes: ${plan.requiredPallets}`,
-                      `Módulos: ${moduleText}`,
-                      "",
-                      ...plan.cages.map((cage, cageIndex) => {
-                        const firstQty = allocationById.get(cage.first.id) || 0;
-                        const secondQty = allocationById.get(cage.second.id) || 0;
-
-                        return [
-                          `Gaiola ${cageIndex + 1} • ${cage.key} • M${cage.module}`,
-                          `• ${formatMobileSlot(cage.first)} → ${firstQty.toLocaleString("pt-BR")} pçs`,
-                          `• ${formatMobileSlot(cage.second)} → ${secondQty.toLocaleString("pt-BR")} pçs`,
-                        ].join("\n");
-                      }),
-                      "",
-                      `Por que: ${reason}.`,
-                    ].join("\n");
-                  }
-
-                  return [
-                    title,
-                    `Paletes: ${plan.requiredPallets}`,
-                    `Módulos: ${moduleText}`,
-                    "",
-                    ...plan.allocations.map(
-                      (allocation, allocationIndex) =>
-                        `• Palete ${allocationIndex + 1}: ${formatMobileSlot(allocation.slot)} → ${allocation.quantity.toLocaleString("pt-BR")} pçs`
-                    ),
-                    "",
-                    `Por que: ${reason}.`,
-                  ].join("\n");
-                })
-                .join("\n\n━━━━━━━━━━━━━━━━━━━━\n\n");
+              const plan = result.plans[0];
+              const allocationById = new Map(
+                plan.allocations.map(item => [item.slot.id, item.quantity])
+              );
 
               const needText = requestedQty
                 ? `${requestedQty.toLocaleString("pt-BR")} peças`
@@ -4182,16 +4352,55 @@ if (refRaw) {
                   ? `${requestedPalletCount.toLocaleString("pt-BR")} paletes`
                   : `${requestedCageCount?.toLocaleString("pt-BR") || result.requiredCages} gaiolas`;
 
-              responseText =
-                `PLANO DE ARMAZENAMENTO • ${skuRecommendation}\n` +
-                `${product?.descricao || ""}\n\n` +
-                `Necessidade informada: ${needText}\n` +
-                `Paletização: ${capacity.toLocaleString("pt-BR")} pçs/palete\n` +
-                `Necessidade física: ${result.requiredPallets.toLocaleString("pt-BR")} palete(s)` +
-                (requestedType === "3"
-                  ? ` → ${result.requiredCages.toLocaleString("pt-BR")} gaiola(s)`
-                  : "") +
-                `\n\n${options}`;
+              const reason =
+                result.concentrationModule !== null
+                  ? `prioriza a concentração atual do SKU no M${result.concentrationModule} e reduz a dispersão`
+                  : "prioriza posições físicas ativas e livres com menor dispersão";
+
+              if (requestedType === "3") {
+                responseText =
+                  `PLANO DE ARMAZENAMENTO • ${skuRecommendation}\n` +
+                  `${product?.descricao || ""}\n\n` +
+                  `Necessidade informada: ${needText}\n` +
+                  `Paletização: ${capacity.toLocaleString("pt-BR")} pçs/palete\n` +
+                  `Necessidade física: ${result.requiredPallets.toLocaleString("pt-BR")} palete(s) → ` +
+                  `${result.requiredCages.toLocaleString("pt-BR")} gaiola(s)\n\n` +
+                  `PLANO RECOMENDADO\n` +
+                  plan.cages
+                    .map((cage, index) =>
+                      [
+                        `Gaiola ${index + 1} • ${cage.key} • M${cage.module}`,
+                        `• ${formatMobileSlot(cage.first)} → ${(allocationById.get(cage.first.id) || 0).toLocaleString("pt-BR")} pçs`,
+                        `• ${formatMobileSlot(cage.second)} → ${(allocationById.get(cage.second.id) || 0).toLocaleString("pt-BR")} pçs`,
+                      ].join("\n")
+                    )
+                    .join("\n\n") +
+                  `\n\nMotivo: ${reason}.\n\n` +
+                  `RESERVA\n` +
+                  (plan.reserveCages[0]
+                    ? `${plan.reserveCages[0].key} • M${plan.reserveCages[0].module} • ` +
+                      `${formatMobileSlot(plan.reserveCages[0].first)} + ${formatMobileSlot(plan.reserveCages[0].second)}`
+                    : "Nenhuma gaiola reserva disponível.");
+              } else {
+                responseText =
+                  `PLANO DE ARMAZENAMENTO • ${skuRecommendation}\n` +
+                  `${product?.descricao || ""}\n\n` +
+                  `Necessidade informada: ${needText}\n` +
+                  `Paletização: ${capacity.toLocaleString("pt-BR")} pçs/palete\n` +
+                  `Posições necessárias: ${result.requiredPallets.toLocaleString("pt-BR")}\n\n` +
+                  `PLANO RECOMENDADO\n` +
+                  plan.allocations
+                    .map(
+                      (allocation, index) =>
+                        `${index + 1}. ${formatMobileSlot(allocation.slot)} → ${allocation.quantity.toLocaleString("pt-BR")} pçs`
+                    )
+                    .join("\n") +
+                  `\n\nMotivo: ${reason}.\n\n` +
+                  `POSIÇÃO RESERVA\n` +
+                  (plan.reserveSlots[0]
+                    ? formatMobileSlot(plan.reserveSlots[0])
+                    : "Nenhuma posição reserva disponível.");
+              }
             }
           }
         }
@@ -4204,15 +4413,19 @@ if (refRaw) {
         lower.includes("separacao")
       ) {
         const skuRecommendation = findSkuInChatText(userMessage);
+        const requestedStructure = parseConsultorStructure(userMessage);
+        const requestedRestriction = parseConsultorRestriction(userMessage);
 
         if (!skuRecommendation) {
           setPendingConsultorRequest({
             kind: "separation",
             sku: null,
             quantity: parseConsultorQuantity(userMessage),
+            structure: requestedStructure,
+            restriction: requestedRestriction,
           });
           responseText =
-            "Informe o SKU ou a descrição do produto para eu selecionar o melhor palete.";
+            "Informe o SKU ou a descrição do produto para eu montar a separação.";
         } else {
           const requestedQty = parseConsultorQuantity(userMessage);
 
@@ -4221,45 +4434,58 @@ if (refRaw) {
               kind: "separation",
               sku: skuRecommendation,
               quantity: null,
+              structure: requestedStructure,
+              restriction: requestedRestriction,
             });
             responseText =
               "Informe a quantidade que deseja separar, por exemplo: 300 peças.";
           } else {
             setPendingConsultorRequest(null);
-          const explicitTestRequest = /\bteste\b/i.test(userMessage);
-          const separation = buildSeparationPlan({
-            slots,
-            sku: skuRecommendation,
-            requestedQty,
-            allowTest: explicitTestRequest,
-          });
 
-          if (separation.plan.length === 0) {
-            responseText = `Não encontrei saldo disponível do SKU ${skuRecommendation} para a separação.`;
-          } else {
-            const planText = separation.plan
-              .map(
-                (item, index) =>
-                  `${index + 1}. ${formatMobileSlot(item.slot)} → ${item.quantity.toLocaleString("pt-BR")} pçs` +
-                  `\n   Saldo antes: ${item.slot.saldo.toLocaleString("pt-BR")} pçs` +
-                  `\n   Chacote: ${item.slot.dataChacote || "não registrado"}`
-              )
-              .join("\n\n");
+            const separation = buildSeparationPlan({
+              slots,
+              sku: skuRecommendation,
+              requestedQty,
+              activePhysicalPositionKeys,
+              requestedRestriction,
+              requestedStructure,
+            });
 
-            responseText =
-              `PLANO DE SEPARAÇÃO • ${skuRecommendation}\n\n` +
-              `Solicitado: ${requestedQty.toLocaleString("pt-BR")} pçs\n` +
-              `Disponível: ${separation.totalAvailable.toLocaleString("pt-BR")} pçs\n\n` +
-              `ROTEIRO FIFO • ${explicitTestRequest ? "TESTE SOLICITADO" : "SEM RESTRIÇÃO"}\n${planText}\n\n` +
-              (separation.complete
-                ? "Resultado: quantidade totalmente atendida."
-                : `Atenção: faltam ${separation.remaining.toLocaleString("pt-BR")} pçs.`) +
-              "\n\nCritério: FIFO pelo chacote, depois menor saldo para reduzir a dispersão da separação.";
+            if (separation.plan.length === 0) {
+              responseText =
+                `Não encontrei saldo disponível e elegível do SKU ${skuRecommendation} para a separação.`;
+            } else {
+              const planText = separation.plan
+                .map(
+                  (item, index) =>
+                    `${index + 1}. ${formatMobileSlot(item.slot)} → ${item.quantity.toLocaleString("pt-BR")} pçs` +
+                    `\n   Saldo antes: ${item.slot.saldo.toLocaleString("pt-BR")} pçs` +
+                    `\n   Chacote: ${item.slot.dataChacote || "sem data"}` +
+                    `\n   Tipo: ${item.structure === "3" ? "Gaiola (E3)" : "Palete (E2)"}`
+                )
+                .join("\n\n");
 
-            setRecommendationQueue([]);
+              const restrictionText = requestedRestriction
+                ? `Restrição solicitada: ${requestedRestriction}`
+                : "Restrição: somente nenhuma";
+
+              responseText =
+                `PLANO DE SEPARAÇÃO • ${skuRecommendation}\n\n` +
+                `Solicitado: ${requestedQty.toLocaleString("pt-BR")} pçs\n` +
+                `Disponível elegível: ${separation.totalAvailable.toLocaleString("pt-BR")} pçs\n` +
+                `${restrictionText}\n\n` +
+                `ROTEIRO OPERACIONAL\n${planText}\n\n` +
+                (separation.complete
+                  ? "Resultado: quantidade totalmente atendida."
+                  : `Atenção: faltam ${separation.remaining.toLocaleString("pt-BR")} pçs.`) +
+                "\n\nCritério de seleção: sem data primeiro, depois chacote mais antigo e menor saldo. " +
+                "O roteiro acima foi ordenado fisicamente por estoque, módulo e posição para reduzir deslocamento.";
+
+              setRecommendationQueue([]);
+            }
           }
-          }
-          }
+        }
+
       } else if (
         lower.includes("remont") ||
         lower.includes("consolidar") ||
@@ -4267,58 +4493,126 @@ if (refRaw) {
         lower.includes("liberar posicao")
       ) {
         const requestedSku = findSkuInChatText(userMessage);
-        const grouped: Record<string, WarehouseSlot[]> = {};
+        const requestedQty = parseConsultorQuantity(userMessage);
+        const requestedStructure = parseConsultorStructure(userMessage);
+        const requestedRestriction = parseConsultorRestriction(userMessage);
 
-        slots.forEach(slot => {
-          if (
-            slot.referencia &&
-            slot.saldo > 0 &&
-            (!requestedSku || slot.referencia.toUpperCase() === requestedSku.toUpperCase())
-          ) {
-            if (!grouped[slot.referencia]) grouped[slot.referencia] = [];
-            grouped[slot.referencia].push(slot);
-          }
-        });
-
-        const candidates = Object.entries(grouped)
-          .filter(([, itemSlots]) => itemSlots.length > 1)
-          .map(([skuKey, itemSlots]) => {
-            const product = productsList.find(p => p.referencia.toUpperCase() === skuKey.toUpperCase());
-            const capacity = product?.paletizacao || 0;
-            const total = itemSlots.reduce((sum, slot) => sum + slot.saldo, 0);
-            const required = capacity > 0 ? Math.ceil(total / capacity) : itemSlots.length;
-            return {
-              sku: skuKey,
-              slots: itemSlots,
-              gain: Math.max(0, itemSlots.length - required),
-              capacity,
-            };
-          })
-          .filter(item => item.gain > 0 || Boolean(requestedSku))
-          .sort((a, b) => b.gain - a.gain);
-
-        if (candidates.length === 0) {
-          responseText = "Não encontrei uma oportunidade clara de remontagem/consolidação com os dados registrados.";
-        } else {
-          const best = candidates[0];
-          const ordered = [...best.slots].sort((a, b) => b.saldo - a.saldo);
-          const destinationCount = best.capacity > 0
-            ? Math.max(1, Math.ceil(ordered.reduce((sum, slot) => sum + slot.saldo, 0) / best.capacity))
-            : Math.max(1, ordered.length - best.gain);
-          const destinations = ordered.slice(0, destinationCount);
-          const origins = ordered.slice(destinationCount);
-
+        if (!requestedSku) {
+          setPendingConsultorRequest({
+            kind: "remontagem",
+            sku: null,
+            quantity: requestedQty,
+            structure: requestedStructure,
+            restriction: requestedRestriction,
+          });
           responseText =
-            `MELHOR OPORTUNIDADE DE REMONTAGEM\n\n` +
-            `SKU ${best.sku}\n` +
-            `${best.slots[0].descricao}\n\n` +
-            `Posições atuais: ${best.slots.length}\n` +
-            `Posições necessárias: ${destinations.length}\n` +
-            `Potencial de liberação: ${best.gain} posição(ões)\n\n` +
-            `Priorize manter:\n${destinations.map(slot => `• ${formatMobileSlot(slot)} — ${slot.saldo.toLocaleString("pt-BR")} pçs`).join("\n")}\n\n` +
-            `Candidatas à liberação:\n${origins.length > 0 ? origins.map(slot => `• ${formatMobileSlot(slot)} — ${slot.saldo.toLocaleString("pt-BR")} pçs`).join("\n") : "Nenhuma posição adicional foi calculada."}`;
+            "Informe o SKU ou a descrição do produto que deseja remontar.";
+        } else if (!requestedQty || requestedQty <= 0) {
+          setPendingConsultorRequest({
+            kind: "remontagem",
+            sku: requestedSku,
+            quantity: null,
+            structure: requestedStructure,
+            restriction: requestedRestriction,
+          });
+          responseText =
+            "Informe a quantidade em peças que deseja remontar.";
+        } else {
+          setPendingConsultorRequest(null);
 
-          setRecommendationQueue([]);
+          const remontagem = buildRemontagemPlan({
+            slots,
+            products: productsList,
+            sku: requestedSku,
+            requestedQty,
+            activePhysicalPositionKeys,
+            requestedRestriction,
+            requestedStructure,
+          });
+
+          if (remontagem.capacity <= 0) {
+            responseText =
+              `O SKU ${requestedSku} não possui paletização cadastrada. ` +
+              "Sem esse dado não consigo calcular a capacidade livre das posições.";
+          } else if (remontagem.allocations.length === 0) {
+            responseText =
+              `Não encontrei uma posição ocupada pelo SKU ${requestedSku} que tenha capacidade livre para absorver ${requestedQty.toLocaleString("pt-BR")} pçs.\n\n` +
+              "A remontagem não utiliza posição vazia; ela somente considera posições já ocupadas pelo mesmo SKU e, por padrão, sem restrição.";
+          } else {
+            const allocationText = remontagem.allocations
+              .map(
+                (allocation, index) =>
+                  `${index + 1}. ${formatMobileSlot(allocation.slot)} → adicionar ${allocation.quantity.toLocaleString("pt-BR")} pçs` +
+                  `\n   Saldo atual: ${allocation.slot.saldo.toLocaleString("pt-BR")} pçs` +
+                  `\n   Capacidade livre antes: ${allocation.freeCapacityBefore.toLocaleString("pt-BR")} pçs`
+              )
+              .join("\n\n");
+
+            responseText =
+              `PLANO DE REMONTAGEM • ${remontagem.sku}\n` +
+              `${remontagem.descricao}\n\n` +
+              `Quantidade a remontar: ${requestedQty.toLocaleString("pt-BR")} pçs\n` +
+              `Paletização: ${remontagem.capacity.toLocaleString("pt-BR")} pçs/palete\n` +
+              `Capacidade livre elegível: ${remontagem.totalFreeCapacity.toLocaleString("pt-BR")} pçs\n\n` +
+              `POSIÇÕES DESTINO\n${allocationText}\n\n` +
+              (remontagem.complete
+                ? "Resultado: quantidade totalmente distribuída nas posições ocupadas selecionadas."
+                : `Atenção: ainda faltam ${remontagem.remaining.toLocaleString("pt-BR")} pçs para completar a remontagem.`) +
+              "\n\nCritério: somente posições ocupadas pelo mesmo SKU, com capacidade livre, priorizando concentração e proximidade.";
+          }
+        }
+
+      } else if (
+        lower.includes("concentração") ||
+        lower.includes("concentracao")
+      ) {
+        const concentrationSku = findSkuInChatText(userMessage);
+
+        if (!concentrationSku) {
+          responseText =
+            "Informe o SKU ou a descrição do produto para eu calcular a concentração atual.";
+        } else {
+          const analysis = buildStrategyAnalysis({
+            slots,
+            products: productsList,
+            sku: concentrationSku,
+            activePhysicalPositionKeys,
+            requestedRestriction: parseConsultorRestriction(userMessage),
+          });
+
+          if (analysis.totalSaldo <= 0) {
+            responseText =
+              `Não encontrei saldo elegível do SKU ${concentrationSku} para calcular a concentração atual.`;
+          } else {
+            const topModules = analysis.modules
+              .slice(0, 5)
+              .map(
+                (item, index) =>
+                  `${index + 1}. M${item.modulo} — ${item.saldo.toLocaleString("pt-BR")} pçs ` +
+                  `(${(item.participacao * 100).toFixed(1)}%)`
+              )
+              .join("\n");
+
+            responseText =
+              `CONCENTRAÇÃO ATUAL • ${analysis.sku}\n` +
+              `${analysis.descricao}\n\n` +
+              `Saldo elegível: ${analysis.totalSaldo.toLocaleString("pt-BR")} pçs\n` +
+              `Posições ocupadas: ${analysis.totalPosicoes}\n` +
+              `Módulos envolvidos: ${analysis.totalModulos}\n` +
+              `Paletes estimados: ${analysis.totalPaletes}\n` +
+              `Ocupação média: ${analysis.ocupacaoPercentual.toFixed(1)}%\n\n` +
+              `MÓDULOS COM MAIOR CONCENTRAÇÃO\n${topModules}\n\n` +
+              `Centro de concentração: ${
+                analysis.concentrationModule !== null
+                  ? `M${analysis.concentrationModule}`
+                  : "não identificado"
+              }\n` +
+              `Módulos próximos: ${
+                analysis.nearbyModules.length
+                  ? analysis.nearbyModules.map(module => `M${module}`).join(" → ")
+                  : "não identificado"
+              }`;
+          }
         }
       } else if (
       lower.includes("pulverizado")
@@ -4777,86 +5071,138 @@ if (refRaw) {
     
     }
           
-      else if (lower.includes("item") || lower.includes("produto") || lower.includes("mais estocado") || lower.includes("maior saldo")) {
-        const activeItemMap: Record<string, { qty: number, desc: string }> = {};
-        slots.forEach(s => {
-          if (s.saldo > 0) {
-            activeItemMap[s.referencia] = {
-              qty: (activeItemMap[s.referencia]?.qty || 0) + s.saldo,
-              desc: s.descricao
+      else if (
+        lower.includes("item") ||
+        lower.includes("produto") ||
+        lower.includes("mais estocado") ||
+        lower.includes("maior saldo")
+      ) {
+        const topMatch = lower.match(/top\s*(\d{1,2})/);
+        const requestedTop = topMatch ? Math.min(10, Math.max(1, Number(topMatch[1]))) : 5;
+
+        const activeItemMap: Record<
+          string,
+          {
+            qty: number;
+            desc: string;
+            positions: number;
+            modules: Set<string>;
+          }
+        > = {};
+
+        slots.forEach(slot => {
+          if (
+            slot.saldo <= 0 ||
+            !slot.referencia ||
+            !isStandardConsultorSlot(slot) ||
+            !isPhysicalPositionActive(slot, activePhysicalPositionKeys)
+          ) {
+            return;
+          }
+
+          const skuKey = slot.referencia.toUpperCase();
+          if (!activeItemMap[skuKey]) {
+            activeItemMap[skuKey] = {
+              qty: 0,
+              desc: slot.descricao,
+              positions: 0,
+              modules: new Set<string>(),
             };
           }
+
+          activeItemMap[skuKey].qty += slot.saldo;
+          activeItemMap[skuKey].positions += 1;
+          activeItemMap[skuKey].modules.add(
+            `${slot.estoque}-${slot.modulo}`
+          );
         });
 
-        const sorted = Object.entries(activeItemMap).sort((a,b) => b[1].qty - a[1].qty);
+        const sorted = Object.entries(activeItemMap)
+          .sort((a, b) => b[1].qty - a[1].qty)
+          .slice(0, requestedTop);
+
         if (sorted.length > 0) {
-          responseText = `O produto mais estocado logicamente no sistema é o SKU **${sorted[0][0]}** (${sorted[0][1].desc}) com **${sorted[0][1].qty.toLocaleString()} peças** no total, divididas e consolidadas nas estruturas físicas.`;
+          const total = Object.values(activeItemMap).reduce(
+            (sum, item) => sum + item.qty,
+            0
+          );
+
+          const ranking = sorted
+            .map(([sku, data], index) => {
+              const product = productsList.find(
+                item => item.referencia.toUpperCase() === sku
+              );
+              const palletization = Number(product?.paletizacao || 0);
+              const pallets =
+                palletization > 0
+                  ? Math.ceil(data.qty / palletization)
+                  : 0;
+              const share = total > 0 ? (data.qty / total) * 100 : 0;
+
+              return (
+                `${index + 1}. ${sku} • ${data.desc}\n` +
+                `   ${data.qty.toLocaleString("pt-BR")} pçs` +
+                (pallets > 0 ? ` • ${pallets} paletes est.` : "") +
+                ` • ${data.positions} posições` +
+                ` • ${data.modules.size} módulos` +
+                ` • ${share.toFixed(1)}% do saldo elegível`
+              );
+            })
+            .join("\n\n");
+
+          responseText =
+            `TOP ${sorted.length} ITENS MAIS ESTOCADOS\n\n${ranking}`;
         } else {
-          responseText = "Não existem produtos com saldo em estoque neste momento.";
+          responseText =
+            "Não existem produtos com saldo elegível em posições sem restrição.";
         }
       } else if (lower.includes("diverg") || lower.includes("erro") || lower.includes("aberto")) {
         const abertas = divergencias.filter(d => d.status === "Aberta");
+
         if (abertas.length > 0) {
-          responseText = `Possuímos atualmente **${abertas.length} divergências em aberto**. Segue o resumo das localizações:\n\n` +
-            abertas.map(a => `• **${a.tipoDivergencia}** em: *${a.estoque} • Módulo ${a.modulo} • Gaveta: ${a.posicao || "Rua"}* (SKU: ${a.refNova})`).join("\n");
+          responseText =
+            `DIVERGÊNCIAS EM ABERTO • ${abertas.length}\n\n` +
+            abertas
+              .map(
+                a =>
+                  `• ${a.tipoDivergencia} — E${a.estoque} M${a.modulo} ${a.posicao || "Rua"} — SKU ${a.refNova || a.refAtual || "-"}`
+              )
+              .join("\n");
         } else {
-          responseText = "Excelente! Todas as divergências foram resolvidas e sincronizadas com a base física.";
+          responseText =
+            "Não existem divergências em aberto.";
         }
-      } else if (lower.includes("indique") || lower.includes("recomenda") || lower.includes("livre") || lower.includes("colocar")) {
-        const requestedSku = findSkuInChatText(userMessage);
-        const requestedQty = parseConsultorQuantity(userMessage);
-        const requestedType = parseConsultorStructure(userMessage);
-
-        if (!requestedSku) {
-          responseText =
-            "Para indicar uma vaga sem escolher aleatoriamente, preciso do SKU ou da descrição do produto.";
-        } else if (!requestedQty) {
-          responseText =
-            `Para o SKU ${requestedSku}, informe também a quantidade que deseja armazenar para eu calcular a capacidade necessária.`;
-        } else if (!requestedType) {
-          responseText =
-            "Informe se o armazenamento será em palete (E2) ou gaiola (E3) para eu montar o plano físico.";
-        } else {
-          const planResult = buildStoragePlans({
-            slots,
-            products: productsList,
-            sku: requestedSku,
-            requestedQty,
-            structure: requestedType,
-            activePhysicalPositionKeys,
-          });
-
-          if (planResult.plans.length === 0) {
-            responseText =
-              `Não encontrei uma vaga/plano válido para ${requestedSku} com ${requestedQty.toLocaleString("pt-BR")} peças. ` +
-              "Não vou selecionar uma posição vazia apenas por estar livre.";
-          } else {
-            const best = planResult.plans[0];
-            const first = best.allocations[0];
-            responseText =
-              `RECOMENDAÇÃO DE ARMAZENAMENTO • ${requestedSku}
-
-` +
-              `Melhor plano: ${formatMobileSlot(first.slot)} → ${first.quantity.toLocaleString("pt-BR")} pçs
-` +
-              `Módulos envolvidos: ${best.modules.map(module => `M${module}`).join(", ")}
-` +
-              `Motivo: consolidação do SKU, proximidade da concentração e melhor aproveitamento da capacidade.
-
-` +
-              "A recomendação foi calculada a partir das posições físicas ativas; nenhuma vaga foi escolhida apenas por estar vazia.";
-          }
-        }
+      } else if (
+        lower.includes("indique") ||
+        lower.includes("recomenda") ||
+        lower.includes("livre") ||
+        lower.includes("colocar")
+      ) {
+        responseText =
+          "Para recomendar um endereço operacional, preciso do SKU, da quantidade e, no caso de armazenagem, do tipo físico (palete E2 ou gaiola E3). " +
+          "Não vou indicar uma vaga apenas porque existe uma linha vazia no cadastro.";
       } else {
-        responseText = `Entendido. Registrei sua solicitação operacional. O lote sequencial ativo no momento está mapeado e pronto para consolidação lógica. Você pode consultar o Gêmeo Digital ou me enviar novas perguntas.`;
+        responseText =
+          "Não identifiquei uma operação determinística para essa pergunta. " +
+          "Use uma pergunta pronta ou informe SKU, quantidade e objetivo operacional.";
       }
 
+    const isDeterministicConsultorIntent =
+      isStorageIntent ||
+      isSeparationIntent ||
+      isRemontagemIntent ||
+      isChacoteQuantityIntent(userMessage) ||
+      lower.includes("estratégia") ||
+      lower.includes("estrategia") ||
+      lower.includes("concentração") ||
+      lower.includes("concentracao") ||
+      lower.includes("mais estocado") ||
+      lower.includes("maior saldo") ||
+      lower.includes("diverg");
+
     if (
-      !isOperationalConsultorIntent &&
-      (
-        shouldUseGenerativeConsultor(userMessage) ||
-        responseText.startsWith("Entendido. Registrei sua solicitação operacional.")
-      )
+      shouldUseGenerativeConsultor(userMessage) &&
+      !isDeterministicConsultorIntent
     ) {
       const aiResponse = await requestGenerativeConsultor(
         userMessage,
@@ -4864,11 +5210,16 @@ if (refRaw) {
       );
 
       if (aiResponse) {
-        responseText = aiResponse;
+        responseText = cleanConsultorDisplayText(aiResponse);
       }
     }
 
-    setChatMessages(prev => [...prev, { sender: "system", text: responseText }]);
+    responseText = cleanConsultorDisplayText(responseText);
+
+    setChatMessages(prev => [
+      ...prev,
+      { sender: "system", text: responseText },
+    ]);
   };
 
 
@@ -4971,24 +5322,34 @@ if (refRaw) {
       case "administrador":
         return true;
       case "lideranca":
-        return ["dashboard", "endereçamento", "lançamento", "histórico", "divergências", "base"].includes(tab);
+        return ["dashboard", "endereçamento", "lançamento", "histórico", "divergências", "base", "ai"].includes(tab);
       case "apoio":
-        return ["endereçamento", "lançamento", "histórico", "divergências"].includes(tab);
+        return ["endereçamento", "lançamento", "histórico", "divergências", "ai"].includes(tab);
       case "producao":
-        return ["endereçamento"].includes(tab);
+        return ["endereçamento", "ai"].includes(tab);
       case "visualizador":
-        return ["dashboard", "endereçamento", "lançamento", "histórico", "divergências", "base"].includes(tab);
+        return ["dashboard", "endereçamento", "lançamento", "histórico", "divergências", "base", "ai"].includes(tab);
       default:
         return false;
     }
   };
 
-  const mobileAllowedTabs =
-    role === "producao"
-      ? ["endereçamento"]
-      : isAdmin(currentUser.role)
-        ? ["endereçamento", "lançamento", "divergências", "histórico", "ai", "base", "configuracao"]
-        : ["endereçamento", "lançamento", "divergências", "histórico", "ai"];
+  const mobileAllowedTabs = (() => {
+    switch (role) {
+      case "administrador":
+        return ["endereçamento", "lançamento", "divergências", "histórico", "ai", "base", "configuracao"];
+      case "producao":
+        return ["endereçamento", "ai"];
+      case "lideranca":
+        return ["endereçamento", "lançamento", "divergências", "histórico", "ai"];
+      case "apoio":
+        return ["endereçamento", "lançamento", "divergências", "histórico", "ai"];
+      case "visualizador":
+        return ["endereçamento", "lançamento", "divergências", "histórico", "ai"];
+      default:
+        return ["endereçamento"];
+    }
+  })();
 
   const mobileActiveTab = mobileAllowedTabs.includes(activeTab)
     ? activeTab
@@ -5459,7 +5820,7 @@ const pct = total > 0 ? (occupied / total) * 100 : 0;
                       className="text-xs text-indigo-600 hover:text-indigo-800 transition font-bold cursor-pointer flex items-center gap-1.5 font-sans uppercase tracking-wider text-[11px]"
                     >
                       <Download className="w-3.5 h-3.5 text-indigo-500" />
-                      Exportar Endereçamento (Excel)
+                      Exportar Endereçamento (EXCEL)
                     </button>
                   )}
                     <button 
@@ -5605,7 +5966,28 @@ const pct = total > 0 ? (occupied / total) * 100 : 0;
                         <th className="py-3 px-4 font-bold text-center">Restrição</th>
                         <th className="py-3 px-4 font-bold">Descrição do Item</th>
                         <th className="py-3 px-4 font-bold text-right">Saldo Logístico (pçs)</th>
-                        <th className="py-3 px-4 font-bold">Data Chacote</th>
+                        <th className="py-3 px-4 font-bold">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setSearchChacoteSort(current =>
+                                current === "none" ? "asc" : current === "asc" ? "desc" : "none"
+                              );
+                              setSearchPage(1);
+                            }}
+                            className="inline-flex items-center gap-1 hover:text-indigo-700 transition"
+                            title="Ordenar por Data Chacote: sem data primeiro, depois mais antiga"
+                          >
+                            Data Chacote
+                            <span className="font-black">
+                              {searchChacoteSort === "asc"
+                                ? "↑"
+                                : searchChacoteSort === "desc"
+                                  ? "↓"
+                                  : "↕"}
+                            </span>
+                          </button>
+                        </th>
                         <th className="py-3 px-4 font-bold">Última mov.</th>
                         <th className="py-3 px-4 font-bold">Responsável</th>
                         <th className="py-3 px-4 font-bold">Observação</th>
@@ -6938,33 +7320,34 @@ const pct = total > 0 ? (occupied / total) * 100 : 0;
 
                 {/* Quick questions recommendations block in chat */}
                 <div className="w-full md:w-64 border border-slate-200 rounded-xl p-5 bg-slate-50 space-y-4">
-                  <span className="text-[10px] text-indigo-605 text-indigo-600 font-extrabold block uppercase tracking-wider font-sans">Atalhos do Consultor</span>
+                  <span className="text-[10px] text-indigo-600 font-extrabold block uppercase tracking-wider font-sans">
+                    Atalhos do Consultor
+                  </span>
                   <p className="text-xs text-slate-400 leading-normal font-medium">
-                    Perguntas estratégicas para análise operacional e tomada de decisão:
+                    Perguntas prontas para acelerar consultas operacionais e análises.
                   </p>
 
                   <div className="space-y-2 text-[11px] font-sans">
                     {[
                       ["📍", "Onde devo armazenar este SKU?"],
-                      ["📍", "Onde devo armazenar 450 peças do SKU 23101G no palete?"],
-                      ["📦", "Onde separar 300 peças do SKU 23101G?"],
-                      ["🧺", "Onde devo armazenar 5 gaiolas do SKU 23101G?"],
-                      ["📦", "Onde devo armazenar 5 paletes do SKU 23101G?"],
-                      ["💡", "Qual seria a melhor estratégia para organizar este SKU?"],
+                      ["📦", "Onde separar este SKU?"],
+                      ["🔄", "Onde devo remontar este SKU?"],
+                      ["💡", "Qual a melhor estratégia para organizar este SKU?"],
                       ["📊", "Qual a concentração atual deste SKU?"],
+                      ["🏆", "Quais os 5 itens mais estocados?"],
                       ["⚠️", "Existem divergências em aberto?"],
-                      ["🏆", "Qual é o item mais estocado?"],
                     ].map(([icon, prompt]) => (
                       <button
                         key={prompt}
                         onClick={() => setChatInput(prompt)}
-                        className="w-full text-left bg-white hover:bg-slate-100 p-2 border border-slate-200 rounded-lg transition font-bold text-slate-700"
+                        className="w-full text-left bg-white hover:bg-slate-100 p-2.5 border border-slate-200 rounded-lg transition font-bold text-slate-700"
                       >
                         {icon} {prompt}
                       </button>
                     ))}
                   </div>
                 </div>
+
 
               </div>
 
