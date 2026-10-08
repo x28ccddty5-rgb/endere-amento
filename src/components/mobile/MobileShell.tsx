@@ -2246,7 +2246,7 @@ export function MobileShell({
         {activeTab === "ai" && (
           <section className="flex min-h-full flex-col">
             <div className="mb-3">
-              <h1 className="text-xl font-black tracking-tight">Consultor de Estoque</h1>
+              <h1 className="text-xl font-black tracking-tight">Celso • Consultor de Estoque</h1>
               <p className="mt-1 text-xs font-medium text-slate-500">
                 Inteligência operacional baseada nos dados registrados.
               </p>
@@ -2314,7 +2314,7 @@ export function MobileShell({
                     onSendChatMessage();
                   }
                 }}
-                placeholder="Pergunte ao Consultor..."
+                placeholder="Pergunte ao Celso..."
                 enterKeyHint="send"
                 className="h-12 min-w-0 flex-1 rounded-xl border border-slate-200 bg-white px-4 text-base font-semibold outline-none focus:border-indigo-500"
               />

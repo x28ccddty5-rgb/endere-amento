@@ -1,10 +1,11 @@
 import React, { useState } from "react";
-import { WarehouseSlot } from "../types";
+import { HistoricoMov, WarehouseSlot } from "../types";
 interface SkuAnalysisDrawerProps {
   isOpen: boolean;
   onClose: () => void;
   uniqueSKUs: number;
   slots: WarehouseSlot[];
+  history: HistoricoMov[];
 }
 
 export function SkuAnalysisDrawer({
@@ -12,7 +13,11 @@ export function SkuAnalysisDrawer({
   onClose,
   uniqueSKUs,
   slots,
+  history,
 }: SkuAnalysisDrawerProps) {
+  const [selectedRanking, setSelectedRanking] =
+    useState<10 | 20 | null>(null);
+
   if (!isOpen) return null;
 
     const totalSaldo = slots.reduce(
@@ -74,6 +79,82 @@ export function SkuAnalysisDrawer({
     (acc, sku) => acc + sku.percentual,
     0
   );
+
+  const abcAnalysis = (() => {
+    const movementBySku = new Map<string, {
+      referencia: string;
+      descricao: string;
+      movimentacao: number;
+    }>();
+
+    history.forEach(movement => {
+      const referencia = (movement.referencia || "").trim().toUpperCase();
+      const quantidade = Math.abs(Number(movement.quantidade) || 0);
+
+      if (!referencia || quantidade <= 0) return;
+
+      const current = movementBySku.get(referencia) || {
+        referencia,
+        descricao:
+          slots.find(
+            slot => String(slot.referencia || "").trim().toUpperCase() === referencia
+          )?.descricao || "-",
+        movimentacao: 0,
+      };
+
+      current.movimentacao += quantidade;
+      movementBySku.set(referencia, current);
+    });
+
+    const ranking = [...movementBySku.values()]
+      .sort((a, b) => b.movimentacao - a.movimentacao);
+
+    const totalMovimentacao = ranking.reduce(
+      (sum, item) => sum + item.movimentacao,
+      0
+    );
+
+    let acumulado = 0;
+
+    const classified = ranking.map(item => {
+      acumulado += item.movimentacao;
+      const percentualAcumulado =
+        totalMovimentacao > 0
+          ? (acumulado / totalMovimentacao) * 100
+          : 0;
+
+      return {
+        ...item,
+        percentual: totalMovimentacao > 0
+          ? (item.movimentacao / totalMovimentacao) * 100
+          : 0,
+        percentualAcumulado,
+        classe:
+          percentualAcumulado <= 70
+            ? "A"
+            : percentualAcumulado <= 90
+              ? "B"
+              : "C",
+      };
+    });
+
+    return {
+      ranking: classified,
+      totalMovimentacao,
+      classeA: classified.filter(item => item.classe === "A").length,
+      classeB: classified.filter(item => item.classe === "B").length,
+      classeC: classified.filter(item => item.classe === "C").length,
+      shareA: classified
+        .filter(item => item.classe === "A")
+        .reduce((sum, item) => sum + item.percentual, 0),
+      shareB: classified
+        .filter(item => item.classe === "B")
+        .reduce((sum, item) => sum + item.percentual, 0),
+      shareC: classified
+        .filter(item => item.classe === "C")
+        .reduce((sum, item) => sum + item.percentual, 0),
+    };
+  })();
   
   const remainingPercent =
   100 - top20Percent;
@@ -154,9 +235,6 @@ export function SkuAnalysisDrawer({
         },
       ];
   
-  const [selectedRanking, setSelectedRanking] =
-  useState<10 | 20 | null>(null);
-
   const exportRankingCsv = (
   ranking: typeof top10Skus,
   nomeArquivo: string
@@ -348,29 +426,107 @@ export function SkuAnalysisDrawer({
           </section>
 
           <section className="bg-white border rounded-xl p-5 mt-6">
-
             <h3 className="text-lg font-bold mb-4">
-              3. Curva ABC
+              3. Curva ABC por Movimentação
             </h3>
-          
-            <div className="border rounded-xl p-5 bg-amber-50 border-amber-200">
-          
-              <div className="text-xl font-bold text-amber-700">
-                🚧 Em Consolidação
+
+            {abcAnalysis.totalMovimentacao <= 0 ? (
+              <div className="border rounded-xl p-5 bg-slate-50">
+                <div className="font-bold text-slate-800">
+                  Sem movimentações suficientes
+                </div>
+                <p className="text-sm text-slate-600 mt-2">
+                  A Curva ABC precisa de movimentações registradas para
+                  classificar os SKUs por relevância operacional.
+                </p>
               </div>
-          
-              <p className="text-sm text-slate-700 mt-3">
-                A análise ABC depende do acúmulo de histórico operacional para classificar os SKUs de acordo com sua relevância e movimentação.
-              </p>
-          
-              <p className="text-sm text-slate-700 mt-2">
-                Conforme o histórico for sendo construído, o sistema passará a identificar automaticamente os produtos Classe A, B e C.
-              </p>
-          
-            </div>
-          
+            ) : (
+              <>
+                <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+                  <div className="border rounded-xl p-4 bg-slate-50">
+                    <div className="text-xs uppercase text-slate-500">
+                      Movimentação analisada
+                    </div>
+                    <div className="text-3xl font-black text-slate-800 mt-1">
+                      {abcAnalysis.totalMovimentacao.toLocaleString("pt-BR")}
+                    </div>
+                    <div className="text-xs text-slate-500 mt-1">
+                      peças movimentadas no histórico carregado
+                    </div>
+                  </div>
+
+                  <div className="border rounded-xl p-4">
+                    <div className="text-xs uppercase text-slate-500">
+                      Classe A
+                    </div>
+                    <div className="text-3xl font-black text-red-600 mt-1">
+                      {abcAnalysis.classeA}
+                    </div>
+                    <div className="text-xs text-slate-500 mt-1">
+                      {abcAnalysis.shareA.toFixed(1)}% da movimentação
+                    </div>
+                  </div>
+
+                  <div className="border rounded-xl p-4">
+                    <div className="text-xs uppercase text-slate-500">
+                      Classe B
+                    </div>
+                    <div className="text-3xl font-black text-amber-600 mt-1">
+                      {abcAnalysis.classeB}
+                    </div>
+                    <div className="text-xs text-slate-500 mt-1">
+                      {abcAnalysis.shareB.toFixed(1)}% da movimentação
+                    </div>
+                  </div>
+
+                  <div className="border rounded-xl p-4">
+                    <div className="text-xs uppercase text-slate-500">
+                      Classe C
+                    </div>
+                    <div className="text-3xl font-black text-slate-600 mt-1">
+                      {abcAnalysis.classeC}
+                    </div>
+                    <div className="text-xs text-slate-500 mt-1">
+                      {abcAnalysis.shareC.toFixed(1)}% da movimentação
+                    </div>
+                  </div>
+                </div>
+
+                <div className="mt-4 border rounded-xl overflow-hidden">
+                  <div className="grid grid-cols-[80px_1fr_140px_120px_120px] bg-slate-100 px-4 py-2 text-[10px] font-bold uppercase text-slate-600">
+                    <div>Classe</div>
+                    <div>SKU</div>
+                    <div>Movimentação</div>
+                    <div>Participação</div>
+                    <div>Acumulado</div>
+                  </div>
+
+                  <div className="max-h-[320px] overflow-auto">
+                    {abcAnalysis.ranking.slice(0, 30).map(item => (
+                      <div
+                        key={item.referencia}
+                        className="grid grid-cols-[80px_1fr_140px_120px_120px] px-4 py-2 border-t text-xs"
+                      >
+                        <div className="font-black">{item.classe}</div>
+                        <div className="font-mono">{item.referencia}</div>
+                        <div>{item.movimentacao.toLocaleString("pt-BR")} pçs</div>
+                        <div>{item.percentual.toFixed(1)}%</div>
+                        <div>{item.percentualAcumulado.toFixed(1)}%</div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <p className="text-xs text-slate-500 mt-3">
+                  Critério: Pareto por volume absoluto de movimentações do
+                  histórico carregado. Classe A até 70% acumulado, B até 90% e
+                  C acima de 90%. A classificação é operacional e deve ser
+                  recalculada conforme a janela histórica disponível.
+                </p>
+              </>
+            )}
           </section>
-          
+
           {selectedRanking && (
 
             <section className="bg-white border rounded-xl p-5 mt-6">

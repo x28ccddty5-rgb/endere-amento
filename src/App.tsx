@@ -75,6 +75,34 @@ const HISTORY_PAGE_SIZE = 1000;
 const HISTORY_DASHBOARD_DAYS = 60;
 const PRODUCT_SEARCH_PAGE_SIZE = 100;
 
+const CONSULTOR_QUICK_QUESTIONS = {
+  "Operação e Endereçamento": [
+    ["📍", "Onde devo armazenar este SKU?"],
+    ["📦", "Onde separar este SKU?"],
+    ["🔄", "Onde devo remontar este SKU?"],
+    ["💡", "Qual a melhor estratégia para organizar este SKU?"],
+    ["📊", "Qual a concentração atual deste SKU?"],
+  ],
+  "Qualidade e Chacote": [
+    ["📅", "Quantas peças tenho por chacote até 07/2026?"],
+    ["📆", "Quantas peças tenho entre 01/07/2026 e 31/07/2026?"],
+    ["🔎", "Quantas peças tenho do SKU 23101G até julho de 2026?"],
+    ["🗓️", "Quantas peças do SKU 23101G tenho de 01/07/2026 até 31/07/2026?"],
+  ],
+  "PCP e Planejamento": [
+    ["📈", "Qual a situação geral do estoque hoje?"],
+    ["🏭", "Qual a capacidade e tendência do estoque?"],
+    ["⏳", "Quais SKUs estão sem rotatividade há mais de 30 dias?"],
+    ["🏆", "Quais os 5 itens mais estocados?"],
+  ],
+  "Diretoria e Gestão": [
+    ["🧭", "Faça um resumo executivo do setor."],
+    ["⚠️", "Existem divergências em aberto?"],
+    ["📊", "Quais são os principais riscos do estoque hoje?"],
+    ["📌", "Quais são os principais pontos de atenção do setor?"],
+  ],
+} as const;
+
 interface LancamentoDraftRecord {
   user_id: string;
   rows: LancamentoRow[];
@@ -1710,7 +1738,26 @@ const deleteProduct = async (
   const [searchModulo, setSearchModulo] = useState("");
   const [searchPosicao, setSearchPosicao] = useState("");
   const [searchPage, setSearchPage] = useState(1);
-  const [searchChacoteSort, setSearchChacoteSort] = useState<"none" | "asc" | "desc">("none");
+
+  type SearchSortField =
+    | "estoque"
+    | "modulo"
+    | "posicao"
+    | "referencia"
+    | "restricao"
+    | "descricao"
+    | "saldo"
+    | "dataChacote"
+    | "ultimaMov"
+    | "responsavel"
+    | "observacao";
+
+  type SearchSortRule = {
+    field: SearchSortField;
+    direction: "asc" | "desc";
+  };
+
+  const [searchSorts, setSearchSorts] = useState<SearchSortRule[]>([]);
 
   const [somenteAcimaPaletizacao, setSomenteAcimaPaletizacao] = useState(false);
 
@@ -3088,7 +3135,7 @@ if (refRaw) {
     setSearchObservacao("");
     setSearchModulo("");
     setSearchPosicao("");
-    setSearchChacoteSort("none");
+    setSearchSorts([]);
     setSomenteAcimaPaletizacao(false);
     setSearchPage(1);
   };
@@ -3098,6 +3145,121 @@ if (refRaw) {
     () => new globalThis.Map(productsList.map(product => [product.referencia, product])),
     [productsList]
   );
+
+  const toggleSearchSort = (field: SearchSortField) => {
+    setSearchSorts(current => {
+      const existingIndex = current.findIndex(rule => rule.field === field);
+
+      if (existingIndex === -1) {
+        return [...current, { field, direction: "asc" }];
+      }
+
+      const existing = current[existingIndex];
+
+      if (existing.direction === "asc") {
+        return current.map((rule, index) =>
+          index === existingIndex
+            ? { ...rule, direction: "desc" as const }
+            : rule
+        );
+      }
+
+      return current.filter((_, index) => index !== existingIndex);
+    });
+
+    setSearchPage(1);
+  };
+
+  const getSearchSortValue = (
+    slot: WarehouseSlot,
+    field: SearchSortField
+  ): string | number | null => {
+    switch (field) {
+      case "estoque":
+        return Number(String(slot.estoque).replace(/\D/g, "")) || 0;
+      case "modulo":
+        return Number(String(slot.modulo).replace(/^[RM]/i, "")) || 0;
+      case "posicao":
+        return String(slot.posicao || "").trim().toUpperCase() || null;
+      case "referencia":
+        return String(slot.referencia || "").trim().toUpperCase() || null;
+      case "restricao":
+        return String(slot.restricao || "nenhuma").trim().toLowerCase() || null;
+      case "descricao":
+        return String(slot.descricao || "").trim() || null;
+      case "saldo":
+        return Number(slot.saldo) || 0;
+      case "dataChacote":
+        return parseChacoteDate(slot.dataChacote);
+      case "ultimaMov": {
+        const date = parseChacoteDate(slot.ultimaData);
+        if (date === null) return null;
+
+        const timeMatch = String(slot.ultimaHora || "").match(/^(\d{1,2}):(\d{2})/);
+        const minutes = timeMatch
+          ? Number(timeMatch[1]) * 60 + Number(timeMatch[2])
+          : 0;
+
+        return date + minutes * 60 * 1000;
+      }
+      case "responsavel":
+        return String(slot.ultimoResponsavel || "").trim() || null;
+      case "observacao":
+        return String(slot.observacao || "").trim() || null;
+      default:
+        return null;
+    }
+  };
+
+  const compareSearchSortValues = (
+    a: string | number | null,
+    b: string | number | null,
+    direction: "asc" | "desc",
+    field: SearchSortField
+  ): number => {
+    if (a === null && b === null) return 0;
+
+    // Para a ordenação operacional, valores sem data ficam primeiro na ordem
+    // ascendente. Isso é especialmente importante para Data Chacote.
+    if (a === null) return direction === "asc" ? -1 : 1;
+    if (b === null) return direction === "asc" ? 1 : -1;
+
+    let result = 0;
+
+    if (typeof a === "number" && typeof b === "number") {
+      result = a - b;
+    } else if (field === "posicao") {
+      const aText = String(a);
+      const bText = String(b);
+      const aMatch = aText.match(/^([A-Z]+)?(\d+(?:[.,]\d+)?)?(.*)$/);
+      const bMatch = bText.match(/^([A-Z]+)?(\d+(?:[.,]\d+)?)?(.*)$/);
+
+      if (aMatch && bMatch) {
+        result =
+          (aMatch[1] || "").localeCompare(bMatch[1] || "", "pt-BR") ||
+          ((Number((aMatch[2] || "0").replace(",", ".")) || 0) -
+            (Number((bMatch[2] || "0").replace(",", ".")) || 0)) ||
+          aMatch[3].localeCompare(bMatch[3], "pt-BR", { numeric: true });
+      } else {
+        result = aText.localeCompare(bText, "pt-BR", { numeric: true });
+      }
+    } else {
+      result = String(a).localeCompare(String(b), "pt-BR", {
+        numeric: true,
+        sensitivity: "base",
+      });
+    }
+
+    return direction === "asc" ? result : -result;
+  };
+
+  const getSearchSortIndicator = (field: SearchSortField): string => {
+    const index = searchSorts.findIndex(rule => rule.field === field);
+    if (index === -1) return "↕";
+
+    const rule = searchSorts[index];
+    return `${rule.direction === "asc" ? "↑" : "↓"}${searchSorts.length > 1 ? ` ${index + 1}` : ""}`;
+  };
 
   const filteredSlots = useMemo(() => {
     const normalizedSearchRef = searchRef.trim().toLowerCase();
@@ -3182,35 +3344,27 @@ if (refRaw) {
       );
     });
 
-    if (searchChacoteSort === "none") {
+    if (searchSorts.length === 0) {
       return filtered;
     }
 
-    return [...filtered].sort((a, b) => {
-      const aTime = parseChacoteDate(a.dataChacote);
-      const bTime = parseChacoteDate(b.dataChacote);
+    return filtered
+      .map((slot, index) => ({ slot, index }))
+      .sort((a, b) => {
+        for (const rule of searchSorts) {
+          const comparison = compareSearchSortValues(
+            getSearchSortValue(a.slot, rule.field),
+            getSearchSortValue(b.slot, rule.field),
+            rule.direction,
+            rule.field
+          );
 
-      // No modo "mais antiga", endereços sem data ficam primeiro.
-      // No modo "mais recente", os sem data ficam por último.
-      if (aTime === null && bTime !== null) {
-        return searchChacoteSort === "asc" ? -1 : 1;
-      }
-      if (aTime !== null && bTime === null) {
-        return searchChacoteSort === "asc" ? 1 : -1;
-      }
+          if (comparison !== 0) return comparison;
+        }
 
-      if (aTime !== null && bTime !== null && aTime !== bTime) {
-        return searchChacoteSort === "asc"
-          ? aTime - bTime
-          : bTime - aTime;
-      }
-
-      return (
-        Number(a.estoque) - Number(b.estoque) ||
-        Number(a.modulo.replace(/^[RM]/i, "")) - Number(b.modulo.replace(/^[RM]/i, "")) ||
-        a.posicao.localeCompare(b.posicao, "pt-BR", { numeric: true })
-      );
-    });
+        return a.index - b.index;
+      })
+      .map(item => item.slot);
   }, [
     slots,
     productsByReference,
@@ -3222,7 +3376,7 @@ if (refRaw) {
     searchObservacao,
     searchModulo,
     searchPosicao,
-    searchChacoteSort,
+    searchSorts,
     somenteAcimaPaletizacao
   ]);
 
@@ -3595,13 +3749,21 @@ if (refRaw) {
 };
     
   // --- CONVERSATIONAL AI MODEL CO-PILOT ---
-  const [chatMessages, setChatMessages] = useState([
-    { 
-      sender: "system", 
-      text: "Olá! Sou o Consultor de Estoque da Porto Brasil. Como as versões Básica e Avançada estão interligadas, monitoro o layout físico de E1, E2, E3 em tempo real. Me pergunte coisas como:\n- 'Qual o item mais estocado?'\n- 'Existem divergências em aberto?'\n- 'Indique uma vaga para colocar 111'"
+  type ConsultorChatMessage = {
+    sender: "system" | "user";
+    text: string;
+    kind?: "executive";
+  };
+
+  const [chatMessages, setChatMessages] = useState<ConsultorChatMessage[]>([
+    {
+      sender: "system",
+      text: "Olá! Sou o Celso. Estou conectado aos dados reais dos Estoques E1, E2 e E3 e posso analisar estoque, endereçamento, chacotes, capacidade, movimentações e indicadores. Escolha um tema, selecione uma pergunta ou escreva livremente. Se faltar contexto, vou pedir apenas o necessário."
     }
   ]);
   const [chatInput, setChatInput] = useState("");
+  const [consultorQuickTopic, setConsultorQuickTopic] = useState<keyof typeof CONSULTOR_QUICK_QUESTIONS>("Operação e Endereçamento");
+  const [consultorQuickQuestion, setConsultorQuickQuestion] = useState("");
   const [recommendationQueue, setRecommendationQueue] = useState<string[]>([]);
   const [chatAiLoading, setChatAiLoading] = useState(false);
   type PendingConsultorRequest =
@@ -3637,6 +3799,23 @@ if (refRaw) {
 
   const isStandardConsultorSlot = (slot: WarehouseSlot): boolean =>
     slot.galpao !== "12" && (slot.restricao || "nenhuma") === "nenhuma";
+
+  const isStrategicConsultorSlot = (slot: WarehouseSlot): boolean => {
+    if (
+      slot.saldo <= 0 ||
+      !slot.referencia ||
+      !isStandardConsultorSlot(slot)
+    ) {
+      return false;
+    }
+
+    if (slot.estoque === "1") {
+      const e1CapacityMap = getE1CapacityMap(warehouseLayout);
+      return e1CapacityMap[String(Number(slot.modulo))] !== undefined;
+    }
+
+    return isPhysicalPositionActive(slot, activePhysicalPositionKeys);
+  };
 
   const cleanConsultorDisplayText = (text: string): string =>
     text
@@ -3758,25 +3937,192 @@ if (refRaw) {
     return null;
   };
 
-  const parseConsultorCutoffDate = (
-    text: string
-  ): string | null => {
-    const match =
-      text.match(/(?:até|ate|anterior a|anterior|antes de|antes|em|na data de|data)\s*(?:a|ao)?\s*(\d{2}[\/.\-]\d{2}[\/.\-]\d{4})/i) ||
-      text.match(/\b(\d{2}[\/.\-]\d{2}[\/.\-]\d{4})\b/);
-
-    if (!match) return null;
-
-    const raw = match[1].replace(/[.\-]/g, "/");
-    const [day, month, year] = raw.split("/");
-    const canonical = `${day}/${month}/${year}`;
-
-    return parseChacoteDate(canonical) !== null ? canonical : null;
+  type ConsultorDateReference = {
+    startDate: string;
+    endDate: string;
+    label: string;
   };
 
-  const isChacoteQuantityIntent = (
+  const parseConsultorDateReference = (
+    value: string
+  ): ConsultorDateReference | null => {
+    const raw = value.trim();
+    if (!raw) return null;
+
+    const now = new Date();
+    const currentYear = now.getFullYear();
+
+    const monthNames: Record<string, number> = {
+      janeiro: 1,
+      fevereiro: 2,
+      marco: 3,
+      abril: 4,
+      maio: 5,
+      junho: 6,
+      julho: 7,
+      agosto: 8,
+      setembro: 9,
+      outubro: 10,
+      novembro: 11,
+      dezembro: 12,
+    };
+
+    const normalizeMonthName = (month: string) =>
+      month
+        .toLowerCase()
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "");
+
+    const buildDayReference = (
+      day: number,
+      month: number,
+      year: number
+    ): ConsultorDateReference | null => {
+      const date = new Date(year, month - 1, day);
+
+      if (
+        !Number.isFinite(date.getTime()) ||
+        date.getFullYear() !== year ||
+        date.getMonth() !== month - 1 ||
+        date.getDate() !== day
+      ) {
+        return null;
+      }
+
+      const canonical = `${String(day).padStart(2, "0")}/${String(month).padStart(2, "0")}/${year}`;
+      return {
+        startDate: canonical,
+        endDate: canonical,
+        label: canonical,
+      };
+    };
+
+    const buildMonthReference = (
+      month: number,
+      year: number
+    ): ConsultorDateReference | null => {
+      if (month < 1 || month > 12 || year < 1900 || year > 2200) return null;
+
+      const lastDay = new Date(year, month, 0).getDate();
+      const start = `01/${String(month).padStart(2, "0")}/${year}`;
+      const end = `${String(lastDay).padStart(2, "0")}/${String(month).padStart(2, "0")}/${year}`;
+
+      return {
+        startDate: start,
+        endDate: end,
+        label: `${String(month).padStart(2, "0")}/${year}`,
+      };
+    };
+
+    let match = raw.match(/\b(\d{1,2})[\/.\-](\d{1,2})[\/.\-](\d{4})\b/);
+    if (match) {
+      return buildDayReference(
+        Number(match[1]),
+        Number(match[2]),
+        Number(match[3])
+      );
+    }
+
+    match = raw.match(/\b(\d{1,2})[\/.\-](\d{4})\b/);
+    if (match) {
+      return buildMonthReference(Number(match[1]), Number(match[2]));
+    }
+
+    const monthPattern =
+      /\b(janeiro|fevereiro|mar(?:c|ç)o|abril|maio|junho|julho|agosto|setembro|outubro|novembro|dezembro)(?:\s+de|\s*\/|\s+)?\s*(\d{4})?\b/i;
+    match = raw.match(monthPattern);
+
+    if (match) {
+      const month = monthNames[normalizeMonthName(match[1])];
+      const year = match[2] ? Number(match[2]) : currentYear;
+      return month ? buildMonthReference(month, year) : null;
+    }
+
+    return null;
+  };
+
+  const parseConsultorDateRange = (
     text: string
-  ): boolean => {
+  ): {
+    startDate: string | null;
+    endDate: string;
+    label: string;
+    kind: "cutoff" | "interval" | "month";
+  } | null => {
+    const normalized = text
+      .toLowerCase()
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "");
+
+    const references: ConsultorDateReference[] = [];
+    const seen = new Set<string>();
+
+    const collect = (pattern: RegExp) => {
+      for (const match of normalized.matchAll(pattern)) {
+        const candidate = match[0];
+        const parsed = parseConsultorDateReference(candidate);
+        if (!parsed) continue;
+
+        const key = `${parsed.startDate}|${parsed.endDate}`;
+        if (!seen.has(key)) {
+          seen.add(key);
+          references.push(parsed);
+        }
+      }
+    };
+
+    collect(/\b\d{1,2}[\/.\-]\d{1,2}[\/.\-]\d{4}\b/g);
+    collect(/\b\d{1,2}[\/.\-]\d{4}\b/g);
+    collect(/\b(?:janeiro|fevereiro|marco|abril|maio|junho|julho|agosto|setembro|outubro|novembro|dezembro)(?:\s+de|\s*\/|\s+)?\s*\d{4}?\b/g);
+    collect(/\b(?:janeiro|fevereiro|marco|abril|maio|junho|julho|agosto|setembro|outubro|novembro|dezembro)\b/g);
+
+    if (references.length >= 2) {
+      const first = references[0];
+      const second = references[1];
+      return {
+        startDate: first.startDate,
+        endDate: second.endDate,
+        label: `${first.label} a ${second.label}`,
+        kind: "interval",
+      };
+    }
+
+    if (references.length !== 1) return null;
+
+    const reference = references[0];
+    const isMonthReference = reference.startDate !== reference.endDate;
+    const isInterval = /\b(entre|de)\b/.test(normalized) && /\b(at[eé]|a)\b/.test(normalized);
+
+    if (isInterval) {
+      return {
+        startDate: reference.startDate,
+        endDate: reference.endDate,
+        label: reference.label,
+        kind: "interval",
+      };
+    }
+
+    if (
+      isMonthReference &&
+      !/\b(ate|antes|anterior)\b/.test(normalized)
+    ) {
+      return {
+        startDate: reference.startDate,
+        endDate: reference.endDate,
+        label: reference.label,
+        kind: "month",
+      };
+    }
+
+    return {
+      startDate: null,
+      endDate: reference.endDate,
+      label: `até ${reference.label}`,
+      kind: "cutoff",
+    };
+  };
+
+  const isChacoteQuantityIntent = (text: string): boolean => {
     const normalized = text
       .toLowerCase()
       .normalize("NFD")
@@ -3786,15 +4132,18 @@ if (refRaw) {
       normalized.includes("quantas pecas") ||
       normalized.includes("quantidade") ||
       normalized.includes("saldo") ||
-      normalized.includes("pecas");
+      normalized.includes("pecas") ||
+      normalized.includes("estoque");
 
     const hasDateTerm =
-      normalized.includes("anterior a") ||
-      normalized.includes("antes de") ||
+      normalized.includes("chacote") ||
+      normalized.includes("data") ||
+      normalized.includes("mes") ||
       normalized.includes("ate ") ||
-      normalized.includes("data");
+      normalized.includes("entre ") ||
+      normalized.includes("de ");
 
-    return hasQuantityTerm && hasDateTerm && parseConsultorCutoffDate(text) !== null;
+    return hasQuantityTerm && hasDateTerm && parseConsultorDateRange(text) !== null;
   };
 
   const handleNextRecommendation = () => {
@@ -3818,7 +4167,6 @@ if (refRaw) {
       normalized.includes("considerando") ||
       normalized.includes("compare") ||
       normalized.includes("analise") ||
-      normalized.includes("analise") ||
       normalized.includes("qual seria") ||
       normalized.includes("faria sentido") ||
       normalized.includes("faz sentido") ||
@@ -3828,7 +4176,12 @@ if (refRaw) {
       normalized.includes("melhor opcao") ||
       normalized.includes("outra opcao") ||
       normalized.includes("o que voce") ||
-      normalized.includes("o que você")
+      normalized.includes("o que você") ||
+      /\b(quanto|quantos|quantas|qual|quais|como|resumo|situacao|situação|capacidade|projecao|projeção|rotatividade|risco|riscos)\b/.test(normalized) ||
+      normalized.includes("pcp") ||
+      normalized.includes("qualidade") ||
+      normalized.includes("diretoria") ||
+      normalized.includes("executivo")
     );
   };
 
@@ -3852,10 +4205,12 @@ if (refRaw) {
 
     const relevantSlots = slots
       .filter(slot => {
-        if (
-          slot.saldo <= 0 ||
-          !isPhysicalPositionActive(slot, activePhysicalPositionKeys)
-        ) {
+        const activeForContext =
+          slot.estoque === "1"
+            ? getE1CapacityMap(warehouseLayout)[String(Number(slot.modulo))] !== undefined
+            : isPhysicalPositionActive(slot, activePhysicalPositionKeys);
+
+        if (slot.saldo <= 0 || !slot.referencia || !activeForContext) {
           return false;
         }
 
@@ -3912,9 +4267,279 @@ if (refRaw) {
         saldoFinal: item.saldoFinal,
       }));
 
+    const activeSlots = slots.filter(isStrategicConsultorSlot);
+    const activePhysicalSlots = activeSlots.filter(
+      slot => slot.estoque === "2" || slot.estoque === "3"
+    );
+    const activeE1Slots = activeSlots.filter(slot => slot.estoque === "1");
+
+    const strategicQuantity = activeSlots.reduce((sum, slot) => sum + slot.saldo, 0);
+    const strategicE1Quantity = activeE1Slots.reduce((sum, slot) => sum + slot.saldo, 0);
+    const strategicE1Pallets = activeE1Slots.reduce((sum, slot) => {
+      const product = productsList.find(
+        item => item.referencia.toUpperCase() === slot.referencia.toUpperCase()
+      );
+      return sum + (
+        product?.paletizacao
+          ? calcularPaletes(slot.saldo, product.paletizacao)
+          : 0
+      );
+    }, 0);
+
+    const strategicReferences = new Set<string>(
+      activeSlots.map(slot => slot.referencia.trim().toUpperCase())
+    );
+
+    const occupiedAddresses = new Set(
+      activePhysicalSlots.map(
+        slot =>
+          `${slot.estoque}-${Number(slot.modulo)}-${String(slot.posicao || "")
+            .trim()
+            .toUpperCase()}`
+      )
+    );
+
+    const totalPhysicalPositions =
+      activePhysicalPositionKeys["2"].size +
+      activePhysicalPositionKeys["3"].size;
+
+    const occupiedPhysicalPositions = occupiedAddresses.size;
+    const freePhysicalPositions = Math.max(
+      0,
+      totalPhysicalPositions - occupiedPhysicalPositions
+    );
+
+    const occupationPercent =
+      totalPhysicalPositions > 0
+        ? (occupiedPhysicalPositions / totalPhysicalPositions) * 100
+        : 0;
+
+    const e1CapacityTotal = getE1TotalCapacity(warehouseLayout);
+    const e1OccupationPercent =
+      e1CapacityTotal > 0
+        ? (strategicE1Pallets / e1CapacityTotal) * 100
+        : 0;
+
+    const totalStorageUnits =
+      strategicE1Pallets + occupiedPhysicalPositions;
+    const totalStorageCapacity =
+      e1CapacityTotal + totalPhysicalPositions;
+    const totalStorageOccupationPercent =
+      totalStorageCapacity > 0
+        ? (totalStorageUnits / totalStorageCapacity) * 100
+        : 0;
+
+    const todayTimestamp = parseChacoteDate(getTodayIsoDate()) ?? Date.now();
+    const movementToday = history.filter(item => {
+      const timestamp = parseChacoteDate(item.data);
+      return timestamp !== null && timestamp === todayTimestamp;
+    }).length;
+
+    const movementNet = history.reduce((sum, item) => {
+      const quantity = Number(item.quantidade) || 0;
+      return sum + (item.tipo === "Saída" ? -quantity : quantity);
+    }, 0);
+
+    const movementGross = history.reduce(
+      (sum, item) => sum + Math.abs(Number(item.quantidade) || 0),
+      0
+    );
+
+    const movementTimestamps = history
+      .map(item => parseChacoteDate(item.data))
+      .filter((value): value is number => value !== null)
+      .sort((a, b) => a - b);
+
+    const movementPeriodDays =
+      movementTimestamps.length >= 2
+        ? Math.max(
+            1,
+            Math.floor(
+              (movementTimestamps[movementTimestamps.length - 1] -
+                movementTimestamps[0]) /
+                (1000 * 60 * 60 * 24)
+            ) + 1
+          )
+        : 1;
+
+    const latestMovementBySku = new Map<string, number>();
+
+    history.forEach(item => {
+      const referencia = item.referencia?.trim().toUpperCase();
+      const timestamp = parseChacoteDate(item.data);
+
+      if (!referencia || timestamp === null) return;
+
+      const previous = latestMovementBySku.get(referencia);
+      if (previous === undefined || timestamp > previous) {
+        latestMovementBySku.set(referencia, timestamp);
+      }
+    });
+
+    const occupiedByStock = ["1", "2", "3"].map(estoque => {
+      if (estoque === "1") {
+        return {
+          estoque: "E1",
+          ocupadas: strategicE1Pallets,
+          livres: Math.max(0, e1CapacityTotal - strategicE1Pallets),
+          total: e1CapacityTotal,
+          unidade: "paletes",
+        };
+      }
+
+      const addresses = new Set(
+        activePhysicalSlots
+          .filter(slot => slot.estoque === estoque)
+          .map(
+            slot =>
+              `${slot.estoque}-${Number(slot.modulo)}-${String(slot.posicao || "")
+                .trim()
+                .toUpperCase()}`
+          )
+      );
+
+      const total = activePhysicalPositionKeys[estoque as "2" | "3"].size;
+
+      return {
+        estoque: `E${estoque}`,
+        ocupadas: addresses.size,
+        livres: Math.max(0, total - addresses.size),
+        total,
+        unidade: "posições",
+      };
+    });
+
+    const topStock = [...activeSlots.reduce(
+      (map, slot) => {
+        const key = slot.referencia.trim().toUpperCase();
+        const current = map.get(key) || {
+          referencia: key,
+          descricao: slot.descricao,
+          saldo: 0,
+        };
+        current.saldo += slot.saldo;
+        map.set(key, current);
+        return map;
+      },
+      new Map<string, { referencia: string; descricao: string; saldo: number }>()
+    ).values()]
+      .sort((a, b) => b.saldo - a.saldo)
+      .slice(0, 10);
+
+    const skusSemMovimento7Dias = [...strategicReferences].filter(referencia => {
+      const movementTime = latestMovementBySku.get(referencia);
+      return movementTime === undefined ||
+        todayTimestamp - movementTime > 7 * 24 * 60 * 60 * 1000;
+    }).length;
+    const skusSemMovimento30Dias = [...strategicReferences].filter(referencia => {
+      const movementTime = latestMovementBySku.get(referencia);
+      return movementTime === undefined ||
+        todayTimestamp - movementTime > 30 * 24 * 60 * 60 * 1000;
+    }).length;
+
+    const attentionPoints: string[] = [];
+    const openDivergenciasCount = divergencias.filter(
+      item => item.status === "Aberta"
+    ).length;
+
+    if (openDivergenciasCount > 0) {
+      attentionPoints.push(`${openDivergenciasCount} divergência(s) em aberto`);
+    }
+    if (skusSemMovimento30Dias > 0) {
+      attentionPoints.push(
+        `${skusSemMovimento30Dias} SKU(s) sem movimentação há mais de 30 dias`
+      );
+    }
+    if (occupationPercent >= 95) {
+      attentionPoints.push(
+        `ocupação física E2/E3 em nível de saturação (${occupationPercent.toFixed(1)}%)`
+      );
+    } else if (occupationPercent >= 85) {
+      attentionPoints.push(
+        `ocupação física E2/E3 acima de 85% (${occupationPercent.toFixed(1)}%)`
+      );
+    }
+    if (e1OccupationPercent >= 95) {
+      attentionPoints.push(
+        `ocupação do E1 em nível de saturação (${e1OccupationPercent.toFixed(1)}%)`
+      );
+    } else if (e1OccupationPercent >= 85) {
+      attentionPoints.push(
+        `ocupação do E1 acima de 85% (${e1OccupationPercent.toFixed(1)}%)`
+      );
+    }
+
+    const departmentLens =
+      /qualidade/i.test(question)
+        ? "Qualidade: priorizar rastreabilidade por chacote, quantidades por período, saldos sem data e identificação de lotes."
+        : /pcp/i.test(question)
+          ? "PCP: priorizar saldo, SKUs ativos, capacidade física, rotatividade, tendência de movimentação e projeções explicitamente qualificadas."
+          : /diretoria|diretor/i.test(question)
+            ? "Diretoria: responder em visão executiva, com volume, ocupação, tendência, riscos e principais exceções."
+            : "Visão operacional geral: responder com dados objetivos e indicar o impacto operacional quando houver evidência.";
+
+    const strategicContext = {
+      visaoGeral: {
+        saldoTotalPecas: strategicQuantity,
+        skusAtivos: strategicReferences.size,
+        posicoesFisicasOcupadas: occupiedPhysicalPositions,
+        posicoesFisicasLivres: freePhysicalPositions,
+        ocupacaoFisicaPercentual: Number(occupationPercent.toFixed(2)),
+        divergenciasAbertas: divergencias.filter(item => item.status === "Aberta").length,
+        ocupacaoPorEstoque: occupiedByStock,
+        skusSemMovimento7Dias,
+        skusSemMovimento30Dias,
+        saldoE1Pecas: strategicE1Quantity,
+        paletesE1Ocupados: strategicE1Pallets,
+        capacidadeE1Paletes: e1CapacityTotal,
+        ocupacaoE1Percentual: Number(e1OccupationPercent.toFixed(2)),
+        ocupacaoFisicaE2E3Percentual: Number(occupationPercent.toFixed(2)),
+        unidadesArmazenamentoOcupadas: totalStorageUnits,
+        unidadesArmazenamentoCapacidade: totalStorageCapacity,
+        ocupacaoConsolidadaPercentual: Number(totalStorageOccupationPercent.toFixed(2)),
+        pontosAtencao: attentionPoints,
+      },
+      movimentacoesPeriodoCarregado: {
+        registros: history.length,
+        movimentacaoBrutaPecas: movementGross,
+        movimentacaoLiquidaPecas: movementNet,
+        periodoEmDias: movementPeriodDays,
+        mediaLiquidaPorDia: Number((movementNet / movementPeriodDays).toFixed(2)),
+        projecaoSaldo30Dias: Math.max(
+          0,
+          strategicQuantity + (movementNet / movementPeriodDays) * 30
+        ),
+        movimentacoesHoje: movementToday,
+        observacao: "A projeção de estoque, quando solicitada, é uma extrapolação simples do ritmo líquido do histórico carregado; não representa previsão de vendas ou produção.",
+      },
+      rankingSaldo: topStock,
+      departamento: departmentLens,
+      visaoExecutiva: {
+        saldoTotalPecas: strategicQuantity,
+        skusAtivos: strategicReferences.size,
+        ocupacaoConsolidadaPercentual: Number(totalStorageOccupationPercent.toFixed(2)),
+        ocupacaoFisicaE2E3Percentual: Number(occupationPercent.toFixed(2)),
+        ocupacaoE1Percentual: Number(e1OccupationPercent.toFixed(2)),
+        movimentacaoLiquidaNoPeriodo: movementNet,
+        mediaLiquidaPorDia: Number((movementNet / movementPeriodDays).toFixed(2)),
+        skusSemMovimento30Dias,
+        divergenciasAbertas: openDivergenciasCount,
+        principaisPontosAtencao: attentionPoints,
+      },
+      regraDeUnidade: "E1 é medido por paletes ocupados/capacidade; E2 e E3 por posições físicas. O saldo total em peças inclui E1, E2 e E3.",
+    };
+
+    const broadStrategicQuestion =
+      !normalizedSku &&
+      /(situacao|situação|capacidade|tendencia|tendência|resumo|executivo|risco|riscos|atencao|atenção|estoque hoje|pcp|diretoria)/i.test(
+        question
+      );
+
     return JSON.stringify(
       {
         pergunta: question,
+        contextoEstrategico: strategicContext,
+        visaoExecutiva: strategicContext.visaoExecutiva,
         resultadoDeterministico: deterministicResponse,
         produto: relevantProduct
           ? {
@@ -3923,15 +4548,15 @@ if (refRaw) {
               paletizacao: relevantProduct.paletizacao ?? null,
             }
           : null,
-        posicoesRelevantes: relevantSlots,
-        divergenciasAbertasRelevantes: openDivergencias,
+        posicoesRelevantes: broadStrategicQuestion ? [] : relevantSlots.slice(0, 12),
+        divergenciasAbertasRelevantes: openDivergencias.slice(0, 8),
         analiseEstrategica: strategyAnalysis,
         observacao:
-          "Os dados acima são um recorte calculado do estado atual do sistema. A concentração por módulo e a proximidade são determinísticas; a IA deve explicar os dados, não inventar posições.",
+          "O saldo total de peças inclui E1, E2 e E3. E1 é medido em paletes; E2/E3 em posições físicas. A IA deve explicar os dados, não inventar posições.",
       },
       null,
       2
-    ).slice(0, 9000);
+    ).slice(0, 12000);
   };
 
   const requestGenerativeConsultor = async (
@@ -3966,6 +4591,91 @@ if (refRaw) {
     } finally {
       setChatAiLoading(false);
     }
+  };
+
+  const handleExportConsultorExecutivePdf = (text: string) => {
+    const doc = new jsPDF({
+      orientation: "portrait",
+      unit: "mm",
+      format: "a4",
+    });
+
+    const pageWidth = doc.internal.pageSize.getWidth();
+    const pageHeight = doc.internal.pageSize.getHeight();
+    const margin = 18;
+    let y = 20;
+
+    doc.setFillColor(15, 23, 42);
+    doc.rect(0, 0, pageWidth, 34, "F");
+
+    doc.setTextColor(255, 255, 255);
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(18);
+    doc.text("PORTO BRASIL", margin, 15);
+
+    doc.setFontSize(10);
+    doc.setFont("helvetica", "normal");
+    doc.text("CELSO • RESUMO EXECUTIVO DO ESTOQUE", margin, 23);
+    doc.text(
+      `Gerado em ${new Date().toLocaleString("pt-BR")}`,
+      margin,
+      29
+    );
+
+    y = 45;
+    doc.setTextColor(30, 41, 59);
+
+    const lines = text
+      .replace(/\r/g, "")
+      .split("\n")
+      .map(line => line.trimEnd());
+
+    for (const line of lines) {
+      const trimmed = line.trim();
+
+      if (!trimmed) {
+        y += 3;
+        continue;
+      }
+
+      if (y > pageHeight - 24) {
+        doc.addPage();
+        y = 18;
+      }
+
+      const isHeading =
+        trimmed === trimmed.toUpperCase() &&
+        trimmed.length >= 4 &&
+        !trimmed.startsWith("•");
+
+      doc.setFont("helvetica", isHeading ? "bold" : "normal");
+      doc.setFontSize(isHeading ? 10.5 : 9.5);
+
+      const wrapped = doc.splitTextToSize(
+        trimmed,
+        pageWidth - margin * 2
+      );
+
+      doc.text(wrapped, margin, y);
+      y += wrapped.length * (isHeading ? 5.5 : 4.8);
+
+      if (isHeading) y += 1.5;
+    }
+
+    const totalPages = doc.getNumberOfPages();
+    for (let page = 1; page <= totalPages; page += 1) {
+      doc.setPage(page);
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(8);
+      doc.setTextColor(100, 116, 139);
+      doc.text(
+        `Celso • Estoque de Chacote • Página ${page}/${totalPages}`,
+        margin,
+        pageHeight - 10
+      );
+    }
+
+    doc.save(`celso_resumo_executivo_${getTodayIsoDate()}.pdf`);
   };
 
   const handleSendChatMessage = async (messageOverride?: string) => {
@@ -4146,32 +4856,51 @@ if (refRaw) {
         } else {
           responseText = "Não há outra recomendação pendente. Faça uma nova pergunta para recalcular as opções.";
         }
-      } else if (isChacoteQuantityIntent(userMessage)) {
+      } else if (
+        isChacoteQuantityIntent(userMessage) ||
+        /(quantas|quantidade|saldo|estoque)/i.test(userMessage)
+      ) {
         const quantitySku = findSkuInChatText(userMessage);
-        const cutoffDate = parseConsultorCutoffDate(userMessage);
+        const dateRange = parseConsultorDateRange(userMessage);
 
-        if (!quantitySku) {
+        if (!quantitySku && dateRange) {
           responseText =
             "Informe o SKU ou a descrição do produto para eu calcular a quantidade por data de chacote.";
-        } else if (!cutoffDate) {
+        } else if (quantitySku && !dateRange) {
           responseText =
-            "Informe a data de corte, por exemplo: 31/08/2026.";
-        } else {
+            "Entendi a consulta de quantidade do SKU, mas preciso do período. Você pode informar uma data (31/08/2026), mês (08/2026 ou agosto/2026), ou intervalo (01/07/2026 a 31/07/2026).";
+        } else if (quantitySku && dateRange) {
           const analysis = buildChacoteQuantityAnalysis({
             slots,
             products: productsList,
             sku: quantitySku,
-            cutoffDate,
+            startDate: dateRange.startDate,
+            endDate: dateRange.endDate,
           });
+
+          const periodLine =
+            dateRange.kind === "cutoff"
+              ? `Com data de chacote até ${analysis.endDate}: ${analysis.datedInPeriod.toLocaleString("pt-BR")} pçs`
+              : `Com data de chacote no período ${analysis.periodLabel}: ${analysis.datedInPeriod.toLocaleString("pt-BR")} pçs`;
+
+          const totalLine =
+            dateRange.kind === "cutoff"
+              ? `TOTAL CONSIDERADO: ${analysis.totalEligible.toLocaleString("pt-BR")} pçs`
+              : `TOTAL NO PERÍODO: ${analysis.totalEligible.toLocaleString("pt-BR")} pçs`;
 
           responseText =
             `QUANTIDADE POR DATA DE CHACOTE • ${analysis.sku}\n` +
             `${analysis.descricao}\n\n` +
-            `Sem data de chacote: ${analysis.withoutChacoteDate.toLocaleString("pt-BR")} pçs\n` +
-            `Com data até ${analysis.cutoffDate}: ${analysis.datedUpToCutoff.toLocaleString("pt-BR")} pçs\n` +
-            `TOTAL CONSIDERADO: ${analysis.totalEligible.toLocaleString("pt-BR")} pçs\n\n` +
+            `Período: ${analysis.periodLabel}\n` +
+            `Sem data de chacote: ${analysis.withoutChacoteDate.toLocaleString("pt-BR")} pçs` +
+            (dateRange.kind === "cutoff"
+              ? " • incluído no total considerado"
+              : " • não atribuível ao período") +
+            `\n` +
+            `${periodLine}\n` +
+            `${totalLine}\n\n` +
             `Estoque atual total do SKU: ${analysis.totalCurrent.toLocaleString("pt-BR")} pçs\n` +
-            `Critério: somo todo o saldo atual sem data de chacote e, em seguida, os saldos cuja data de chacote é até a data informada.`;
+            `Critério: saldo sem data é separado; saldos com data são considerados somente quando pertencem ao período solicitado.`;
         }
       } else if (
         lower.includes("estratégia") ||
@@ -4596,11 +5325,12 @@ if (refRaw) {
             responseText =
               `CONCENTRAÇÃO ATUAL • ${analysis.sku}\n` +
               `${analysis.descricao}\n\n` +
-              `Saldo elegível: ${analysis.totalSaldo.toLocaleString("pt-BR")} pçs\n` +
-              `Posições ocupadas: ${analysis.totalPosicoes}\n` +
-              `Módulos envolvidos: ${analysis.totalModulos}\n` +
-              `Paletes estimados: ${analysis.totalPaletes}\n` +
-              `Ocupação média: ${analysis.ocupacaoPercentual.toFixed(1)}%\n\n` +
+              `Saldo elegível total: ${analysis.totalSaldo.toLocaleString("pt-BR")} pçs\n` +
+              `• E1: ${analysis.e1Saldo.toLocaleString("pt-BR")} pçs em ${analysis.e1Paletes} palete(s) estimado(s)\n` +
+              `• E2/E3: ${analysis.physicalSaldo.toLocaleString("pt-BR")} pçs em ${analysis.totalPosicoes} posições\n` +
+              `Módulos envolvidos: ${analysis.totalModulos} (E1: ${analysis.e1Modulos})\n` +
+              `Paletes estimados no total: ${analysis.totalPaletes}\n` +
+              `Ocupação média E2/E3: ${analysis.ocupacaoPercentual.toFixed(1)}%\n\n` +
               `MÓDULOS COM MAIOR CONCENTRAÇÃO\n${topModules}\n\n` +
               `Centro de concentração: ${
                 analysis.concentrationModule !== null
@@ -5091,12 +5821,7 @@ if (refRaw) {
         > = {};
 
         slots.forEach(slot => {
-          if (
-            slot.saldo <= 0 ||
-            !slot.referencia ||
-            !isStandardConsultorSlot(slot) ||
-            !isPhysicalPositionActive(slot, activePhysicalPositionKeys)
-          ) {
+          if (!isStrategicConsultorSlot(slot)) {
             return;
           }
 
@@ -5198,7 +5923,9 @@ if (refRaw) {
       lower.includes("concentracao") ||
       lower.includes("mais estocado") ||
       lower.includes("maior saldo") ||
-      lower.includes("diverg");
+      lower.includes("diverg") ||
+      (findSkuInChatText(userMessage) !== null &&
+        /\b(quantas|quantidade|saldo|estoque)\b/.test(lower));
 
     if (
       shouldUseGenerativeConsultor(userMessage) &&
@@ -5216,9 +5943,16 @@ if (refRaw) {
 
     responseText = cleanConsultorDisplayText(responseText);
 
+    const isExecutiveResponse =
+      /\bresumo executivo\b/i.test(userMessage);
+
     setChatMessages(prev => [
       ...prev,
-      { sender: "system", text: responseText },
+      {
+        sender: "system",
+        text: responseText,
+        ...(isExecutiveResponse ? { kind: "executive" as const } : {}),
+      },
     ]);
   };
 
@@ -5778,12 +6512,28 @@ const pct = total > 0 ? (occupied / total) * 100 : 0;
                       Algoritmo inteligente integrado monitorando vagas vazias e divergência de palete.
                     </p>
 
-                    <div className="bg-amber-50/70 border border-amber-200/50 p-4 rounded-xl text-xs text-amber-900 space-y-1.5 font-sans leading-normal">
+                    <div className="bg-amber-50/70 border border-amber-200/50 p-4 rounded-xl text-xs text-amber-900 space-y-2 font-sans leading-normal">
                       <span className="font-bold flex items-center gap-1.5 text-amber-850">
-                        <Sparkles className="w-4 h-4 text-amber-500 animate-pulse" />
-                        Consolidação Recomendada:
+                        <Sparkles className="w-4 h-4 text-amber-500" />
+                        Celso conectado aos dados reais
                       </span>
-                      <p>Há registros com referências e descrições idênticas pulverizadas em gavetas diferentes. Recomenda-se realizar consolidação no **Estoque E2 Módulo M100** para resgatar paletes livres.</p>
+                      <p>
+                        O Consultor usa saldo, endereçamento físico, movimentações,
+                        chacotes, capacidade e divergências para responder perguntas
+                        operacionais e estratégicas.
+                      </p>
+                      <div className="grid grid-cols-2 gap-2 text-[11px]">
+                        <span>
+                          Saldo atual:{" "}
+                          <strong>
+                            {slots.reduce((sum, slot) => sum + slot.saldo, 0).toLocaleString("pt-BR")} pçs
+                          </strong>
+                        </span>
+                        <span>
+                          Divergências abertas:{" "}
+                          <strong>{divergencias.filter(item => item.status === "Aberta").length}</strong>
+                        </span>
+                      </div>
                     </div>
                   </div>
 
@@ -5811,10 +6561,6 @@ const pct = total > 0 ? (occupied / total) * 100 : 0;
                 <div className="flex items-center justify-between pb-3 border-b border-slate-100">
                   <h3 className="text-xs font-bold text-slate-700 uppercase tracking-wider block">Filtro de Logística e Endereçamento</h3>
                   <div className="flex items-center gap-4">
-                    {(
-                      isAdmin(currentUser?.role) ||
-                      normalizeRole(currentUser?.role) === "lideranca"
-                    ) && (
                     <button 
                       onClick={handleExportarEnderecamento}
                       className="text-xs text-indigo-600 hover:text-indigo-800 transition font-bold cursor-pointer flex items-center gap-1.5 font-sans uppercase tracking-wider text-[11px]"
@@ -5822,7 +6568,6 @@ const pct = total > 0 ? (occupied / total) * 100 : 0;
                       <Download className="w-3.5 h-3.5 text-indigo-500" />
                       Exportar Endereçamento (EXCEL)
                     </button>
-                  )}
                     <button 
                       onClick={handleClearSlotsFilter}
                       className="text-xs text-slate-400 hover:text-blue-600 transition font-medium cursor-pointer font-sans uppercase tracking-wider text-[11px]"
@@ -5959,38 +6704,36 @@ const pct = total > 0 ? (occupied / total) * 100 : 0;
                   <table className="w-full text-left text-xs border-collapse">
                     <thead>
                       <tr className="bg-slate-100 text-slate-600 uppercase text-[10px] tracking-wider border-b border-slate-200">
-                        <th className="py-3 px-4 font-bold font-mono">Estoque</th>
-                        <th className="py-3 px-4 font-bold">Módulo / Rua</th>
-                        <th className="py-3 px-4 font-bold">Posição</th>
-                        <th className="py-3 px-4 font-bold font-mono text-center">Referência SKU</th>
-                        <th className="py-3 px-4 font-bold text-center">Restrição</th>
-                        <th className="py-3 px-4 font-bold">Descrição do Item</th>
-                        <th className="py-3 px-4 font-bold text-right">Saldo Logístico (pçs)</th>
-                        <th className="py-3 px-4 font-bold">
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setSearchChacoteSort(current =>
-                                current === "none" ? "asc" : current === "asc" ? "desc" : "none"
-                              );
-                              setSearchPage(1);
-                            }}
-                            className="inline-flex items-center gap-1 hover:text-indigo-700 transition"
-                            title="Ordenar por Data Chacote: sem data primeiro, depois mais antiga"
+                        {([
+                          ["estoque", "Estoque"],
+                          ["modulo", "Módulo / Rua"],
+                          ["posicao", "Posição"],
+                          ["referencia", "Referência SKU"],
+                          ["restricao", "Restrição"],
+                          ["descricao", "Descrição do Item"],
+                          ["saldo", "Saldo Logístico (pçs)"],
+                          ["dataChacote", "Data Chacote"],
+                          ["ultimaMov", "Última mov."],
+                          ["responsavel", "Responsável"],
+                          ["observacao", "Observação"],
+                        ] as Array<[SearchSortField, string]>).map(([field, label]) => (
+                          <th
+                            key={field}
+                            className={`py-3 px-4 font-bold ${field === "referencia" ? "font-mono text-center" : ""} ${field === "restricao" ? "text-center" : ""} ${field === "saldo" ? "text-right" : ""}`}
                           >
-                            Data Chacote
-                            <span className="font-black">
-                              {searchChacoteSort === "asc"
-                                ? "↑"
-                                : searchChacoteSort === "desc"
-                                  ? "↓"
-                                  : "↕"}
-                            </span>
-                          </button>
-                        </th>
-                        <th className="py-3 px-4 font-bold">Última mov.</th>
-                        <th className="py-3 px-4 font-bold">Responsável</th>
-                        <th className="py-3 px-4 font-bold">Observação</th>
+                            <button
+                              type="button"
+                              onClick={() => toggleSearchSort(field)}
+                              className="inline-flex items-center gap-1 hover:text-indigo-700 transition"
+                              title={`Ordenar por ${label}. A ordenação é acumulativa: cada novo campo mantém os anteriores como desempate.`}
+                            >
+                              <span>{label}</span>
+                              <span className="font-black whitespace-nowrap">
+                                {getSearchSortIndicator(field)}
+                              </span>
+                            </button>
+                          </th>
+                        ))}
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100 font-medium text-slate-700">
@@ -7269,48 +8012,65 @@ const pct = total > 0 ? (occupied / total) * 100 : 0;
           {activeTab === "ai" && (
             <div className="space-y-6 pt-8">
               
-              <div className="bg-white border border-slate-200 rounded-xl p-6 shadow-xs flex flex-col md:flex-row gap-6 items-stretch">
-                
+              <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-xs flex flex-col lg:flex-row gap-5 items-stretch">
+
                 {/* Chat section */}
-                <div className="flex-1 min-w-0 border border-slate-300 rounded-xl flex flex-col h-[65vh] min-h-[520px] max-h-[760px] overflow-hidden shadow-inner bg-slate-50 font-sans">
-                  
+                <div className="flex-[1.8] min-w-0 border border-slate-300 rounded-xl flex flex-col h-[74vh] min-h-[600px] max-h-[820px] overflow-hidden shadow-inner bg-slate-50 font-sans">
+
                   <div className="bg-slate-900 border-b border-slate-950 p-4 font-sans text-white flex items-center justify-between">
                     <div className="flex items-center gap-2">
                       <div className="w-2.5 h-2.5 bg-emerald-400 rounded-full animate-ping mr-1"></div>
                       <div>
-                        <span className="font-bold text-xs block uppercase">Consultor de Estoque • Estoque de Chacote</span>
+                        <span className="font-bold text-xs block uppercase">Celso • Consultor de Estoque</span>
                         <span className="text-[10px] text-indigo-300 block">Sincronizado aos Estoques E1, E2, E3</span>
                       </div>
                     </div>
                   </div>
 
-                  <div className="flex-1 p-4 overflow-y-auto space-y-3 text-xs leading-normal font-medium">
+                  <div className="flex-1 p-5 overflow-y-auto space-y-3 text-xs leading-normal font-medium">
                     {chatMessages.map((msg, i) => (
                       <div key={i} className={`flex ${msg.sender === "user" ? "justify-end" : "justify-start"}`}>
-                        <div className={`p-3 max-w-xs md:max-w-md rounded-xl shadow-xs whitespace-pre-wrap ${
-                          msg.sender === "user" 
-                            ? "bg-slate-800 text-white rounded-br-none" 
-                            : "bg-white border border-slate-200 text-slate-800 rounded-bl-none font-medium"
-                        }`}>
-                          {msg.text}
+                        <div
+                          className={`max-w-[92%] lg:max-w-[82%] rounded-xl shadow-xs ${
+                            msg.sender === "user"
+                              ? "rounded-br-none bg-slate-800 p-3 text-white"
+                              : "rounded-bl-none border border-slate-200 bg-white p-4 text-slate-800"
+                          }`}
+                        >
+                          <div className="whitespace-pre-wrap text-xs leading-6 font-medium">
+                            {msg.text}
+                          </div>
+
+                          {msg.kind === "executive" && (
+                            <div className="mt-4 border-t border-slate-100 pt-3">
+                              <button
+                                type="button"
+                                onClick={() => handleExportConsultorExecutivePdf(msg.text)}
+                                className="inline-flex items-center gap-2 rounded-lg bg-slate-900 px-3 py-2 text-[10px] font-black uppercase tracking-wide text-white transition hover:bg-slate-800"
+                              >
+                                <Download className="h-3.5 w-3.5" />
+                                Baixar resumo executivo em PDF
+                              </button>
+                            </div>
+                          )}
                         </div>
                       </div>
                     ))}
                   </div>
 
                   <div className="p-3 bg-white border-t border-slate-200 flex gap-2">
-                    <input 
+                    <input
                       type="text"
                       value={chatInput}
                       onChange={(e) => setChatInput(e.target.value)}
                       onKeyDown={(e) => e.key === "Enter" && handleSendChatMessage()}
-                      placeholder="Ex.: Onde separar 300 peças do SKU 441401G?"
-                      className="flex-1 bg-slate-50 border border-slate-350 rounded-lg p-2 text-xs focus:outline-none"
+                      placeholder="Pergunte ao Celso sobre estoque, chacote, capacidade, PCP ou qualidade..."
+                      className="flex-1 bg-slate-50 border border-slate-300 rounded-lg p-2.5 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-100"
                     />
                     <button
                       onClick={() => handleSendChatMessage()}
                       disabled={chatAiLoading}
-                      className="bg-indigo-600 hover:bg-indigo-750 bg-indigo-700 text-white px-4 py-2 rounded-lg text-xs font-bold transition cursor-pointer"
+                      className="bg-indigo-700 hover:bg-indigo-800 text-white px-4 py-2 rounded-lg text-xs font-bold transition cursor-pointer disabled:opacity-60"
                     >
                       {chatAiLoading ? "Consultando..." : "Enviar"}
                     </button>
@@ -7318,36 +8078,63 @@ const pct = total > 0 ? (occupied / total) * 100 : 0;
 
                 </div>
 
-                {/* Quick questions recommendations block in chat */}
-                <div className="w-full md:w-64 border border-slate-200 rounded-xl p-5 bg-slate-50 space-y-4">
-                  <span className="text-[10px] text-indigo-600 font-extrabold block uppercase tracking-wider font-sans">
-                    Atalhos do Consultor
-                  </span>
-                  <p className="text-xs text-slate-400 leading-normal font-medium">
-                    Perguntas prontas para acelerar consultas operacionais e análises.
-                  </p>
-
-                  <div className="space-y-2 text-[11px] font-sans">
-                    {[
-                      ["📍", "Onde devo armazenar este SKU?"],
-                      ["📦", "Onde separar este SKU?"],
-                      ["🔄", "Onde devo remontar este SKU?"],
-                      ["💡", "Qual a melhor estratégia para organizar este SKU?"],
-                      ["📊", "Qual a concentração atual deste SKU?"],
-                      ["🏆", "Quais os 5 itens mais estocados?"],
-                      ["⚠️", "Existem divergências em aberto?"],
-                    ].map(([icon, prompt]) => (
-                      <button
-                        key={prompt}
-                        onClick={() => setChatInput(prompt)}
-                        className="w-full text-left bg-white hover:bg-slate-100 p-2.5 border border-slate-200 rounded-lg transition font-bold text-slate-700"
-                      >
-                        {icon} {prompt}
-                      </button>
-                    ))}
+                {/* Quick questions organized by business area */}
+                <aside className="w-full lg:w-80 shrink-0 border border-slate-200 rounded-xl p-5 bg-slate-50 space-y-4 font-sans">
+                  <div>
+                    <span className="text-[10px] text-indigo-600 font-extrabold block uppercase tracking-wider">
+                      Perguntas rápidas
+                    </span>
+                    <p className="mt-1 text-xs text-slate-500 leading-normal font-medium">
+                      Selecione o contexto e escolha uma pergunta para preencher o chat. Você também pode escrever livremente.
+                    </p>
                   </div>
-                </div>
 
+                  <div className="space-y-3">
+                    <label className="block">
+                      <span className="mb-1.5 block text-[10px] font-black uppercase tracking-wider text-slate-500">
+                        Tema / setor
+                      </span>
+                      <select
+                        value={consultorQuickTopic}
+                        onChange={(event) => {
+                          const topic = event.target.value as keyof typeof CONSULTOR_QUICK_QUESTIONS;
+                          setConsultorQuickTopic(topic);
+                          setConsultorQuickQuestion("");
+                        }}
+                        className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-xs font-bold text-slate-700 outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100"
+                      >
+                        {Object.keys(CONSULTOR_QUICK_QUESTIONS).map(topic => (
+                          <option key={topic} value={topic}>{topic}</option>
+                        ))}
+                      </select>
+                    </label>
+
+                    <label className="block">
+                      <span className="mb-1.5 block text-[10px] font-black uppercase tracking-wider text-slate-500">
+                        Pergunta
+                      </span>
+                      <select
+                        value={consultorQuickQuestion}
+                        onChange={(event) => {
+                          const prompt = event.target.value;
+                          setConsultorQuickQuestion(prompt);
+                          if (prompt) setChatInput(prompt);
+                        }}
+                        className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-xs font-bold text-slate-700 outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100"
+                      >
+                        <option value="">Escolher uma pergunta...</option>
+                        {CONSULTOR_QUICK_QUESTIONS[consultorQuickTopic].map(([icon, prompt]) => (
+                          <option key={prompt} value={prompt}>{icon} {prompt}</option>
+                        ))}
+                      </select>
+                    </label>
+                  </div>
+
+                  <div className="rounded-lg border border-indigo-100 bg-indigo-50 p-3 text-[11px] leading-normal text-indigo-900">
+                    <strong className="block mb-1">Celso entende linguagem natural</strong>
+                    Você pode alterar a pergunta preenchida, informar SKU, período ou quantidade e enviar normalmente.
+                  </div>
+                </aside>
 
               </div>
 

@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { OccupancyAnalysisDrawer } from "./OccupancyAnalysisDrawer";
 import { FreeCapacityDrawer } from "./FreeCapacityDrawer";
 import { OccupationRateDrawer } from "./OccupationRateDrawer";
@@ -85,6 +85,15 @@ interface DashboardCardsProps {
   canPerformActions?: boolean;
 }
 
+interface OccupancySnapshot {
+  snapshot_date: string;
+  occupied_positions: number;
+  free_positions: number;
+  total_positions: number;
+  occupancy_percent: number;
+  total_pieces: number;
+}
+
 export const DashboardCards: React.FC<DashboardCardsProps> = ({
   slots,
   history,
@@ -102,6 +111,7 @@ export const DashboardCards: React.FC<DashboardCardsProps> = ({
   const [showOccupationAnalysis, setShowOccupationAnalysis] = useState(false);
   const [showSkuAnalysis, setShowSkuAnalysis] = useState(false);
   const [showTotalStockAnalysis, setShowTotalStockAnalysis] = useState(false);
+  const [occupancyHistory, setOccupancyHistory] = useState<OccupancySnapshot[]>([]);
   
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [drawerDays, setDrawerDays] = useState(7);
@@ -132,8 +142,8 @@ export const DashboardCards: React.FC<DashboardCardsProps> = ({
   const totalSlots = totalSlotsE1 + totalSlotsE2 + totalSlotsE3;
 
   const slotSummary = useMemo(() => {
-    let occupiedE2 = 0;
-    let occupiedE3 = 0;
+    const occupiedE2Keys = new Set<string>();
+    const occupiedE3Keys = new Set<string>();
     let storedQuantity = 0;
     const activeReferences = new Set<string>();
     const quantityByReference = new Map<string, number>();
@@ -146,11 +156,16 @@ export const DashboardCards: React.FC<DashboardCardsProps> = ({
 
       if (slot.estoque === "2") {
         const key = `2-${Number(slot.modulo)}-${String(slot.posicao || "").trim().toUpperCase()}`;
-        if (activePhysicalPositions["2"].has(key)) occupiedE2++;
+        if (activePhysicalPositions["2"].has(key)) {
+          occupiedE2Keys.add(key);
+        }
       }
+
       if (slot.estoque === "3") {
         const key = `3-${Number(slot.modulo)}-${String(slot.posicao || "").trim().toUpperCase()}`;
-        if (activePhysicalPositions["3"].has(key)) occupiedE3++;
+        if (activePhysicalPositions["3"].has(key)) {
+          occupiedE3Keys.add(key);
+        }
       }
 
       const referencia = normalizeReferencia(slot.referencia);
@@ -168,15 +183,15 @@ export const DashboardCards: React.FC<DashboardCardsProps> = ({
     }
 
     return {
-      occupiedE2,
-      occupiedE3,
+      occupiedE2: occupiedE2Keys.size,
+      occupiedE3: occupiedE3Keys.size,
       storedQuantity,
       uniqueSKUs: activeReferences.size,
       activeReferences,
       quantityByReference,
       descriptionByReference,
     };
-  }, [slots]);
+  }, [slots, activePhysicalPositions]);
 
   const occupiedSlotsE2 = slotSummary.occupiedE2;
   const occupiedSlotsE3 = slotSummary.occupiedE3;
@@ -197,9 +212,33 @@ export const DashboardCards: React.FC<DashboardCardsProps> = ({
       ? (occupiedSlots / totalSlots) * 100
       : 0;
 
+  const loadOccupancyHistory = async () => {
+    const startDate = new Date();
+    startDate.setDate(startDate.getDate() - 180);
+    const startIso = `${startDate.getFullYear()}-${String(startDate.getMonth() + 1).padStart(2, "0")}-${String(startDate.getDate()).padStart(2, "0")}`;
+
+    const { data, error } = await supabase
+      .from("occupancy_history")
+      .select("snapshot_date,occupied_positions,free_positions,total_positions,occupancy_percent,total_pieces")
+      .gte("snapshot_date", startIso)
+      .order("snapshot_date", { ascending: true });
+
+    if (error) {
+      console.error("Erro ao carregar histórico de ocupação:", error);
+      return;
+    }
+
+    setOccupancyHistory((data || []) as OccupancySnapshot[]);
+  };
+
+  useEffect(() => {
+    loadOccupancyHistory();
+  }, []);
+
   const saveOccupancySnapshot = async () => {
   try {
-    const today = new Date().toISOString().split("T")[0];
+    const now = new Date();
+    const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
 
     const { error } = await supabase
       .from("occupancy_history")
@@ -216,6 +255,7 @@ export const DashboardCards: React.FC<DashboardCardsProps> = ({
 
     if (error) throw error;
 
+    await loadOccupancyHistory();
     alert("Snapshot registrado com sucesso.");
   } catch (err) {
     console.error(err);
@@ -226,6 +266,40 @@ export const DashboardCards: React.FC<DashboardCardsProps> = ({
   // 2. SKUs & Total Quantities
   const uniqueSKUs = slotSummary.uniqueSKUs;
   const totalStoredQuantity = slotSummary.storedQuantity;
+
+  useEffect(() => {
+    if (!canPerformActions || totalSlots <= 0) return;
+
+    const now = new Date();
+    const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+
+    supabase
+      .from("occupancy_history")
+      .upsert({
+        snapshot_date: today,
+        occupied_positions: occupiedSlots,
+        free_positions: freeSlots,
+        total_positions: totalSlots,
+        occupancy_percent: Number(occupationRate.toFixed(2)),
+        total_pieces: totalStoredQuantity,
+      })
+      .then(({ error }) => {
+        if (error) {
+          console.error("Erro ao registrar snapshot automático de ocupação:", error);
+          return;
+        }
+
+        loadOccupancyHistory();
+      });
+  }, [
+    canPerformActions,
+    totalSlots,
+    occupiedSlots,
+    freeSlots,
+    occupationRate,
+    totalStoredQuantity,
+  ]);
+
 
 const synchronizationSummary = useMemo(() => {
   if (history.length === 0) {
@@ -249,12 +323,15 @@ const synchronizationSummary = useMemo(() => {
     }
   }
 
-  const dataUltimaSincronia = lastSync.data;
+  const today = new Date();
+  const todayKey = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
+  const todayTimestamp = getDateOnlyTimestamp(todayKey);
   let movementsToday = 0;
   const operatorCounter: Record<string, number> = {};
 
   for (const movement of history) {
-    if (movement.data !== dataUltimaSincronia) continue;
+    const movementDate = getDateOnlyTimestamp(movement.data);
+    if (movementDate === null || movementDate !== todayTimestamp) continue;
 
     movementsToday++;
     const operador = movement.responsavel?.trim() || "Sem Registro";
@@ -267,12 +344,11 @@ const synchronizationSummary = useMemo(() => {
 
   return {
     lastSync,
-    dataUltimaSincronia,
+    dataUltimaSincronia: lastSync.data,
     movementsToday,
     topOperator,
   };
 }, [history]);
-
 const lastSync = synchronizationSummary.lastSync;
 const dataUltimaSincronia = synchronizationSummary.dataUltimaSincronia;
 const movementsToday = synchronizationSummary.movementsToday;
@@ -378,8 +454,10 @@ const tempoMedio =
   divergenciasCorrigidas.length > 0
     ? (
         divergenciasCorrigidas.reduce((acc, d) => {
-          const inicio = new Date(d.dataDivergencia || "").getTime();
-          const fim = new Date(d.dataCorrecao || "").getTime();
+          const inicio = getDateOnlyTimestamp(d.dataDivergencia);
+          const fim = getDateOnlyTimestamp(d.dataCorrecao);
+
+          if (inicio === null || fim === null || fim < inicio) return acc;
 
           return acc + ((fim - inicio) / (1000 * 60 * 60 * 24));
         }, 0) / divergenciasCorrigidas.length
@@ -1137,6 +1215,7 @@ const tempoMedio =
               occupiedSlotsE1={occupiedPalletsE1}
               occupiedSlotsE2={occupiedSlotsE2}
               occupiedSlotsE3={occupiedSlotsE3}
+              occupancyHistory={occupancyHistory}
             />
             <FreeCapacityDrawer
             isOpen={showFreeCapacity}
@@ -1157,11 +1236,13 @@ const tempoMedio =
             onClose={() => setShowSkuAnalysis(false)}
             uniqueSKUs={uniqueSKUs}
             slots={slots}
+            history={history}
           />
             <TotalStockDrawer
             isOpen={showTotalStockAnalysis}
             onClose={() => setShowTotalStockAnalysis(false)}
             totalSaldo={totalStoredQuantity}
+            history={history}
           />
     </div>
   );

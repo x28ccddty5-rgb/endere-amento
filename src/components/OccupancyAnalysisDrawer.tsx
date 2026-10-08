@@ -8,6 +8,14 @@ interface OccupancyAnalysisDrawerProps {
   occupiedSlotsE1: number;
   occupiedSlotsE2: number;
   occupiedSlotsE3: number;
+  occupancyHistory: Array<{
+    snapshot_date: string;
+    occupied_positions: number;
+    free_positions: number;
+    total_positions: number;
+    occupancy_percent: number;
+    total_pieces: number;
+  }>;
 }
 
 export function OccupancyAnalysisDrawer({
@@ -18,6 +26,7 @@ export function OccupancyAnalysisDrawer({
   occupiedSlotsE1,
   occupiedSlotsE2,
   occupiedSlotsE3,
+  occupancyHistory,
 }: OccupancyAnalysisDrawerProps) {
   if (!isOpen) return null;
 
@@ -76,6 +85,58 @@ export function OccupancyAnalysisDrawer({
       occupancyMarkerPosition,
       100
     );
+
+    const validSnapshots = occupancyHistory
+      .filter(item =>
+        item.snapshot_date &&
+        Number.isFinite(Number(item.occupied_positions)) &&
+        Number.isFinite(Number(item.total_positions))
+      )
+      .sort((a, b) =>
+        a.snapshot_date.localeCompare(b.snapshot_date)
+      );
+
+    const regressionPoints = validSnapshots.map(snapshot => ({
+      x: new Date(`${snapshot.snapshot_date}T00:00:00`).getTime() / (1000 * 60 * 60 * 24),
+      y: Number(snapshot.occupied_positions),
+    })).filter(point => Number.isFinite(point.x));
+
+    let occupancyTrendPerDay = 0;
+    if (regressionPoints.length >= 2) {
+      const meanX =
+        regressionPoints.reduce((sum, point) => sum + point.x, 0) /
+        regressionPoints.length;
+      const meanY =
+        regressionPoints.reduce((sum, point) => sum + point.y, 0) /
+        regressionPoints.length;
+      const denominator = regressionPoints.reduce(
+        (sum, point) => sum + Math.pow(point.x - meanX, 2),
+        0
+      );
+
+      if (denominator > 0) {
+        occupancyTrendPerDay =
+          regressionPoints.reduce(
+            (sum, point) => sum + (point.x - meanX) * (point.y - meanY),
+            0
+          ) / denominator;
+      }
+    }
+
+    const projectedOccupied30 = Math.max(
+      0,
+      occupiedPositions + occupancyTrendPerDay * 30
+    );
+    const projectedOccupancy30 =
+      totalPositions > 0
+        ? (projectedOccupied30 / totalPositions) * 100
+        : 0;
+    const saturationTarget = totalPositions * 0.95;
+
+    const daysTo95 =
+      occupancyTrendPerDay > 0 && occupiedPositions < saturationTarget
+        ? (saturationTarget - occupiedPositions) / occupancyTrendPerDay
+        : null;
 
     const occupancyStatus =
   occupancyPercent >= 95
@@ -356,67 +417,109 @@ export function OccupancyAnalysisDrawer({
 
           {/* PROJEÇÃO */}
           <section className="bg-white border rounded-xl p-5">
-          
             <h3 className="text-lg font-bold mb-4">
               3. Projeção de Capacidade
             </h3>
-          
-            <div className="bg-amber-50 border border-amber-200 rounded-xl p-5">
-          
-              <div className="flex items-center gap-3 mb-3">
-                <AlertTriangle className="w-5 h-5 text-amber-600" />
-          
-                <div className="font-bold text-amber-800">
-                  Em aprendizado
-                </div>
-              </div>
-          
-              <p className="text-sm text-slate-700 leading-relaxed">
-                Os dados de ocupação estão sendo consolidados para gerar projeções
-                confiáveis de capacidade.
-              </p>
-          
-              <p className="text-sm text-slate-700 leading-relaxed mt-2">
-                A estimativa de saturação será liberada automaticamente após a
-                consolidação da base histórica de ocupação.
-              </p>
-          
-              <div className="mt-4 grid grid-cols-3 gap-3">
-          
-                <div className="bg-white border rounded-lg p-3">
-                  <div className="text-xs text-slate-500 uppercase">
-                    Base Histórica
+
+            <div className="border rounded-xl p-5 bg-slate-50">
+              {validSnapshots.length < 2 ? (
+                <>
+                  <div className="font-bold text-slate-800">
+                    Histórico ainda insuficiente
                   </div>
-          
-                  <div className="text-2xl font-black text-slate-700">
-                    Em coleta
+                  <p className="text-sm text-slate-600 leading-relaxed mt-2">
+                    A projeção precisa de pelo menos dois registros de ocupação
+                    em datas diferentes. O sistema já está preparado para
+                    calcular a tendência assim que essa base existir.
+                  </p>
+                  <div className="mt-4 grid grid-cols-2 gap-3">
+                    <div className="bg-white border rounded-lg p-3">
+                      <div className="text-xs text-slate-500 uppercase">
+                        Registros históricos
+                      </div>
+                      <div className="text-2xl font-black text-slate-700">
+                        {validSnapshots.length}
+                      </div>
+                    </div>
+                    <div className="bg-white border rounded-lg p-3">
+                      <div className="text-xs text-slate-500 uppercase">
+                        Ocupação atual
+                      </div>
+                      <div className="text-2xl font-black text-slate-700">
+                        {occupancyPercent.toFixed(1)}%
+                      </div>
+                    </div>
                   </div>
-                </div>
-          
-                <div className="bg-white border rounded-lg p-3">
-                  <div className="text-xs text-slate-500 uppercase">
-                    Tendência
+                </>
+              ) : (
+                <>
+                  <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+                    <div className="bg-white border rounded-lg p-3">
+                      <div className="text-xs text-slate-500 uppercase">
+                        Base histórica
+                      </div>
+                      <div className="text-2xl font-black text-slate-700">
+                        {validSnapshots.length} dias
+                      </div>
+                    </div>
+
+                    <div className="bg-white border rounded-lg p-3">
+                      <div className="text-xs text-slate-500 uppercase">
+                        Tendência
+                      </div>
+                      <div className={`text-2xl font-black ${
+                        occupancyTrendPerDay > 0
+                          ? "text-amber-600"
+                          : occupancyTrendPerDay < 0
+                            ? "text-emerald-600"
+                            : "text-slate-700"
+                      }`}>
+                        {occupancyTrendPerDay > 0 ? "+" : ""}
+                        {occupancyTrendPerDay.toFixed(2)}
+                      </div>
+                      <div className="text-[11px] text-slate-500">
+                        posições/dia
+                      </div>
+                    </div>
+
+                    <div className="bg-white border rounded-lg p-3">
+                      <div className="text-xs text-slate-500 uppercase">
+                        Projeção 30 dias
+                      </div>
+                      <div className="text-2xl font-black text-slate-700">
+                        {projectedOccupancy30.toFixed(1)}%
+                      </div>
+                    </div>
+
+                    <div className="bg-white border rounded-lg p-3">
+                      <div className="text-xs text-slate-500 uppercase">
+                        Saturação 95%
+                      </div>
+                      <div className="text-2xl font-black text-slate-700">
+                        {occupancyPercent >= 95
+                          ? "Atingida"
+                          : daysTo95 !== null
+                            ? `${Math.max(1, Math.ceil(daysTo95))} dias`
+                            : "Sem tendência"}
+                      </div>
+                    </div>
                   </div>
-          
-                  <div className="text-2xl font-black text-slate-700">
-                    —
+
+                  <p className="text-sm text-slate-600 leading-relaxed mt-4">
+                    A projeção é uma extrapolação estatística da evolução real
+                    dos snapshots de ocupação registrados no sistema. Ela não
+                    representa previsão de produção, vendas ou demanda.
+                  </p>
+
+                  <div className="mt-4 text-xs text-slate-500">
+                    Último snapshot:{" "}
+                    <strong>{validSnapshots[validSnapshots.length - 1]?.snapshot_date}</strong>
+                    {" • "}
+                    Tendência calculada sobre os registros disponíveis.
                   </div>
-                </div>
-          
-                <div className="bg-white border rounded-lg p-3">
-                  <div className="text-xs text-slate-500 uppercase">
-                    Saturação
-                  </div>
-          
-                  <div className="text-2xl font-black text-slate-700">
-                    —
-                  </div>
-                </div>
-          
-              </div>
-          
+                </>
+              )}
             </div>
-          
           </section>
 
           {/* PRESSÃO */}

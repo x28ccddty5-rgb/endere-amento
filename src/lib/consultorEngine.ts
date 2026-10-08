@@ -56,6 +56,10 @@ export interface ConsultorStrategyAnalysis {
   sku: string;
   descricao: string;
   totalSaldo: number;
+  physicalSaldo: number;
+  e1Saldo: number;
+  e1Paletes: number;
+  e1Modulos: number;
   totalPaletes: number;
   totalPosicoes: number;
   totalModulos: number;
@@ -75,9 +79,11 @@ export interface ConsultorStrategyAnalysis {
 export interface ConsultorChacoteQuantityAnalysis {
   sku: string;
   descricao: string;
-  cutoffDate: string;
+  startDate: string | null;
+  endDate: string;
+  periodLabel: string;
   withoutChacoteDate: number;
-  datedUpToCutoff: number;
+  datedInPeriod: number;
   totalEligible: number;
   totalCurrent: number;
   datedPositions: number;
@@ -709,38 +715,43 @@ export const parseChacoteDate = (value?: string | null): number | null => {
   const raw = String(value || "").trim();
   if (!raw) return null;
 
-  const iso = raw.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  const iso = raw.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
   if (iso) {
-    const timestamp = new Date(
-      Number(iso[1]),
-      Number(iso[2]) - 1,
-      Number(iso[3])
-    ).getTime();
-    return Number.isFinite(timestamp) ? timestamp : null;
-  }
-
-  const br = raw.match(/^(\d{2})[\/.-](\d{2})[\/.-](\d{2}|\d{4})$/);
-  if (br) {
-    const day = Number(br[1]);
-    const month = Number(br[2]) - 1;
-    const yearValue = Number(br[3]);
-    const year = br[3].length === 2 ? 2000 + yearValue : yearValue;
-    const timestamp = new Date(year, month, day).getTime();
+    const year = Number(iso[1]);
+    const month = Number(iso[2]);
+    const day = Number(iso[3]);
+    const timestamp = new Date(year, month - 1, day).getTime();
 
     return (
       Number.isFinite(timestamp) &&
       new Date(timestamp).getFullYear() === year &&
-      new Date(timestamp).getMonth() === month &&
+      new Date(timestamp).getMonth() === month - 1 &&
       new Date(timestamp).getDate() === day
     )
       ? timestamp
       : null;
   }
 
-  const parsed = new Date(raw).getTime();
-  return Number.isFinite(parsed) ? parsed : null;
-};
+  const br = raw.match(/^(\d{1,2})[\/.-](\d{1,2})[\/.-](\d{2}|\d{4})$/);
+  if (br) {
+    const day = Number(br[1]);
+    const month = Number(br[2]);
+    const yearValue = Number(br[3]);
+    const year = br[3].length === 2 ? 2000 + yearValue : yearValue;
+    const timestamp = new Date(year, month - 1, day).getTime();
 
+    return (
+      Number.isFinite(timestamp) &&
+      new Date(timestamp).getFullYear() === year &&
+      new Date(timestamp).getMonth() === month - 1 &&
+      new Date(timestamp).getDate() === day
+    )
+      ? timestamp
+      : null;
+  }
+
+  return null;
+};
 const compareChacote = (
   a: { chacoteTime: number | null },
   b: { chacoteTime: number | null }
@@ -1145,32 +1156,39 @@ export const buildChacoteQuantityAnalysis = ({
   slots,
   products,
   sku,
-  cutoffDate,
+  startDate,
+  endDate,
 }: {
   slots: WarehouseSlot[];
   products: Product[];
   sku: string;
-  cutoffDate: string;
+  startDate?: string | null;
+  endDate: string;
 }): ConsultorChacoteQuantityAnalysis => {
   const normalizedSku = normalizeSku(sku);
   const product = products.find(
     item => normalizeSku(item.referencia) === normalizedSku
   );
-  const cutoffTime = parseChacoteDate(cutoffDate);
+  const startTime = startDate ? parseChacoteDate(startDate) : null;
+  const endTime = parseChacoteDate(endDate);
 
   let withoutChacoteDate = 0;
-  let datedUpToCutoff = 0;
+  let datedInPeriod = 0;
   let totalCurrent = 0;
   let datedPositions = 0;
   let withoutDatePositions = 0;
 
-  if (cutoffTime === null) {
+  if (endTime === null || (startDate && startTime === null)) {
     return {
       sku: normalizedSku,
       descricao: product?.descricao || sku,
-      cutoffDate,
+      startDate: startDate || null,
+      endDate,
+      periodLabel: startDate
+        ? `${startDate} a ${endDate}`
+        : `até ${endDate}`,
       withoutChacoteDate: 0,
-      datedUpToCutoff: 0,
+      datedInPeriod: 0,
       totalEligible: 0,
       totalCurrent: 0,
       datedPositions: 0,
@@ -1198,18 +1216,30 @@ export const buildChacoteQuantityAnalysis = ({
 
     datedPositions += 1;
 
-    if (chacoteTime <= cutoffTime) {
-      datedUpToCutoff += slot.saldo;
+    const inPeriod = startTime === null
+      ? chacoteTime <= endTime
+      : chacoteTime >= startTime && chacoteTime <= endTime;
+
+    if (inPeriod) {
+      datedInPeriod += slot.saldo;
     }
   }
+
+  const isCutoff = startTime === null;
 
   return {
     sku: normalizedSku,
     descricao: product?.descricao || sku,
-    cutoffDate,
+    startDate: startDate || null,
+    endDate,
+    periodLabel: isCutoff
+      ? `até ${endDate}`
+      : `${startDate} a ${endDate}`,
     withoutChacoteDate,
-    datedUpToCutoff,
-    totalEligible: withoutChacoteDate + datedUpToCutoff,
+    datedInPeriod,
+    totalEligible: isCutoff
+      ? withoutChacoteDate + datedInPeriod
+      : datedInPeriod,
     totalCurrent,
     datedPositions,
     withoutDatePositions,
@@ -1244,12 +1274,31 @@ export const buildStrategyAnalysis = ({
       matchesRestriction(slot, requestedRestriction)
   );
 
-  const totalSaldo = skuSlots.reduce((sum, slot) => sum + slot.saldo, 0);
+  const e1SkuSlots = slots.filter(
+    slot =>
+      slot.estoque === "1" &&
+      normalizeSku(slot.referencia) === normalizedSku &&
+      slot.saldo > 0 &&
+      matchesRestriction(slot, requestedRestriction)
+  );
+
+  const physicalSaldo = skuSlots.reduce((sum, slot) => sum + slot.saldo, 0);
+  const e1Saldo = e1SkuSlots.reduce((sum, slot) => sum + slot.saldo, 0);
+  const totalSaldo = physicalSaldo + e1Saldo;
   const paletizacao = Number(product?.paletizacao || 0);
+  const e1Paletes =
+    paletizacao > 0
+      ? e1SkuSlots.reduce(
+          (sum, slot) => sum + Math.ceil(slot.saldo / paletizacao),
+          0
+        )
+      : 0;
   const totalPaletes =
     paletizacao > 0 ? Math.ceil(totalSaldo / paletizacao) : 0;
   const totalPosicoes = skuSlots.length;
-  const totalModulos = new Set(skuSlots.map(moduleNumber)).size;
+  const e1Modulos = new Set(e1SkuSlots.map(moduleNumber)).size;
+  const totalModulos =
+    new Set([...skuSlots, ...e1SkuSlots].map(moduleNumber)).size;
   const capacidadeTotal = totalPosicoes * paletizacao;
   const ocupacaoPercentual =
     capacidadeTotal > 0
@@ -1259,8 +1308,9 @@ export const buildStrategyAnalysis = ({
   const restrictedSaldo = slots
     .filter(
       slot =>
-        (slot.estoque === "2" || slot.estoque === "3") &&
-        (!activePhysicalPositionKeys ||
+        (slot.estoque === "1" || slot.estoque === "2" || slot.estoque === "3") &&
+        (slot.estoque === "1" ||
+          !activePhysicalPositionKeys ||
           isPhysicalPositionActive(slot, activePhysicalPositionKeys)) &&
         normalizeSku(slot.referencia) === normalizedSku &&
         slot.saldo > 0 &&
@@ -1300,6 +1350,10 @@ export const buildStrategyAnalysis = ({
     sku: normalizedSku,
     descricao: product?.descricao || sku,
     totalSaldo,
+    physicalSaldo,
+    e1Saldo,
+    e1Paletes,
+    e1Modulos,
     totalPaletes,
     totalPosicoes,
     totalModulos,

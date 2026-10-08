@@ -68,6 +68,16 @@ export function FreeCapacityDrawer({
 const maxFreePercentage =
   freeDistribution[0]?.percentual || 100;
 
+  const occupiedPositions = Math.max(0, totalPositions - freePositions);
+  const headroomTo85 = Math.max(
+    0,
+    Math.floor(totalPositions * 0.85) - occupiedPositions
+  );
+  const headroomTo95 = Math.max(
+    0,
+    Math.floor(totalPositions * 0.95) - occupiedPositions
+  );
+
   const freeStatusColor =
   freePercent < 5
     ? "text-red-600"
@@ -420,77 +430,66 @@ const maxFreePercentage =
               
             </section>
 
-            <section className="bg-white border rounded-xl p-5 mt-6">
+                        <section className="bg-white border rounded-xl p-5 mt-6">
+              <h3 className="text-lg font-bold mb-4">
+                4. Capacidade de Absorção
+              </h3>
 
-            <h3 className="text-lg font-bold mb-4">
-              4. Capacidade de Absorção
-            </h3>
-          
-            <div className="bg-amber-50 border border-amber-200 rounded-xl p-5">
-          
-              <div className="flex items-center gap-3 mb-3">
-          
-                <div className="font-bold text-amber-800">
-                  🟡 Em Consolidação
-                </div>
-          
-              </div>
-          
-              <p className="text-sm text-slate-700 leading-relaxed">
-                Os dados de absorção e potencial de expansão estão sendo consolidados
-                para gerar estimativas confiáveis de crescimento da capacidade física.
-              </p>
-          
-              <p className="text-sm text-slate-700 leading-relaxed mt-2">
-                A análise será disponibilizada automaticamente após a formação da base
-                histórica operacional.
-              </p>
-          
-              <div className="mt-4 grid grid-cols-3 gap-3">
-          
-                <div className="bg-white border rounded-lg p-3">
-          
-                  <div className="text-xs text-slate-500 uppercase">
-                    Base Histórica
-                  </div>
-          
-                  <div className="text-2xl font-black text-slate-700">
-                    Em coleta
-                  </div>
-          
-                </div>
-          
-                <div className="bg-white border rounded-lg p-3">
-          
-                  <div className="text-xs text-slate-500 uppercase">
-                    Capacidade Adicional
-                  </div>
-          
-                  <div className="text-2xl font-black text-slate-700">
-                    —
-                  </div>
-          
-                </div>
-          
-                <div className="bg-white border rounded-lg p-3">
-          
-                  <div className="text-xs text-slate-500 uppercase">
-                    Potencial de Expansão
-                  </div>
-          
-                  <div className="text-2xl font-black text-slate-700">
-                    —
-                  </div>
-          
-                </div>
-          
-              </div>
-          
-            </div>
-          
-          </section>
+              <div className="border rounded-xl p-5 bg-slate-50">
+                <p className="text-sm text-slate-700 leading-relaxed">
+                  A capacidade de absorção pode ser medida agora pela quantidade
+                  real de posições livres. O sistema não converte essas posições
+                  em peças porque a capacidade em peças depende do SKU e da
+                  paletização cadastrada.
+                </p>
 
-          <section className="bg-white border rounded-xl p-5 mt-6">
+                <div className="mt-4 grid grid-cols-1 md:grid-cols-3 gap-3">
+                  <div className="bg-white border rounded-lg p-3">
+                    <div className="text-xs text-slate-500 uppercase">
+                      Capacidade livre atual
+                    </div>
+                    <div className="text-2xl font-black text-emerald-600 mt-1">
+                      {freePositions.toLocaleString("pt-BR")}
+                    </div>
+                    <div className="text-xs text-slate-500 mt-1">
+                      posições físicas
+                    </div>
+                  </div>
+
+                  <div className="bg-white border rounded-lg p-3">
+                    <div className="text-xs text-slate-500 uppercase">
+                      Margem até 85%
+                    </div>
+                    <div className="text-2xl font-black text-slate-700 mt-1">
+                      {headroomTo85.toLocaleString("pt-BR")}
+                    </div>
+                    <div className="text-xs text-slate-500 mt-1">
+                      novas posições antes da faixa de atenção
+                    </div>
+                  </div>
+
+                  <div className="bg-white border rounded-lg p-3">
+                    <div className="text-xs text-slate-500 uppercase">
+                      Margem até 95%
+                    </div>
+                    <div className="text-2xl font-black text-slate-700 mt-1">
+                      {headroomTo95.toLocaleString("pt-BR")}
+                    </div>
+                    <div className="text-xs text-slate-500 mt-1">
+                      novas posições antes da saturação
+                    </div>
+                  </div>
+                </div>
+
+                <div className="mt-4 text-xs text-slate-500">
+                  {freePercent.toFixed(1)}% da estrutura permanece livre. A
+                  capacidade em peças deve ser calculada por SKU, paletização e
+                  estrutura física, não por uma conversão fixa de posições.
+                </div>
+              </div>
+            </section>
+
+<section className="bg-white border rounded-xl p-5 mt-6">
 
           <h3 className="text-lg font-bold mb-4">
             5. Insight Executivo

@@ -1,638 +1,268 @@
+import type { HistoricoMov } from "../types";
+import { parseChacoteDate } from "../lib/consultorEngine";
+
 interface TotalStockDrawerProps {
   isOpen: boolean;
   onClose: () => void;
   totalSaldo: number;
+  history: HistoricoMov[];
 }
 
 export function TotalStockDrawer({
   isOpen,
   onClose,
   totalSaldo,
+  history,
 }: TotalStockDrawerProps) {
-
   if (!isOpen) return null;
 
-  const stockTarget = 2000000;
+  const entradas = history
+    .filter(item => item.tipo === "Entrada")
+    .reduce((sum, item) => sum + Math.max(0, Number(item.quantidade) || 0), 0);
 
-  const stockEfficiency =
-    (totalSaldo / stockTarget) * 100;
-  
-  const stockDifference =
-    totalSaldo - stockTarget;
+  const saidas = history
+    .filter(item => item.tipo === "Saída")
+    .reduce((sum, item) => sum + Math.max(0, Number(item.quantidade) || 0), 0);
 
-  const stockPressurePercent =
-  Math.max(
-    0,
-    Math.min(
-      ((stockEfficiency - 90) / 20) * 100,
-      100
-    )
-  );
-  
-  const stockStatus =
-  stockEfficiency > 105
-    ? "critical"
-    : stockEfficiency > 100
-    ? "warning"
-    : "healthy";
+  const movimentacaoLiquida = entradas - saidas;
+  const movimentacaoBruta = entradas + saidas;
 
-  const stockColor =
-  stockStatus === "critical"
-    ? "text-red-600"
-    : stockStatus === "warning"
-    ? "text-yellow-600"
-    : "text-emerald-600";
+  const timestamps = history
+    .map(item => parseChacoteDate(item.data))
+    .filter((value): value is number => value !== null)
+    .sort((a, b) => a - b);
 
-  const stockTitle =
-  stockStatus === "critical"
-    ? "🔴 Estoque Acima da Capacidade Planejada"
-    : stockStatus === "warning"
-    ? "🟡 Estoque em Atenção"
-    : "🟢 Estoque Saudável";
+  const firstTimestamp = timestamps[0];
+  const lastTimestamp = timestamps[timestamps.length - 1];
 
-  const stockDescription =
-  stockStatus === "critical"
-    ? "O volume armazenado ultrapassou significativamente a meta operacional."
-    : stockStatus === "warning"
-    ? "O estoque encontra-se acima da meta definida para a unidade."
-    : "O estoque opera dentro dos limites recomendados.";
+  const elapsedDays =
+    firstTimestamp !== undefined && lastTimestamp !== undefined
+      ? Math.max(
+          1,
+          Math.floor(
+            (lastTimestamp - firstTimestamp) /
+              (1000 * 60 * 60 * 24)
+          ) + 1
+        )
+      : 60;
 
-  const riskCards =
-  stockStatus === "critical"
-    ? [
-        {
-          icon: "📦",
-          title: "Capacidade Física",
-          text: "O estoque aproxima-se do limite operacional da estrutura física.",
-        },
-        {
-          icon: "💰",
-          title: "Capital Imobilizado",
-          text: "Maior volume financeiro retido em estoque.",
-        },
-        {
-          icon: "🔄",
-          title: "Flexibilidade",
-          text: "Menor capacidade de absorver aumentos de produção.",
-        },
-      ]
-    : stockStatus === "warning"
-    ? [
-        {
-          icon: "📦",
-          title: "Capacidade Física",
-          text: "A ocupação permanece controlada, porém requer monitoramento.",
-        },
-        {
-          icon: "💰",
-          title: "Capital Imobilizado",
-          text: "Existe aumento moderado do capital armazenado.",
-        },
-        {
-          icon: "🔄",
-          title: "Flexibilidade",
-          text: "A operação ainda possui margem para absorção de demanda.",
-        },
-      ]
-    : [
-        {
-          icon: "📦",
-          title: "Capacidade Física",
-          text: "Capacidade física operando dentro dos níveis recomendados.",
-        },
-        {
-          icon: "💰",
-          title: "Capital Imobilizado",
-          text: "Volume saudável de recursos mantidos em estoque.",
-        },
-        {
-          icon: "🔄",
-          title: "Flexibilidade",
-          text: "Alta capacidade de adaptação às variações operacionais.",
-        },
-      ];
+  const averageNetPerDay = movimentacaoLiquida / elapsedDays;
+  const projection30 = Math.max(0, totalSaldo + averageNetPerDay * 30);
 
-  const executiveInsight =
-  stockStatus === "critical"
-    ? `O estoque atual encontra-se em ${totalSaldo.toLocaleString()} peças, operando em ${stockEfficiency.toFixed(1)}% da meta definida para a unidade. O volume armazenado ultrapassa significativamente o limite operacional recomendado, aumentando a pressão sobre capacidade física, capital imobilizado e flexibilidade operacional.`
-    : stockStatus === "warning"
-    ? `O estoque atual encontra-se em ${totalSaldo.toLocaleString()} peças, operando em ${stockEfficiency.toFixed(1)}% da meta definida para a unidade. Embora ainda não represente um cenário crítico, o excedente de ${stockDifference.toLocaleString()} peças exige monitoramento contínuo para evitar aumento da pressão operacional.`
-    : `O estoque atual encontra-se em ${totalSaldo.toLocaleString()} peças, operando em ${stockEfficiency.toFixed(1)}% da meta definida para a unidade. O volume armazenado permanece dentro dos limites recomendados, garantindo capacidade operacional e flexibilidade para absorção de demanda.`;
+  const trend =
+    averageNetPerDay > 0.5
+      ? "crescimento"
+      : averageNetPerDay < -0.5
+        ? "redução"
+        : "estabilidade";
 
-  let pressureImpacts;
+  const trendColor =
+    trend === "crescimento"
+      ? "text-amber-600"
+      : trend === "redução"
+        ? "text-emerald-600"
+        : "text-slate-700";
 
-    if (stockStatus === "healthy") {
-      pressureImpacts = [
-        {
-          icon: "🏢",
-          title: "Capacidade Disponível",
-          description: "Espaço adequado para crescimento operacional",
-        },
-        {
-          icon: "💰",
-          title: "Capital Equilibrado",
-          description: "Volume compatível com a operação",
-        },
-        {
-          icon: "🔄",
-          title: "Alta Flexibilidade",
-          description: "Facilidade para reorganizações e absorção de demanda",
-        },
-        {
-          icon: "✅",
-          title: "Baixo Risco",
-          description: "Operação dentro dos parâmetros recomendados",
-        },
-      ];
-    }
-    
-    else if (stockStatus === "warning") {
-      pressureImpacts = [
-        {
-          icon: "🏢",
-          title: "Maior Ocupação Física",
-          description: "Utilização crescente da capacidade disponível",
-        },
-        {
-          icon: "💰",
-          title: "Capital Imobilizado",
-          description: "Volume acima da meta operacional",
-        },
-        {
-          icon: "🔄",
-          title: "Necessidade de Consolidação",
-          description: "Maior dependência de reorganizações internas",
-        },
-        {
-          icon: "⚠️",
-          title: "Menor Margem Produtiva",
-          description: "Redução gradual da flexibilidade operacional",
-        },
-      ];
-    }
-    
-    else {
-      pressureImpacts = [
-        {
-          icon: "🚨",
-          title: "Saturação Física",
-          description: "Capacidade próxima do limite operacional",
-        },
-        {
-          icon: "💰",
-          title: "Capital Elevado",
-          description: "Volume excessivo imobilizado em estoque",
-        },
-        {
-          icon: "🔄",
-          title: "Consolidação Intensa",
-          description: "Maior necessidade de movimentações internas",
-        },
-        {
-          icon: "⛔",
-          title: "Risco Operacional",
-          description: "Impacto potencial na armazenagem e produção",
-        },
-      ];
-    }
+  const projectionDifference = projection30 - totalSaldo;
 
-    let markerPosition = 0;
-
-    if (stockEfficiency <= 100) {
-      markerPosition = (stockEfficiency / 100) * 70;
-    }
-    else if (stockEfficiency <= 105) {
-      markerPosition =
-        70 + ((stockEfficiency - 100) / 5) * 15;
-    }
-    else {
-      markerPosition =
-        85 + ((stockEfficiency - 105) / 5) * 15;
-    }
-    
-    markerPosition = Math.min(markerPosition, 100);
-
-    const greenWidth = 70;
-    const yellowWidth = 15;
-    const redWidth = 15;
-  
   return (
     <div className="fixed inset-0 z-50 flex justify-end bg-black/40">
-
       <div className="w-full max-w-5xl bg-white h-full overflow-y-auto">
-
         <div className="sticky top-0 bg-white border-b px-6 py-4 flex justify-between items-center">
-
-          <h2 className="text-2xl font-bold">
-            Análise de Saldo Total
-          </h2>
+          <div>
+            <h2 className="text-2xl font-bold text-slate-800">
+              Análise de Saldo Total
+            </h2>
+            <p className="text-xs text-slate-500 mt-1">
+              Saldo atual e comportamento real das movimentações registradas.
+            </p>
+          </div>
 
           <button
             onClick={onClose}
-            className="text-xl"
+            className="text-xl px-2 py-1 rounded hover:bg-slate-100"
           >
             ×
           </button>
-
         </div>
 
-        <div className="p-6">
+        <div className="p-6 space-y-6">
+          <section className="bg-white border rounded-xl p-5">
+            <h3 className="text-lg font-bold mb-4">
+              1. Saldo Atual
+            </h3>
 
-        <section className="bg-white border rounded-xl p-5">
-
-        <h3 className="text-lg font-bold mb-4">
-          1. Eficiência do Estoque
-        </h3>
-      
-        <div
-          className={`border rounded-xl p-5 mb-4 ${
-            stockStatus === "critical"
-              ? "bg-red-50 border-red-200"
-              : stockStatus === "warning"
-              ? "bg-amber-50 border-amber-200"
-              : "bg-emerald-50 border-emerald-200"
-          }`}
-        >
-      
-          <div className="text-xs uppercase font-bold mb-2">
-            {stockTitle}
-          </div>
-      
-          <div className={`text-4xl font-black ${stockColor}`}>
-            {stockEfficiency.toFixed(1)}%
-          </div>
-      
-          <div className="mt-3 text-sm text-slate-700">
-            {stockDescription}
-          </div>
-      
-        </div>
-      
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-      
-          <div className="border rounded-xl p-4">
-      
-            <div className="text-xs uppercase text-slate-500 flex items-center gap-2">
-              📦 Saldo Atual
-            </div>
-      
-            <div className="text-4xl font-black text-slate-800">
-              {totalSaldo.toLocaleString()}
-            </div>
-      
-          </div>
-      
-          <div className="border rounded-xl p-4">
-      
-            <div className="text-xs uppercase text-slate-500 flex items-center gap-2">
-              🎯 Meta Operacional
-            </div>
-      
-            <div className="text-3xl font-black text-slate-800">
-              {stockTarget.toLocaleString()}
-            </div>
-      
-          </div>
-      
-          <div className="border rounded-xl p-4">
-      
-            <div className="text-xs uppercase text-slate-500 flex items-center gap-2">
-              📈 Diferença
-            </div>
-      
-            <div
-              className={`text-4xl font-black ${
-                stockStatus === "critical"
-                ? "text-red-600"
-                : stockStatus === "warning"
-                ? "text-amber-500"
-                : "text-emerald-600"
-              }`}
-            >
-              {stockDifference > 0 ? "+" : ""}
-              {stockDifference.toLocaleString()}
-            </div>
-      
-          </div>
-      
-        </div>
-      
-      </section>
-
-      <section className="bg-white border rounded-xl p-5 mt-6">
-
-        <h3 className="text-lg font-bold mb-4">
-          2. Pressão de Estoque
-        </h3>
-      
-        <div className="border rounded-xl p-5">
-      
-          <div className="flex justify-between items-start mb-3">
-
-          <div>
-        
-            <div className="font-semibold text-slate-700">
-              Meta Operacional
-            </div>
-        
-            <div className="text-xs text-slate-500">
-              Limite recomendado de estoque
-            </div>
-        
-          </div>
-        
-          <div className="flex items-center gap-3">
-
-            <div className={`text-lg font-bold ${stockColor}`}>
-              {stockEfficiency.toFixed(1)}%
-            </div>
-          
-            <div
-              className={`
-                px-2 py-1 rounded-full text-xs font-bold
-                ${
-                  stockStatus === "critical"
-                    ? "bg-red-100 text-red-700"
-                    : stockStatus === "warning"
-                    ? "bg-amber-100 text-amber-700"
-                    : "bg-emerald-100 text-emerald-700"
-                }
-              `}
-            >
-              {stockStatus === "critical"
-                ? "CRÍTICO"
-                : stockStatus === "warning"
-                ? "ATENÇÃO"
-                : "SAUDÁVEL"}
-            </div>
-          
-          </div>
-        
-        </div>
-      
-        <div className="relative w-full h-8 rounded-full overflow-hidden flex">
-
-            <div className="w-[70%] bg-emerald-500" />
-  
-            <div className="w-[15%] bg-amber-500" />
-            
-            <div className="w-[15%] bg-red-500" />
-          
-            <div
-              className="absolute top-0 bottom-0 w-1 bg-white border border-slate-800 z-20"
-              style={{
-                left: `${markerPosition}%`,
-              }}
-            />
-          
-        </div>
-
-       <div className="relative mt-2 h-5 text-xs">
-
-          <span
-            className="absolute left-0 text-slate-500"
-          >
-            0%
-          </span>
-        
-          <span
-            className="absolute text-emerald-600 font-semibold"
-            style={{
-              left: "70%",
-              transform: "translateX(-50%)",
-            }}
-          >
-            100%
-          </span>
-        
-          <span
-            className="absolute text-amber-600 font-semibold"
-            style={{
-              left: "85%",
-              transform: "translateX(-50%)",
-            }}
-          >
-            105%
-          </span>
-        
-          <span
-            className="absolute right-0 text-red-600 font-semibold"
-          >
-            110%
-          </span>
-        
-        </div>
-          
-          <div className="grid grid-cols-3 mt-4 text-center">
-      
-            <div>
-              <div className="font-bold text-emerald-600">
-                🟢 Até 100%
-              </div>
-      
-              <div className="text-xs text-slate-500">
-                Saudável
-              </div>
-            </div>
-      
-            <div>
-              <div className="font-bold text-yellow-600">
-                🟡 100% a 105%
-              </div>
-      
-              <div className="text-xs text-slate-500">
-                Atenção
-              </div>
-            </div>
-      
-            <div>
-              <div className="font-bold text-red-600">
-                🔴 Acima 105%
-              </div>
-      
-              <div className="text-xs text-slate-500">
-                Crítico
-              </div>
-              
-            </div>
-
-          </div>
-
-         <div className="mt-8">
-
-          <div className="font-bold text-slate-800 mb-4">
-            Impactos do Cenário Atual
-          </div>
-        
-          <div className="grid grid-cols-4 gap-4">
-        
-            {pressureImpacts.map((impact) => (
-        
-              <div
-                key={impact.title}
-                className="
-                  border
-                  rounded-xl
-                  p-4
-                  bg-slate-50
-                  flex
-                  flex-col
-                  items-center
-                  text-center
-                  min-h-[150px]
-                  justify-center
-                "
-              >
-              
-                <div className="text-4xl mb-3">
-                  {impact.icon}
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div className="border rounded-xl p-4 bg-slate-50">
+                <div className="text-xs uppercase text-slate-500">
+                  Saldo físico atual
                 </div>
-              
-                <div className="font-semibold text-slate-800">
-                  {impact.title}
+                <div className="text-4xl font-black text-slate-800 mt-1">
+                  {totalSaldo.toLocaleString("pt-BR")}
                 </div>
-              
-                <div className="text-xs text-slate-500 mt-2">
-                  {impact.description}
+                <div className="text-xs text-slate-500 mt-1">
+                  peças armazenadas
                 </div>
-              
               </div>
-        
-            ))}
-        
-          </div>
-        
-        </div>
 
-     </div>
-        
-      </section>
-
-      <section className="bg-white border rounded-xl p-5 mt-6">
-
-        <h3 className="text-lg font-bold mb-4">
-          3. Evolução do Estoque
-        </h3>
-      
-        <div className="border rounded-xl p-5 bg-amber-50 border-amber-200">
-      
-          <div className="text-xl font-bold text-amber-700">
-            🚧 Em Consolidação
-          </div>
-      
-          <p className="text-sm text-slate-700 mt-3">
-            A análise de evolução depende do acúmulo de histórico operacional para identificar tendências de crescimento ou redução do estoque.
-          </p>
-      
-          <p className="text-sm text-slate-700 mt-2">
-            Conforme a base histórica for construída, o sistema passará a exibir variação, tendência e projeções automáticas.
-          </p>
-      
-        </div>
-      
-      </section>
-          
-        <section className="bg-white border rounded-xl p-5 mt-6">
-
-        <h3 className="text-lg font-bold mb-4">
-          4. Risco Operacional
-        </h3>
-      
-        <div
-          className={`border rounded-xl p-5 mb-4 ${
-            stockStatus === "critical"
-              ? "bg-red-50 border-red-200"
-              : stockStatus === "warning"
-              ? "bg-amber-50 border-amber-200"
-              : "bg-emerald-50 border-emerald-200"
-          }`}
-        >
-      
-          <div className="font-bold text-lg mb-2">
-            {stockTitle}
-          </div>
-      
-          <div className="text-sm text-slate-700">
-            {stockDescription}
-          </div>
-      
-        </div>
-      
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-      
-          {riskCards.map((card) => (
-      
-            <div
-              key={card.title}
-              className={`border rounded-xl p-5 ${
-                stockStatus === "critical"
-                  ? "bg-red-50 border-red-200"
-                  : stockStatus === "warning"
-                  ? "bg-amber-50 border-amber-200"
-                  : "bg-emerald-50 border-emerald-200"
-              }`}
-            >
-      
-              <div className="text-3xl mb-3">
-                {card.icon}
+              <div className="border rounded-xl p-4">
+                <div className="text-xs uppercase text-slate-500">
+                  Movimentação bruta
+                </div>
+                <div className="text-3xl font-black text-blue-600 mt-1">
+                  {movimentacaoBruta.toLocaleString("pt-BR")}
+                </div>
+                <div className="text-xs text-slate-500 mt-1">
+                  peças movimentadas no histórico carregado
+                </div>
               </div>
-      
-              <div className="font-bold mb-2">
-                {card.title}
+
+              <div className="border rounded-xl p-4">
+                <div className="text-xs uppercase text-slate-500">
+                  Tendência líquida
+                </div>
+                <div className={`text-3xl font-black ${trendColor} mt-1`}>
+                  {movimentacaoLiquida > 0 ? "+" : ""}
+                  {movimentacaoLiquida.toLocaleString("pt-BR")}
+                </div>
+                <div className="text-xs text-slate-500 mt-1">
+                  entrada menos saída
+                </div>
               </div>
-      
-              <div className="text-sm text-slate-600">
-                {card.text}
-              </div>
-      
             </div>
-      
-          ))}
-      
-        </div>
-      
-      </section>
+          </section>
 
-        <section className="bg-white border rounded-xl p-5 mt-6">
+          <section className="bg-white border rounded-xl p-5">
+            <h3 className="text-lg font-bold mb-4">
+              2. Comportamento das Movimentações
+            </h3>
 
-        <h3 className="text-lg font-bold mb-4">
-          5. Insight Executivo
-        </h3>
-      
-        <div
-          className={`border rounded-xl p-5 ${
-            stockStatus === "critical"
-              ? "bg-red-50 border-red-200"
-              : stockStatus === "warning"
-              ? "bg-amber-50 border-amber-200"
-              : "bg-emerald-50 border-emerald-200"
-          }`}
-        >
-      
-          <div
-            className={`font-bold text-xl mb-4 ${
-              stockStatus === "critical"
-                ? "text-red-700"
-                : stockStatus === "warning"
-                ? "text-amber-700"
-                : "text-emerald-700"
-            }`}
-          >
-            {stockTitle}
-          </div>
-      
-          <p className="text-slate-700 leading-relaxed">
-            {executiveInsight}
-          </p>
-      
-        </div>
-      
-      </section>
-          
-        </div>
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+              <div className="border rounded-xl p-4">
+                <div className="text-xs uppercase text-slate-500">Entradas</div>
+                <div className="text-3xl font-black text-emerald-600 mt-1">
+                  {entradas.toLocaleString("pt-BR")}
+                </div>
+              </div>
 
+              <div className="border rounded-xl p-4">
+                <div className="text-xs uppercase text-slate-500">Saídas</div>
+                <div className="text-3xl font-black text-red-600 mt-1">
+                  {saidas.toLocaleString("pt-BR")}
+                </div>
+              </div>
+
+              <div className="border rounded-xl p-4">
+                <div className="text-xs uppercase text-slate-500">
+                  Média líquida/dia
+                </div>
+                <div className={`text-3xl font-black ${trendColor} mt-1`}>
+                  {averageNetPerDay > 0 ? "+" : ""}
+                  {averageNetPerDay.toFixed(1)}
+                </div>
+                <div className="text-xs text-slate-500 mt-1">
+                  peças por dia
+                </div>
+              </div>
+
+              <div className="border rounded-xl p-4">
+                <div className="text-xs uppercase text-slate-500">
+                  Período carregado
+                </div>
+                <div className="text-3xl font-black text-slate-700 mt-1">
+                  {elapsedDays}
+                </div>
+                <div className="text-xs text-slate-500 mt-1">
+                  dias de histórico
+                </div>
+              </div>
+            </div>
+
+            <div className="mt-4 border rounded-xl p-4 bg-slate-50">
+              <p className="text-sm text-slate-700 leading-relaxed">
+                O estoque apresenta tendência de{" "}
+                <strong className={trendColor}>{trend}</strong> no período
+                analisado. A leitura considera somente movimentações
+                efetivamente registradas no histórico.
+              </p>
+            </div>
+          </section>
+
+          <section className="bg-white border rounded-xl p-5">
+            <h3 className="text-lg font-bold mb-4">
+              3. Projeção Simples de Saldo
+            </h3>
+
+            <div className="border rounded-xl p-5 bg-slate-50">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div className="bg-white border rounded-lg p-4">
+                  <div className="text-xs uppercase text-slate-500">
+                    Saldo atual
+                  </div>
+                  <div className="text-3xl font-black text-slate-700 mt-1">
+                    {totalSaldo.toLocaleString("pt-BR")}
+                  </div>
+                </div>
+
+                <div className="bg-white border rounded-lg p-4">
+                  <div className="text-xs uppercase text-slate-500">
+                    Projeção em 30 dias
+                  </div>
+                  <div className={`text-3xl font-black ${trendColor} mt-1`}>
+                    {projection30.toLocaleString("pt-BR", {
+                      maximumFractionDigits: 0,
+                    })}
+                  </div>
+                </div>
+
+                <div className="bg-white border rounded-lg p-4">
+                  <div className="text-xs uppercase text-slate-500">
+                    Variação projetada
+                  </div>
+                  <div className={`text-3xl font-black ${trendColor} mt-1`}>
+                    {projectionDifference > 0 ? "+" : ""}
+                    {projectionDifference.toLocaleString("pt-BR", {
+                      maximumFractionDigits: 0,
+                    })}
+                  </div>
+                </div>
+              </div>
+
+              <p className="text-sm text-slate-600 leading-relaxed mt-4">
+                Esta projeção é uma extrapolação do ritmo líquido observado no
+                histórico carregado. Não é previsão de vendas, produção ou
+                demanda e deve ser usada como indicador de tendência.
+              </p>
+            </div>
+          </section>
+
+          <section className="bg-white border rounded-xl p-5">
+            <h3 className="text-lg font-bold mb-4">
+              4. Insight Executivo
+            </h3>
+
+            <div className="border rounded-xl p-5 bg-slate-50">
+              <p className="text-slate-700 leading-relaxed">
+                O estoque possui atualmente{" "}
+                <strong>{totalSaldo.toLocaleString("pt-BR")} peças</strong>.
+                No período carregado, foram registradas{" "}
+                <strong>{entradas.toLocaleString("pt-BR")} peças de entrada</strong>
+                {" "}e{" "}
+                <strong>{saidas.toLocaleString("pt-BR")} peças de saída</strong>,
+                resultando em uma tendência líquida de{" "}
+                <strong>{trend}</strong>.
+              </p>
+
+              {history.length === 0 && (
+                <p className="text-sm text-amber-700 mt-3">
+                  Não há histórico de movimentações disponível para calcular
+                  tendência ou projeção.
+                </p>
+              )}
+            </div>
+          </section>
+        </div>
       </div>
-
     </div>
   );
 }

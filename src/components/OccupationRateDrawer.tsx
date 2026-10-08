@@ -1,12 +1,5 @@
-import {
-  X,
-  Shuffle,
-  Package,
-  Clock3,
-  Activity,
-  MoveHorizontal,
-  AlertTriangle
-} from "lucide-react";
+import { X, AlertTriangle, CheckCircle, Gauge } from "lucide-react";
+
 interface OccupationRateDrawerProps {
   isOpen: boolean;
   onClose: () => void;
@@ -20,437 +13,166 @@ export function OccupationRateDrawer({
 }: OccupationRateDrawerProps) {
   if (!isOpen) return null;
 
-    const saturationLevel =
-  occupationRate <= 85
-    ? "healthy"
-    : occupationRate <= 95
-    ? "attention"
-    : "critical";
-  
-  const saturationColor =
-  saturationLevel === "healthy"
-    ? "text-emerald-600"
-    : saturationLevel === "attention"
-    ? "text-amber-500"
-    : "text-red-600";
+  const status =
+    occupationRate >= 95
+      ? {
+          label: "CRÍTICO",
+          color: "text-red-700",
+          bg: "bg-red-50",
+          border: "border-red-200",
+          icon: AlertTriangle,
+          message:
+            "A ocupação está acima do nível de saturação operacional. A prioridade passa a ser consolidação, liberação de posições e controle de novos recebimentos.",
+        }
+      : occupationRate >= 85
+        ? {
+            label: "ATENÇÃO",
+            color: "text-amber-700",
+            bg: "bg-amber-50",
+            border: "border-amber-200",
+            icon: AlertTriangle,
+            message:
+              "A ocupação entrou na faixa de monitoramento. A operação ainda possui margem, mas a consolidação e a organização do estoque passam a ter impacto direto na flexibilidade.",
+          }
+        : {
+            label: "SAUDÁVEL",
+            color: "text-emerald-700",
+            bg: "bg-emerald-50",
+            border: "border-emerald-200",
+            icon: CheckCircle,
+            message:
+              "A ocupação permanece abaixo do nível de atenção. Existe margem física para absorver novas necessidades sem indicar saturação pela métrica atual.",
+          };
 
-    const saturationContent =
-  saturationLevel === "healthy"
-    ? {
-        title: "🟢 Operação Saudável",
-        color: "emerald",
-        description:
-          "A ocupação encontra-se dentro da faixa recomendada para operação.",
+  const Icon = status.icon;
+  const markerPosition =
+    occupationRate <= 85
+      ? (Math.max(0, occupationRate) / 85) * 70
+      : occupationRate <= 95
+        ? 70 + ((occupationRate - 85) / 10) * 20
+        : Math.min(100, 90 + ((occupationRate - 95) / 5) * 10);
 
-        impacts: [
-          "Maior flexibilidade operacional",
-          "Menor necessidade de remanejamentos",
-          "Melhor velocidade de armazenagem",
-          "Capacidade para absorver crescimento",
-        ],
-
-        insight:
-          "A ocupação física encontra-se dentro da faixa recomendada, proporcionando flexibilidade operacional e capacidade para absorver novas demandas sem impacto significativo na produtividade.",
-      }
-    : saturationLevel === "attention"
-    ? {
-        title: "🟡 Operação em Atenção",
-        color: "amber",
-        description:
-          "A ocupação aproxima-se do limite recomendado para operação.",
-
-        impacts: [
-          "Redução gradual da flexibilidade operacional",
-          "Aumento de movimentações internas",
-          "Maior necessidade de consolidação",
-          "Monitoramento constante da capacidade",
-        ],
-
-        insight:
-          "A ocupação física opera próxima ao limite recomendado. O cenário exige monitoramento contínuo para evitar aumento de movimentações internas e perda gradual de eficiência operacional.",
-      }
-    : {
-        title: "🔴 Saturação Operacional",
-        color: "red",
-        description:
-          "A ocupação ultrapassa o limite recomendado para operação.",
-
-        impacts: [
-          "Dificuldade para novas armazenagens",
-          "Aumento de remanejamentos",
-          "Perda de produtividade operacional",
-          "Necessidade urgente de consolidação",
-        ],
-
-        insight:
-          "A ocupação física encontra-se em nível crítico de saturação. A continuidade do crescimento sem ações corretivas poderá gerar restrições operacionais e impactos diretos na produtividade.",
-      };
-
-      const impactCards =
-        saturationLevel === "healthy"
-          ? [
-              {
-                icon: MoveHorizontal,
-                title: "Flexibilidade",
-                desc: "Maior liberdade operacional",
-              },
-              {
-                icon: Activity,
-                title: "Produtividade",
-                desc: "Fluxo operacional otimizado",
-              },
-              {
-                icon: Package,
-                title: "Capacidade",
-                desc: "Espaço para crescimento",
-              },
-              {
-                icon: Clock3,
-                title: "Agilidade",
-                desc: "Movimentação rápida",
-              },
-              {
-                icon: Shuffle,
-                title: "Consolidação",
-                desc: "Baixa necessidade",
-              },
-            ]
-          : saturationLevel === "attention"
-          ? [
-              {
-                icon: MoveHorizontal,
-                title: "Flexibilidade",
-                desc: "Redução gradual",
-              },
-              {
-                icon: Shuffle,
-                title: "Movimentações",
-                desc: "Tendência de aumento",
-              },
-              {
-                icon: Package,
-                title: "Consolidação",
-                desc: "Maior necessidade",
-              },
-              {
-                icon: Clock3,
-                title: "Tempo Operacional",
-                desc: "Possível aumento",
-              },
-              {
-                icon: Activity,
-                title: "Monitoramento",
-                desc: "Acompanhamento constante",
-              },
-            ]
-          : [
-              {
-                icon: MoveHorizontal,
-                title: "Flexibilidade",
-                desc: "Fortemente reduzida",
-              },
-              {
-                icon: Shuffle,
-                title: "Movimentações",
-                desc: "Alto volume interno",
-              },
-              {
-                icon: Package,
-                title: "Capacidade",
-                desc: "Próxima do limite",
-              },
-              {
-                icon: Clock3,
-                title: "Produtividade",
-                desc: "Risco operacional",
-              },
-              {
-                icon: Activity,
-                title: "Ação Imediata",
-                desc: "Necessária",
-              },
-            ];
-      
-  
   return (
     <div className="fixed inset-0 z-50 flex justify-end bg-black/40">
-
-      <div className="w-full max-w-5xl bg-white h-full overflow-y-auto">
-
+      <div className="w-full max-w-4xl bg-white h-full overflow-y-auto">
         <div className="sticky top-0 bg-white border-b px-6 py-4 flex justify-between items-center">
-
-          <h2 className="text-2xl font-bold">
-            Análise de Ocupação (%)
-          </h2>
+          <div>
+            <h2 className="text-2xl font-bold text-slate-800">
+              Análise de Ocupação (%)
+            </h2>
+            <p className="text-xs text-slate-500 mt-1">
+              Leitura da ocupação física atual do endereçamento.
+            </p>
+          </div>
 
           <button
             onClick={onClose}
-            className="text-xl"
+            className="text-xl px-2 py-1 rounded hover:bg-slate-100"
           >
-            ×
+            <X className="w-5 h-5" />
           </button>
-
         </div>
 
-        <div className="p-6">
-
-          <section className="bg-white border rounded-xl p-5">
-
-          <h3 className="text-lg font-bold mb-4">
-            1. Ocupação Atual
-          </h3>
-        
-          <div className="bg-amber-50 border border-amber-200 rounded-xl p-5">
-        
-            <div className="font-bold text-amber-800 text-xl mb-3">
-              🟡 Em Consolidação
+        <div className="p-6 space-y-6">
+          <section className={`border rounded-xl p-5 ${status.bg} ${status.border}`}>
+            <div className="flex items-center gap-3">
+              <Icon className={`w-6 h-6 ${status.color}`} />
+              <div>
+                <div className={`text-lg font-black ${status.color}`}>
+                  {status.label}
+                </div>
+                <div className="text-sm text-slate-700">
+                  Ocupação física atual
+                </div>
+              </div>
             </div>
-        
-            <p className="text-sm text-slate-700">
-              Os dados de ocupação e metas operacionais estão sendo consolidados.
+
+            <div className={`text-6xl font-black ${status.color} mt-5`}>
+              {occupationRate.toFixed(1)}%
+            </div>
+
+            <p className="text-sm text-slate-700 leading-relaxed mt-4">
+              {status.message}
             </p>
-        
-            <p className="text-sm text-slate-700 mt-2">
-              A análise será disponibilizada automaticamente após a formação da base histórica.
-            </p>
-        
-            <div className="grid grid-cols-3 gap-3 mt-4">
-        
-              <div className="bg-white border rounded-lg p-3">
-                <div className="text-xs uppercase text-slate-500">
-                  Meta Recomendada
-                </div>
-                <div className="text-3xl font-black text-slate-800">
-                  85%
-                </div>
-              </div>
-        
-              <div className="bg-white border rounded-lg p-3">
-                <div className="text-xs uppercase text-slate-500">
-                  Ocupação Atual
-                </div>
-                <div className="text-3xl font-black text-slate-400">
-                  —
-                </div>
-              </div>
-        
-              <div className="bg-white border rounded-lg p-3">
-                <div className="text-xs uppercase text-slate-500">
-                  Desvio
-                </div>
-                <div className="text-3xl font-black text-slate-400">
-                  —
-                </div>
-              </div>
-        
-            </div>
-        
-          </div>
-        
-        </section>
-
-          <section className="bg-white border rounded-xl p-5 mt-6">
-
-            <h3 className="text-lg font-bold mb-4">
-              2. Status de Saturação
-            </h3>
-          
-            <div className="bg-amber-50 border border-amber-200 rounded-xl p-5">
-          
-              <div className="font-bold text-amber-800 text-xl mb-3">
-                🟡 Em Consolidação
-              </div>
-          
-              <p className="text-sm text-slate-700">
-                O status de saturação será calculado automaticamente após a consolidação dos dados operacionais.
-              </p>
-          
-              <div className="grid grid-cols-3 gap-3 mt-4">
-          
-                <div className="bg-white border rounded-lg p-3 text-center">
-                  <div className="font-bold text-emerald-600">
-                    🟢 Até 85%
-                  </div>
-                  <div className="text-xs text-slate-500 mt-1">
-                    Operação saudável
-                  </div>
-                </div>
-          
-                <div className="bg-white border rounded-lg p-3 text-center">
-                  <div className="font-bold text-amber-500">
-                    🟡 85% a 95%
-                  </div>
-                  <div className="text-xs text-slate-500 mt-1">
-                    Monitoramento
-                  </div>
-                </div>
-          
-                <div className="bg-white border rounded-lg p-3 text-center">
-                  <div className="font-bold text-red-600">
-                    🔴 Acima de 95%
-                  </div>
-                  <div className="text-xs text-slate-500 mt-1">
-                    Saturação
-                  </div>
-                </div>
-          
-              </div>
-          
-            </div>
-          
           </section>
 
-          <section className="bg-white border rounded-xl p-5 mt-6">
-
-          <h3 className="text-lg font-bold mb-4">
-            3. Evolução da Ocupação
-          </h3>
-        
-          <div className="bg-amber-50 border border-amber-200 rounded-xl p-5">
-        
-            <div className="font-bold text-amber-800 text-xl mb-3">
-              🟡 Em Consolidação
+          <section className="border rounded-xl p-5">
+            <div className="flex items-center gap-2 mb-4">
+              <Gauge className="w-5 h-5 text-indigo-600" />
+              <h3 className="text-lg font-bold text-slate-800">
+                Faixas operacionais
+              </h3>
             </div>
-        
-            <p className="text-sm text-slate-700">
-              Os dados históricos de ocupação estão sendo consolidados para gerar análises de tendência confiáveis.
-            </p>
-        
-            <p className="text-sm text-slate-700 mt-2">
-              A evolução será disponibilizada automaticamente após a formação da base histórica operacional.
-            </p>
-        
-            <div className="grid grid-cols-3 gap-3 mt-4">
-        
-              <div className="bg-white border rounded-lg p-3">
-                <div className="text-xs uppercase text-slate-500">
-                  Base Histórica
-                </div>
-        
-                <div className="text-2xl font-black text-slate-700">
-                  Em coleta
-                </div>
-              </div>
-        
-              <div className="bg-white border rounded-lg p-3">
-                <div className="text-xs uppercase text-slate-500">
-                  Tendência
-                </div>
-        
-                <div className="text-2xl font-black text-slate-400">
-                  —
-                </div>
-              </div>
-        
-              <div className="bg-white border rounded-lg p-3">
-                <div className="text-xs uppercase text-slate-500">
-                  Variação
-                </div>
-        
-                <div className="text-2xl font-black text-slate-400">
-                  —
-                </div>
-              </div>
-        
+
+            <div className="relative w-full h-8 rounded-full overflow-hidden flex">
+              <div className="w-[70%] bg-emerald-500" />
+              <div className="w-[20%] bg-amber-500" />
+              <div className="w-[10%] bg-red-500" />
+              <div
+                className="absolute top-0 bottom-0 w-1 bg-white border border-slate-800 z-20"
+                style={{ left: `${markerPosition}%` }}
+              />
             </div>
-        
-          </div>
-        
-        </section>
 
-        <section className="bg-white border rounded-xl p-5 mt-6">
+            <div className="grid grid-cols-3 gap-3 mt-4 text-center">
+              <div>
+                <div className="font-bold text-emerald-600">🟢 Até 85%</div>
+                <div className="text-xs text-slate-500">Faixa saudável</div>
+              </div>
+              <div>
+                <div className="font-bold text-amber-600">🟡 85% a 95%</div>
+                <div className="text-xs text-slate-500">Monitoramento</div>
+              </div>
+              <div>
+                <div className="font-bold text-red-600">🔴 Acima de 95%</div>
+                <div className="text-xs text-slate-500">Saturação</div>
+              </div>
+            </div>
+          </section>
 
-            <h3 className="text-lg font-bold mb-4">
-              4. Consequências da Saturação
+          <section className="border rounded-xl p-5 bg-slate-50">
+            <h3 className="text-lg font-bold text-slate-800 mb-3">
+              Leitura gerencial
             </h3>
-            
-            <div className="bg-amber-50 border border-amber-200 rounded-xl p-5">
-            
-              <div className="flex items-center gap-3 mb-4">
-            
-                <AlertTriangle className="w-8 h-8 text-amber-500" />
-            
-                <div>
-            
-                  <div className="text-lg font-bold text-amber-700">
-                    Cenário Atual: {occupationRate.toFixed(1)}% de ocupação
-                  </div>
-            
-                  <div className="font-semibold text-slate-800">
-                    {saturationContent.title}
-                  </div>
-            
+
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+              <div className="bg-white border rounded-lg p-4">
+                <div className="text-xs uppercase text-slate-500">
+                  Margem até 85%
                 </div>
-            
-              </div>
-            
-              <p className="text-sm text-slate-700 mb-5">
-                {saturationContent.description}
-              </p>
-            
-              <div className="border-t border-amber-200 pt-5">
-            
-                <div className="grid grid-cols-5 gap-4">
-            
-                  {impactCards.map((item) => {
-                    const Icon = item.icon;
-            
-                    return (
-                      <div
-                        key={item.title}
-                        className="text-center"
-                      >
-                        <Icon className="w-8 h-8 mx-auto mb-3 text-amber-500" />
-            
-                        <div className="font-semibold text-sm text-slate-800">
-                          {item.title}
-                        </div>
-            
-                        <div className="text-xs text-slate-500 mt-1">
-                          {item.desc}
-                        </div>
-            
-                      </div>
-                    );
-                  })}
-            
+                <div className="text-2xl font-black text-slate-700 mt-1">
+                  {Math.max(0, 85 - occupationRate).toFixed(1)} p.p.
                 </div>
-            
               </div>
-            
+
+              <div className="bg-white border rounded-lg p-4">
+                <div className="text-xs uppercase text-slate-500">
+                  Margem até 95%
+                </div>
+                <div className="text-2xl font-black text-slate-700 mt-1">
+                  {Math.max(0, 95 - occupationRate).toFixed(1)} p.p.
+                </div>
+              </div>
+
+              <div className="bg-white border rounded-lg p-4">
+                <div className="text-xs uppercase text-slate-500">
+                  Situação
+                </div>
+                <div className={`text-2xl font-black ${status.color} mt-1`}>
+                  {status.label}
+                </div>
+              </div>
             </div>
-          
-        </section>
 
-        <section className="bg-white border rounded-xl p-5 mt-6">
-
-          <h3 className="text-lg font-bold mb-4">
-            5. Insight Executivo
-          </h3>
-        
-          <div className="bg-slate-50 border rounded-xl p-5">
-        
-            <p className="text-sm leading-relaxed text-slate-700">
-        
-              A ocupação física do estoque encontra-se em{" "}
-              <strong>{occupationRate.toFixed(1)}%</strong>.
-        
+            <p className="text-sm text-slate-600 mt-4 leading-relaxed">
+              A evolução histórica e a projeção de saturação ficam na análise
+              detalhada de capacidade, onde são usados os snapshots reais de
+              ocupação registrados no sistema. Isso evita duplicar indicadores
+              ou apresentar projeções sem base histórica.
             </p>
-        
-            <p className="text-sm leading-relaxed text-slate-700 mt-3">
-        
-              {saturationContent.insight}
-        
-            </p>
-        
-          </div>
-        
-        </section>
-          
+          </section>
         </div>
-
       </div>
-
     </div>
   );
 }
