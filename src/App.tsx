@@ -4047,7 +4047,7 @@ if (refRaw) {
     startDate: string | null;
     endDate: string;
     label: string;
-    kind: "cutoff" | "interval" | "month";
+    kind: "cutoff" | "day" | "interval" | "month";
   } | null => {
     const normalized = text
       .toLowerCase()
@@ -4056,13 +4056,24 @@ if (refRaw) {
 
     const references: ConsultorDateReference[] = [];
     const seen = new Set<string>();
+    const acceptedSpans: Array<{ start: number; end: number }> = [];
 
     const collect = (pattern: RegExp) => {
       for (const match of normalized.matchAll(pattern)) {
         const candidate = match[0];
+        const start = match.index ?? 0;
+        const end = start + candidate.length;
+
+        // Não interprete partes de uma data completa como uma segunda referência.
+        // Ex.: em 01/09/2026, o padrão MM/AAAA também encontraria 09/2026.
+        if (acceptedSpans.some(span => start < span.end && end > span.start)) {
+          continue;
+        }
+
         const parsed = parseConsultorDateReference(candidate);
         if (!parsed) continue;
 
+        acceptedSpans.push({ start, end });
         const key = `${parsed.startDate}|${parsed.endDate}`;
         if (!seen.has(key)) {
           seen.add(key);
@@ -4091,26 +4102,24 @@ if (refRaw) {
 
     const reference = references[0];
     const isMonthReference = reference.startDate !== reference.endDate;
-    const isInterval = /\b(entre|de)\b/.test(normalized) && /\b(at[eé]|a)\b/.test(normalized);
+    const explicitlyRequestsCutoff = /\b(ate|antes|anterior)\b/.test(normalized);
 
-    if (isInterval) {
-      return {
-        startDate: reference.startDate,
-        endDate: reference.endDate,
-        label: reference.label,
-        kind: "interval",
-      };
-    }
-
-    if (
-      isMonthReference &&
-      !/\b(ate|antes|anterior)\b/.test(normalized)
-    ) {
+    if (isMonthReference && !explicitlyRequestsCutoff) {
       return {
         startDate: reference.startDate,
         endDate: reference.endDate,
         label: reference.label,
         kind: "month",
+      };
+    }
+
+    // Uma data diária isolada significa aquele dia, não todo o histórico até ele.
+    if (!isMonthReference && !explicitlyRequestsCutoff) {
+      return {
+        startDate: reference.startDate,
+        endDate: reference.endDate,
+        label: reference.label,
+        kind: "day",
       };
     }
 
@@ -4858,7 +4867,7 @@ if (refRaw) {
         }
       } else if (
         isChacoteQuantityIntent(userMessage) ||
-        /(quantas|quantidade|saldo|estoque)/i.test(userMessage)
+        /\b(quantas|quantidade|saldo|estoque)\b/i.test(userMessage)
       ) {
         const quantitySku = findSkuInChatText(userMessage);
         const dateRange = parseConsultorDateRange(userMessage);
