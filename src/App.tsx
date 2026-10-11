@@ -979,15 +979,96 @@ useEffect(() => {
 }, [activeTab]);
 
 useEffect(() => {
-  if (!currentUser) return;
+  if (!currentUser) {
+    divergenciasRef.current = [];
+    setDivergencias([]);
+    return;
+  }
 
-  const loadDivergencias = async () => {
-    const data = await loadDivergenciasFromSupabase();
-    setDivergencias(data);
+  let active = true;
+  let initialLoadComplete = false;
+  let initialLoadStarted = false;
+  const changesDuringInitialLoad = new Map<string, Divergencia | null>();
+
+  const startInitialLoad = () => {
+    if (!active || initialLoadStarted) return;
+    initialLoadStarted = true;
+
+    // A carga inicial começa depois que o canal conecta, evitando uma janela
+    // em que uma alteração remota poderia ocorrer antes da assinatura.
+    void loadDivergenciasFromSupabase()
+      .then(data => {
+        if (!active) return;
+
+        const mergedById = new Map<string, Divergencia>(data.map(item => [item.id, item]));
+        for (const [id, eventRow] of changesDuringInitialLoad) {
+          if (eventRow === null) mergedById.delete(id);
+          else mergedById.set(id, eventRow);
+        }
+
+        const merged = Array.from(mergedById.values());
+        initialLoadComplete = true;
+        divergenciasRef.current = merged;
+        setDivergencias(merged);
+        void saveOfflineSnapshot("divergencias", merged);
+      })
+      .catch(error => {
+        console.error("Erro ao inicializar sincronização de divergências:", error);
+      });
   };
 
-  loadDivergencias();
-}, [currentUser]);
+  const channel = supabase
+    .channel("divergencias-live")
+    .on(
+      "postgres_changes",
+      { event: "*", schema: "public", table: "divergencias" },
+      (payload) => {
+        if (!active) return;
+
+        const eventType = payload.eventType;
+        const rawRow = eventType === "DELETE" ? payload.old : payload.new;
+        const eventId = String((rawRow as any)?.id ?? "");
+        if (!eventId) return;
+
+        if (eventType === "DELETE") {
+          if (!initialLoadComplete) changesDuringInitialLoad.set(eventId, null);
+          const next = updateDivergenciasState(current => current.filter(item => item.id !== eventId));
+          void saveOfflineSnapshot("divergencias", next);
+          return;
+        }
+
+        const incoming = normalizeDivergenciaRow(rawRow);
+        if (!incoming) return;
+
+        // Durante a consulta inicial, o evento prevalece sobre a fotografia
+        // paginada para o mesmo identificador.
+        if (!initialLoadComplete) {
+          changesDuringInitialLoad.set(incoming.id, incoming);
+        }
+
+        const next = updateDivergenciasState(current => {
+          const exists = current.some(item => item.id === incoming.id);
+          if (!exists) return [incoming, ...current];
+          return current.map(item => item.id === incoming.id ? incoming : item);
+        });
+        void saveOfflineSnapshot("divergencias", next);
+      }
+    )
+    .subscribe((status) => {
+      if (status === "SUBSCRIBED") {
+        console.info("[Realtime] Sincronização de divergências conectada.");
+        startInitialLoad();
+      } else if (status === "CHANNEL_ERROR" || status === "TIMED_OUT" || status === "CLOSED") {
+        console.warn("[Realtime] Sincronização de divergências indisponível:", status);
+        startInitialLoad();
+      }
+    });
+
+  return () => {
+    active = false;
+    void supabase.removeChannel(channel);
+  };
+}, [currentUser, authUserId]);
 
   // --- DYNAMIC REGISTERED CUSTOM PRODUCTS STATE ---
   const [productsList, setProductsList] = useState<Product[]>([]);
@@ -1241,6 +1322,18 @@ const deleteProduct = async (
   const [history, setHistory] = useState<HistoricoMov[]>([]);
 
   const [divergencias, setDivergencias] = useState<Divergencia[]>([]);
+  const divergenciasRef = useRef<Divergencia[]>([]);
+
+  // Mantém uma referência síncrona para combinar eventos remotos e gravações
+  // locais sem substituir a lista inteira por um estado potencialmente antigo.
+  const updateDivergenciasState = (
+    updater: (current: Divergencia[]) => Divergencia[]
+  ): Divergencia[] => {
+    const next = updater(divergenciasRef.current);
+    divergenciasRef.current = next;
+    setDivergencias(next);
+    return next;
+  };
 
   /**
    * Atualiza e persiste somente os slots novos/alterados.
@@ -1422,7 +1515,7 @@ const deleteProduct = async (
   const persistDivergenciasUpdate = async (
     updatedDivergencias: Divergencia[]
   ): Promise<boolean> => {
-    const previousById = new globalThis.Map(divergencias.map(div => [div.id, div]));
+    const previousById = new globalThis.Map(divergenciasRef.current.map(div => [div.id, div]));
     const changed = updatedDivergencias.filter(div => {
       const previous = previousById.get(div.id);
       return !previous || JSON.stringify(previous) !== JSON.stringify(div);
@@ -1431,8 +1524,12 @@ const deleteProduct = async (
     const saved = await saveDivergenciasToSupabase(changed);
 
     if (saved) {
-      setDivergencias(updatedDivergencias);
-      await saveOfflineSnapshot("divergencias", updatedDivergencias);
+      const merged = updateDivergenciasState(current => {
+        const byId = new globalThis.Map(current.map(div => [div.id, div]));
+        changed.forEach(div => byId.set(div.id, div));
+        return Array.from(byId.values());
+      });
+      await saveOfflineSnapshot("divergencias", merged);
     }
 
     return saved;
@@ -3082,7 +3179,7 @@ if (refRaw) {
     }
 
     setSlots(updatedSlots);
-    setDivergencias(updatedDivs);
+    updateDivergenciasState(() => updatedDivs);
 
     // Save adjustment record in history logs
     const compensationHistory: HistoricoMov = {
