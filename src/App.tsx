@@ -898,15 +898,121 @@ useEffect(() => {
 }, [currentUser]);
 
 useEffect(() => {
-  if (!authUserId) return;
+  if (!authUserId || !currentUser || activeTab !== "endereçamento") return;
 
-  const loadSlots = async () => {
-    const data = await loadSlotsFromSupabase();
-    setSlots(data);
+  let active = true;
+  let initialLoadComplete = false;
+  let loadGeneration = 0;
+  let fallbackLoadStarted = false;
+  const changesDuringInitialLoad = new Map<string, WarehouseSlot | null>();
+  const pendingSlotChanges = new Map<string, WarehouseSlot | null>();
+  let slotFlushTimer: ReturnType<typeof setTimeout> | null = null;
+  let snapshotTimer: ReturnType<typeof setTimeout> | null = null;
+
+  const scheduleOfflineSnapshot = () => {
+    if (snapshotTimer !== null) clearTimeout(snapshotTimer);
+    snapshotTimer = setTimeout(() => {
+      snapshotTimer = null;
+      if (active) void saveOfflineSnapshot("slots", slotsRef.current);
+    }, 250);
   };
 
-  loadSlots();
-}, [authUserId]);
+  const flushPendingSlotChanges = () => {
+    slotFlushTimer = null;
+    if (!active || pendingSlotChanges.size === 0) return;
+
+    const pending = new Map(pendingSlotChanges);
+    pendingSlotChanges.clear();
+
+    updateSlotsState(current => {
+      const byId = new Map(current.map(slot => [slot.id, slot]));
+      for (const [id, incoming] of pending) {
+        if (incoming === null) byId.delete(id);
+        else byId.set(id, incoming);
+      }
+      return Array.from(byId.values());
+    });
+    scheduleOfflineSnapshot();
+  };
+
+  const startInitialLoad = () => {
+    if (!active) return;
+    const generation = ++loadGeneration;
+    initialLoadComplete = false;
+    changesDuringInitialLoad.clear();
+
+    // A assinatura é estabelecida antes da fotografia paginada. Assim, eventos
+    // recebidos enquanto a carga ocorre prevalecem sobre os dados da consulta.
+    void loadSlotsFromSupabase()
+      .then(data => {
+        if (!active || generation !== loadGeneration) return;
+
+        const mergedById = new Map<string, WarehouseSlot>(data.map(slot => [slot.id, slot] as [string, WarehouseSlot]));
+        for (const [id, incoming] of changesDuringInitialLoad) {
+          if (incoming === null) mergedById.delete(id);
+          else mergedById.set(id, incoming);
+        }
+
+        const merged = Array.from(mergedById.values());
+        initialLoadComplete = true;
+        updateSlotsState(() => merged);
+        void saveOfflineSnapshot("slots", merged);
+      })
+      .catch(error => {
+        console.error("Erro ao carregar posições da Pesquisa de Estoque:", error);
+      });
+  };
+
+  const channel = supabase
+    .channel("slots-search-live")
+    .on(
+      "postgres_changes",
+      { event: "*", schema: "public", table: "slots" },
+      payload => {
+        if (!active) return;
+
+        const eventType = payload.eventType;
+        const rawRow = eventType === "DELETE" ? payload.old : payload.new;
+        const eventId = String((rawRow as any)?.id ?? "");
+        if (!eventId) return;
+
+        const incoming = eventType === "DELETE" ? null : rawRow as WarehouseSlot;
+        if (!initialLoadComplete) changesDuringInitialLoad.set(eventId, incoming);
+        pendingSlotChanges.set(eventId, incoming);
+
+        // Agrupa eventos de lotes próximos para limitar re-renderizações e
+        // gravações repetidas do cache local. Não dispara consultas ao banco.
+        if (slotFlushTimer === null) {
+          slotFlushTimer = setTimeout(flushPendingSlotChanges, 50);
+        }
+      }
+    )
+    .subscribe(status => {
+      if (!active) return;
+
+      if (status === "SUBSCRIBED") {
+        fallbackLoadStarted = false;
+        console.info("[Realtime] Pesquisa de estoque conectada.");
+        startInitialLoad();
+      } else if (status === "CHANNEL_ERROR" || status === "TIMED_OUT" || status === "CLOSED") {
+        console.warn("[Realtime] Atualização ao vivo da Pesquisa de Estoque indisponível:", status);
+        // Mantém a pesquisa utilizável sem polling. Se o canal voltar, a assinatura
+        // confirmada dispara uma nova carga para recuperar eventos perdidos.
+        if (!fallbackLoadStarted) {
+          fallbackLoadStarted = true;
+          startInitialLoad();
+        }
+      }
+    });
+
+  return () => {
+    active = false;
+    if (slotFlushTimer !== null) clearTimeout(slotFlushTimer);
+    if (snapshotTimer !== null) clearTimeout(snapshotTimer);
+    pendingSlotChanges.clear();
+    void supabase.removeChannel(channel);
+  };
+}, [authUserId, currentUser, activeTab]);
 
 useEffect(() => {
   if (!authUserId) return;
@@ -1310,6 +1416,26 @@ const deleteProduct = async (
 
   // --- CORE SYSTEM DATA PERSISTENCE ---
   const [slots, setSlots] = useState<WarehouseSlot[]>([]);
+  const slotsRef = useRef<WarehouseSlot[]>([]);
+
+  const updateSlotsState = (
+    updater: (current: WarehouseSlot[]) => WarehouseSlot[]
+  ): WarehouseSlot[] => {
+    const next = updater(slotsRef.current);
+    slotsRef.current = next;
+    setSlots(next);
+    return next;
+  };
+
+  // Mescla apenas as linhas recebidas/alteradas, sem substituir outras linhas
+  // que possam ter sido atualizadas por Realtime desde o cálculo local.
+  const mergeSlotsState = (changedSlots: WarehouseSlot[]): WarehouseSlot[] =>
+    updateSlotsState(current => {
+      const byId = new Map(current.map(slot => [slot.id, slot]));
+      changedSlots.forEach(slot => byId.set(slot.id, slot));
+      return Array.from(byId.values());
+    });
+
   const [warehouseLayout, setWarehouseLayout] = useState<WarehouseLayoutEntry[]>(() => getDefaultE1Layout());
   const [warehouseLayoutLoading, setWarehouseLayoutLoading] = useState(false);
   const [warehouseLayoutSaving, setWarehouseLayoutSaving] = useState(false);
@@ -1349,8 +1475,8 @@ const deleteProduct = async (
     const saved = await saveSlotsToSupabase(changedSlots);
 
     if (saved) {
-      setSlots(updatedSlots);
-      await saveOfflineSnapshot("slots", updatedSlots);
+      const nextSlots = mergeSlotsState(changedSlots);
+      await saveOfflineSnapshot("slots", nextSlots);
     }
 
     return saved;
@@ -1602,11 +1728,8 @@ const deleteProduct = async (
     }
 
     // Atualiza a interface/cache apenas após a confirmação da transação no banco.
-    const nextSlotsById = new globalThis.Map(slots.map(slot => [slot.id, slot]));
-    changedSlots.forEach(slot => nextSlotsById.set(slot.id, slot));
-    const nextSlots = Array.from(nextSlotsById.values());
+    const nextSlots = mergeSlotsState(changedSlots);
     slotsLoadPromise = null;
-    setSlots(nextSlots);
     await saveOfflineSnapshot("slots", nextSlots);
 
     const movementIds = new Set(newMovements.map(movement => movement.id));
@@ -2521,7 +2644,7 @@ if (
       if (!historySaved) {
         // O endereço já foi salvo. Recarregamos para manter a tela fiel ao banco.
         const latestSlots = await loadSlotsFromSupabase();
-        setSlots(latestSlots);
+        updateSlotsState(() => latestSlots);
         alert(
           "Os endereços foram salvos, mas o histórico não pôde ser gravado. " +
           "Os dados preenchidos foram preservados no rascunho; não repita a operação antes de verificar a conexão."
@@ -2713,7 +2836,7 @@ if (
       const historySaved = await appendHistory(newHistory);
       if (!historySaved) {
         const latestSlots = await loadSlotsFromSupabase();
-        setSlots(latestSlots);
+        updateSlotsState(() => latestSlots);
         alert(
           "O endereço foi salvo, mas o histórico não pôde ser registrado. " +
           "Não repita a operação antes de verificar a conexão com o Supabase."
@@ -2784,7 +2907,7 @@ if (
     const historySaved = await appendHistory(historyWithObservation);
     if (!historySaved) {
       const latestSlots = await loadSlotsFromSupabase();
-      setSlots(latestSlots);
+      updateSlotsState(() => latestSlots);
       alert(
         "As posições foram atualizadas, mas o histórico não pôde ser registrado. " +
         "Não repita a operação antes de verificar a conexão."
@@ -3273,7 +3396,11 @@ if (refRaw) {
       }
     }
 
-    setSlots(updatedSlots);
+    const changedSlots = updatedSlots.filter(slot => {
+      const previous = slots.find(item => item.id === slot.id);
+      return !previous || JSON.stringify(previous) !== JSON.stringify(slot);
+    });
+    mergeSlotsState(changedSlots);
     updateDivergenciasState(() => updatedDivs);
 
     // Save adjustment record in history logs

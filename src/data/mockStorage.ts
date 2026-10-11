@@ -180,8 +180,8 @@ export function validateLancamentoRow(
   }
 
   // 6. Quantidade
-  if (row.quantidade === "" || isNaN(Number(row.quantidade)) || Number(row.quantidade) <= 0) {
-    errors.push(`Linha ${rowNumber}: Quantidade é obrigatória e deve ser um número maior que zero.`);
+  if (row.quantidade === "" || !Number.isInteger(Number(row.quantidade)) || Number(row.quantidade) <= 0) {
+    errors.push(`Linha ${rowNumber}: Quantidade é obrigatória e deve ser um número inteiro maior que zero.`);
   }
 
   // 7. Tipo
