@@ -159,17 +159,58 @@ export const DivergenciasPanel: React.FC<DivergenciasPanelProps> = ({
     }
 
     const updatedSlots = [...slots];
-    const slotIdx = updatedSlots.findIndex(
-      s =>
-        s.estoque === div.estoque &&
-        s.modulo === div.modulo &&
-        s.posicao === div.posicao
-    );
+    const normalizeStock = (value: string): string =>
+      String(value ?? "").trim().toUpperCase().replace(/^E/i, "");
+    const normalizeModule = (value: string): string => {
+      const raw = String(value ?? "").trim().toUpperCase().replace(/^[RM]/i, "");
+      return /^\d+$/.test(raw) ? String(Number(raw)) : raw;
+    };
+    const normalizedStock = normalizeStock(div.estoque);
+    const normalizedModule = normalizeModule(div.modulo);
+    const normalizedPosition = String(div.posicao || "").trim().toUpperCase();
+    const samePhysicalAddress = (slot: (typeof updatedSlots)[number]): boolean =>
+      normalizeStock(slot.estoque) === normalizedStock &&
+      normalizeModule(slot.modulo) === normalizedModule &&
+      String(slot.posicao || "").trim().toUpperCase() === normalizedPosition;
+
+    let slotIdx = -1;
+    if (div.slotId) {
+      const slotIdIndex = updatedSlots.findIndex(
+        slot => slot.id === div.slotId && samePhysicalAddress(slot)
+      );
+      if (slotIdIndex >= 0) slotIdx = slotIdIndex;
+    }
+
+    if (slotIdx < 0) {
+      const expectedReference = String(div.refAtual || "").trim().toUpperCase();
+      const expectedEmpty = expectedReference === "" || expectedReference === "VAZIO";
+      const expectedRestriction = String(div.restricao || "").trim().toLowerCase();
+      const candidates = updatedSlots
+        .map((slot, index) => ({ slot, index }))
+        .filter(({ slot }) => samePhysicalAddress(slot))
+        .filter(({ slot }) => {
+          const currentReference = String(slot.referencia || "").trim().toUpperCase();
+          const referenceMatches = expectedEmpty
+            ? currentReference === "" && Number(slot.saldo || 0) === 0
+            : currentReference === expectedReference;
+          const currentRestriction = String(slot.restricao || "nenhuma").trim().toLowerCase();
+          return referenceMatches &&
+            (!expectedRestriction || currentRestriction === expectedRestriction);
+        });
+
+      const canonicalBaseId = `${normalizedStock}-${normalizedModule}-${normalizedPosition}`;
+      const canonicalBase = candidates.find(({ slot }) => slot.id === canonicalBaseId);
+      if (canonicalBase) {
+        slotIdx = canonicalBase.index;
+      } else if (candidates.length === 1) {
+        slotIdx = candidates[0].index;
+      }
+    }
 
     if (slotIdx === -1) {
       alert(
-        `A posição ${div.estoque}-${div.modulo}-${div.posicao} não está cadastrada. ` +
-        "A correção foi interrompida para evitar a criação de uma posição física inexistente."
+        `Não foi possível identificar com segurança a linha da posição ${div.estoque}-${div.modulo}-${div.posicao}. ` +
+        "A correção foi interrompida para evitar alterar um SKU diferente ou uma posição física inexistente. Atualize a tela e revise a divergência."
       );
       return;
     }
@@ -207,9 +248,9 @@ export const DivergenciasPanel: React.FC<DivergenciasPanelProps> = ({
     const updatedDivergencias = divergencias.map(d => {
       const sameOpenAddress =
         d.status === "Aberta" &&
-        d.estoque === div.estoque &&
-        d.modulo === div.modulo &&
-        d.posicao === div.posicao;
+        normalizeStock(d.estoque) === normalizedStock &&
+        normalizeModule(d.modulo) === normalizedModule &&
+        String(d.posicao || "").trim().toUpperCase() === normalizedPosition;
 
       if (!sameOpenAddress) return d;
 
@@ -218,6 +259,7 @@ export const DivergenciasPanel: React.FC<DivergenciasPanelProps> = ({
         status: "Corrigida" as const,
         refNova: resolveAction === "descartar" ? "" : cleanSku,
         saldoFinal: resolveAction === "descartar" ? 0 : resolveQty,
+        slotId: updatedSlots[slotIdx].id,
         dataCorrecao: targetDate,
         corrigidoPor: currentUser?.name || operator,
         observacao:
@@ -250,6 +292,7 @@ export const DivergenciasPanel: React.FC<DivergenciasPanelProps> = ({
           : (resolveDataChacoteVal || "Reconciliação"),
       hora: currentHour,
       responsavel: operator,
+      slotId: updatedSlots[slotIdx].id,
     };
 
     const historySaved = await onAddHistory([newLog]);

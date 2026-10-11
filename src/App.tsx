@@ -3271,11 +3271,62 @@ if (refRaw) {
     const addressQuery = searchModulo.trim().replace(/\s+/g, "").toUpperCase();
     const addressMatch = addressQuery.match(/^E([123])M(\d+)([A-Z]\d+)?$/) ||
       addressQuery.match(/^M(\d+)([A-Z]\d+)?$/);
-    const normalizedSearchModulo = searchModulo.replace(/^[RM]/i, "");
+    const normalizeSlotModule = (value: unknown): string => {
+      const raw = String(value ?? "").trim().toUpperCase().replace(/^[RM]/i, "");
+      return /^\d+$/.test(raw) ? String(Number(raw)) : raw;
+    };
+
+    const rawSearchModule = searchModulo.replace(/^[RM]/i, "");
+    const normalizedSearchModulo = /^\d+$/.test(rawSearchModule)
+      ? String(Number(rawSearchModule))
+      : rawSearchModule;
     const normalizedSearchPosicao = searchPosicao.replace(/^[RMG]/i, "").toUpperCase();
     const normalizedSearchPosicaoText = searchPosicao.trim().toLowerCase();
 
+    // Vagas físicas E2/E3 são exibidas uma única vez. Linhas auxiliares ::ITEM::
+    // vazias continuam no banco para preservar histórico e reutilização, mas não
+    // representam uma segunda vaga física. E1 contém linhas lógicas por SKU.
+    const occupiedPhysicalAddressKeys = new Set<string>(
+      slots
+        .filter(slot => {
+          const stock = String(slot.estoque ?? "").trim().toUpperCase().replace(/^E/i, "");
+          return (stock === "2" || stock === "3") &&
+            Number(slot.saldo) > 0 &&
+            String(slot.referencia ?? "").trim() !== "";
+        })
+        .map(slot => {
+          const stock = String(slot.estoque ?? "").trim().toUpperCase().replace(/^E/i, "");
+          return `${stock}-${normalizeSlotModule(slot.modulo)}-${String(slot.posicao || "").trim().toUpperCase()}`;
+        })
+    );
+
+    const shouldDisplaySlot = (slot: WarehouseSlot): boolean => {
+      const stock = String(slot.estoque ?? "").trim().toUpperCase().replace(/^E/i, "");
+      const rawModule = String(slot.modulo ?? "").trim().toUpperCase().replace(/^[RM]/i, "");
+      const module = normalizeSlotModule(slot.modulo);
+      const reference = String(slot.referencia ?? "").trim();
+      const occupied = Number(slot.saldo) > 0 && reference !== "";
+
+      // A configuração oficial não possui módulos numéricos com zero à esquerda.
+      // As vagas legadas vazias são ocultadas; qualquer saldo positivo anômalo continua visível.
+      if (!/^\d+$/.test(module)) return false;
+      if (stock === "1") return occupied || (rawModule !== module && Number(slot.saldo) > 0);
+      if (stock !== "2" && stock !== "3") return false;
+      if (rawModule !== module && Number(slot.saldo) > 0) return true;
+      if (rawModule !== module && reference === "") return false;
+      if (occupied) return true;
+      if (String(slot.id).includes("::ITEM::")) return false;
+
+      const position = String(slot.posicao || "").trim().toUpperCase();
+      const baseId = `${stock}-${module}-${position}`;
+      if (slot.id !== baseId) return false;
+
+      return !occupiedPhysicalAddressKeys.has(`${stock}-${module}-${position}`);
+    };
+
     const filtered = slots.filter(s => {
+      if (!shouldDisplaySlot(s)) return false;
+
       const matchesRef = normalizedSearchRef
         ? s.referencia.toLowerCase() === normalizedSearchRef
         : true;
@@ -3303,10 +3354,10 @@ if (refRaw) {
       const matchesAddress = addressMatch
         ? addressQuery.startsWith("E")
           ? s.estoque === addressMatch[1] &&
-            s.modulo.replace(/^[RM]/i, "") === addressMatch[2] &&
+            normalizeSlotModule(s.modulo) === normalizeSlotModule(addressMatch[2]) &&
             (!addressMatch[3] ||
               s.posicao.trim().toUpperCase() === addressMatch[3])
-          : s.modulo.replace(/^[RM]/i, "") === addressMatch[1] &&
+          : normalizeSlotModule(s.modulo) === normalizeSlotModule(addressMatch[1]) &&
             (!addressMatch[2] ||
               s.posicao.trim().toUpperCase() === addressMatch[2])
         : true;

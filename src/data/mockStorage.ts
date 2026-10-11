@@ -229,8 +229,11 @@ export interface ProcessResult {
 const normalizeEstoque = (value: string): string =>
   value.trim().toUpperCase().replace(/^E/, "");
 
-const normalizeModulo = (value: string): string =>
-  value.trim().toUpperCase().replace(/^[RM]/i, "");
+const normalizeModulo = (value: string): string => {
+  const normalized = value.trim().toUpperCase().replace(/^[RM]/i, "");
+  // Módulos são identificadores numéricos; "03" deve ser persistido como "3".
+  return /^\d+$/.test(normalized) ? String(Number(normalized)) : normalized;
+};
 
 const normalizePosicao = (value: string): string =>
   value.trim().toUpperCase();

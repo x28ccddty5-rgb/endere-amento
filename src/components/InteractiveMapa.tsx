@@ -451,17 +451,35 @@ if (estoque === "2") {
 
   // Get or dynamically create slot on map interactions so user never faces a broken state
   const getOrCreateSlotOnMap = (est: string, m: string, p: string): WarehouseSlot => {
-    const existing = slots.find(s => 
-      s.estoque === est && 
-      s.modulo === m && 
-      s.posicao === p
+    const rawModule = String(m).trim().toUpperCase().replace(/^[RM]/i, "");
+    const normalizedModule = /^\d+$/.test(rawModule) ? String(Number(rawModule)) : rawModule;
+    const normalizedPosition = String(p || "").trim().toUpperCase();
+    const baseId = `${est}-${normalizedModule}-${normalizedPosition}`;
+
+    const candidates = slots.filter(s =>
+      String(s.estoque).replace(/^E/i, "") === String(est).replace(/^E/i, "") &&
+      String(s.modulo).trim().toUpperCase().replace(/^[RM]/i, "").match(/^\d+$/) !== null &&
+      String(Number(String(s.modulo).trim().toUpperCase().replace(/^[RM]/i, ""))) === normalizedModule &&
+      String(s.posicao || "").trim().toUpperCase() === normalizedPosition
     );
-    if (existing) return existing;
+
+    // O mapa representa uma posição física; se houver item ocupado, não deve
+    // escolher primeiro uma linha auxiliar vazia do mesmo endereço.
+    const occupied = candidates.filter(s =>
+      Number(s.saldo) > 0 && String(s.referencia || "").trim() !== ""
+    );
+    if (occupied.length > 0) {
+      return occupied.find(s => s.id === baseId) ?? occupied[0];
+    }
+
+    const existingBase = candidates.find(s => s.id === baseId);
+    if (existingBase) return existingBase;
+
     return {
-      id: `${est}-${m}-${p}`,
+      id: baseId,
       estoque: est,
-      modulo: m,
-      posicao: p,
+      modulo: normalizedModule,
+      posicao: normalizedPosition,
       referencia: "",
       descricao: "",
       saldo: 0,
