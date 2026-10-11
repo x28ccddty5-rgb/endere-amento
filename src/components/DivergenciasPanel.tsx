@@ -13,9 +13,11 @@ interface DivergenciasPanelProps {
   currentUser: any;
   operator: string;
   launchDate: string;
-  onUpdateDivergencias: (updated: Divergencia[]) => Promise<boolean>;
-  onUpdateSlots: (updated: WarehouseSlot[]) => Promise<boolean>;
-  onAddHistory: (movs: HistoricoMov[]) => Promise<boolean>;
+  onCommitDivergenceResolution: (
+    updatedSlots: WarehouseSlot[],
+    newMovements: HistoricoMov[],
+    updatedDivergencias: Divergencia[]
+  ) => Promise<boolean>;
   hasAccess: (level: "administrador" | "operador" | "consulta") => boolean;
 }
 
@@ -26,9 +28,7 @@ export const DivergenciasPanel: React.FC<DivergenciasPanelProps> = ({
   currentUser,
   operator,
   launchDate,
-  onUpdateDivergencias,
-  onUpdateSlots,
-  onAddHistory,
+  onCommitDivergenceResolution,
   hasAccess,
 }) => {
   const isReadOnly = isReadOnlyRole(currentUser?.role);
@@ -269,12 +269,6 @@ export const DivergenciasPanel: React.FC<DivergenciasPanelProps> = ({
       };
     });
 
-    const slotsSaved = await onUpdateSlots(updatedSlots);
-    if (!slotsSaved) {
-      alert("Não foi possível salvar a correção do endereço.");
-      return;
-    }
-
     const newLog: HistoricoMov = {
       id: `CORR-${generateId()}`,
       dataLancamento: targetDate,
@@ -295,20 +289,16 @@ export const DivergenciasPanel: React.FC<DivergenciasPanelProps> = ({
       slotId: updatedSlots[slotIdx].id,
     };
 
-    const historySaved = await onAddHistory([newLog]);
-    if (!historySaved) {
+    const saved = await onCommitDivergenceResolution(
+      updatedSlots,
+      [newLog],
+      updatedDivergencias
+    );
+    if (!saved) {
       alert(
-        "O endereço foi corrigido, mas o registro de auditoria não pôde ser gravado. " +
-        "Verifique a conexão antes de repetir a operação."
-      );
-      return;
-    }
-
-    const divergenciasSaved = await onUpdateDivergencias(updatedDivergencias);
-    if (!divergenciasSaved) {
-      alert(
-        "A correção e o histórico foram salvos, mas o status da divergência não pôde ser atualizado. " +
-        "Verifique a conexão antes de repetir a operação."
+        "A correção não foi concluída. Não foi possível confirmar o resultado. " +
+        "Atualize os dados e confira o status antes de tentar novamente, para evitar " +
+        "repetir uma correção cuja resposta de rede possa ter sido perdida."
       );
       return;
     }

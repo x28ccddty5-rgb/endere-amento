@@ -1535,6 +1535,111 @@ const deleteProduct = async (
     return saved;
   };
 
+  /**
+   * Salva uma correção física, o histórico e o status das divergências em uma
+   * única transação PostgreSQL. O banco também compara os registros com a versão
+   * que o operador leu; alterações concorrentes fazem a transação inteira falhar.
+   */
+  const persistDivergenceResolutionAtomically = async (
+    updatedSlots: WarehouseSlot[],
+    newMovements: HistoricoMov[],
+    updatedDivergencias: Divergencia[]
+  ): Promise<boolean> => {
+    if (!navigator.onLine) {
+      console.warn("Correção de divergência cancelada: conexão indisponível.");
+      return false;
+    }
+
+    const previousSlotsById = new globalThis.Map(slots.map(slot => [slot.id, slot]));
+    const changedSlots = updatedSlots.filter(slot => {
+      const previous = previousSlotsById.get(slot.id);
+      return !previous || JSON.stringify(previous) !== JSON.stringify(slot);
+    });
+    const expectedSlots = changedSlots
+      .map(slot => previousSlotsById.get(slot.id))
+      .filter((slot): slot is WarehouseSlot => Boolean(slot));
+
+    const previousDivergenciasById = new globalThis.Map(
+      divergenciasRef.current.map(div => [div.id, div])
+    );
+    const changedDivergencias = updatedDivergencias.filter(div => {
+      const previous = previousDivergenciasById.get(div.id);
+      return !previous || JSON.stringify(previous) !== JSON.stringify(div);
+    });
+    const expectedDivergencias = changedDivergencias
+      .map(div => previousDivergenciasById.get(div.id))
+      .filter((div): div is Divergencia => Boolean(div));
+
+    if (
+      changedDivergencias.length === 0 ||
+      expectedDivergencias.length !== changedDivergencias.length ||
+      expectedDivergencias.some(div => div.status !== "Aberta") ||
+      changedDivergencias.some(div => div.status !== "Corrigida") ||
+      newMovements.length === 0
+    ) {
+      console.error(
+        "Correção atômica abortada: estado anterior ou transição da divergência inválida."
+      );
+      return false;
+    }
+
+    const { data, error } = await supabase.rpc("resolve_stock_divergence_atomic", {
+      p_expected_slots: expectedSlots,
+      p_slots: changedSlots,
+      p_history: mapHistoryRowsForSupabase(newMovements),
+      p_expected_divergencias: mapDivergenciasForSupabase(expectedDivergencias),
+      p_divergencias: mapDivergenciasForSupabase(changedDivergencias),
+    });
+
+    if (error || data?.success !== true) {
+      console.error("Transação da correção de divergência foi revertida:", {
+        code: error?.code,
+        message: error?.message ?? "Resposta inválida da função transacional.",
+        details: error?.details,
+        hint: error?.hint,
+      });
+      return false;
+    }
+
+    // Atualiza a interface/cache apenas após a confirmação da transação no banco.
+    const nextSlotsById = new globalThis.Map(slots.map(slot => [slot.id, slot]));
+    changedSlots.forEach(slot => nextSlotsById.set(slot.id, slot));
+    const nextSlots = Array.from(nextSlotsById.values());
+    slotsLoadPromise = null;
+    setSlots(nextSlots);
+    await saveOfflineSnapshot("slots", nextSlots);
+
+    const movementIds = new Set(newMovements.map(movement => movement.id));
+    const nextHistory = [
+      ...newMovements,
+      ...history.filter(movement => !movementIds.has(movement.id)),
+    ];
+    setHistory(nextHistory);
+    await saveOfflineSnapshot("history", nextHistory);
+
+    setHistoryQueryRows(previous => {
+      if (!previous) return previous;
+      const inSelectedPeriod = newMovements.filter(
+        movement => movement.data >= histDateStart && movement.data <= histDateEnd
+      );
+      const selectedIds = new Set(inSelectedPeriod.map(movement => movement.id));
+      return [
+        ...inSelectedPeriod,
+        ...previous.filter(movement => !selectedIds.has(movement.id)),
+      ];
+    });
+
+    divergenciasLoadPromise = null;
+    const mergedDivergencias = updateDivergenciasState(current => {
+      const byId = new globalThis.Map(current.map(div => [div.id, div]));
+      changedDivergencias.forEach(div => byId.set(div.id, div));
+      return Array.from(byId.values());
+    });
+    await saveOfflineSnapshot("divergencias", mergedDivergencias);
+
+    return true;
+  };
+
   const handleMobileResolveDivergencia = async (
     div: Divergencia,
     action: "sobrescrever" | "descartar",
@@ -1731,12 +1836,6 @@ const deleteProduct = async (
       return false;
     }
 
-    const slotsSaved = await persistSlotsUpdate(updatedSlots);
-    if (!slotsSaved) {
-      alert("Não foi possível salvar a correção do item.");
-      return false;
-    }
-
     const newLog: HistoricoMov = {
       id: `CORR-${generateId()}`,
       dataLancamento: targetDate,
@@ -1756,20 +1855,16 @@ const deleteProduct = async (
       restricao: currentDiv.restricao || (resolvedSlotIdx >= 0 ? (updatedSlots[resolvedSlotIdx].restricao || "nenhuma") : "nenhuma"),
     };
 
-    const historySaved = await appendHistory([newLog]);
-    if (!historySaved) {
+    const saved = await persistDivergenceResolutionAtomically(
+      updatedSlots,
+      [newLog],
+      updatedDivergencias
+    );
+    if (!saved) {
       alert(
-        "O endereço foi corrigido, mas o registro de auditoria não pôde ser gravado. " +
-        "Verifique a conexão antes de repetir a operação."
-      );
-      return false;
-    }
-
-    const divergenciasSaved = await persistDivergenciasUpdate(updatedDivergencias);
-    if (!divergenciasSaved) {
-      alert(
-        "A correção e o histórico foram salvos, mas o status da divergência não pôde ser atualizado. " +
-        "Verifique a conexão antes de repetir a operação."
+        "A correção não foi concluída. Não foi possível confirmar o resultado. " +
+        "Atualize os dados e confira o status antes de tentar novamente, para evitar " +
+        "repetir uma correção cuja resposta de rede possa ter sido perdida."
       );
       return false;
     }
@@ -8082,9 +8177,7 @@ const pct = total > 0 ? (occupied / total) * 100 : 0;
               currentUser={currentUser}
               operator={operator}
               launchDate={launchDate}
-              onUpdateDivergencias={persistDivergenciasUpdate}
-              onUpdateSlots={persistSlotsUpdate}
-              onAddHistory={appendHistory}
+              onCommitDivergenceResolution={persistDivergenceResolutionAtomically}
               hasAccess={hasAccess}
             />
           )}
