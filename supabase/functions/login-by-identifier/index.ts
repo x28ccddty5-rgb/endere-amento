@@ -3,9 +3,12 @@ import { createClient } from "npm:@supabase/supabase-js@2";
 import { withSupabase } from "@supabase/server";
 
 type LoginBody = {
-  identifier?: string;
-  password?: string;
+  identifier?: unknown;
+  password?: unknown;
 };
+
+const MAX_IDENTIFIER_LENGTH = 100;
+const MAX_PASSWORD_LENGTH = 1024;
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -14,6 +17,24 @@ const corsHeaders = {
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
+function jsonResponse(body: Record<string, unknown>, status = 200) {
+  return Response.json(body, {
+    status,
+    headers: {
+      ...corsHeaders,
+      "Content-Type": "application/json; charset=utf-8",
+    },
+  });
+}
+
+/**
+ * Escapa caracteres especiais de LIKE/ILIKE para que o identificador
+ * seja tratado como texto literal, e não como um padrão fornecido pelo cliente.
+ */
+function escapeLikePattern(value: string): string {
+  return value.replace(/[\\%_]/g, "\\$&");
+}
+
 export default {
   fetch: withSupabase({ auth: "none" }, async (req, ctx) => {
     if (req.method === "OPTIONS") {
@@ -21,10 +42,7 @@ export default {
     }
 
     if (req.method !== "POST") {
-      return Response.json(
-        { error: "Método não permitido." },
-        { status: 405, headers: corsHeaders },
-      );
+      return jsonResponse({ error: "Método não permitido." }, 405);
     }
 
     let body: LoginBody;
@@ -32,66 +50,95 @@ export default {
     try {
       body = await req.json();
     } catch {
-      return Response.json(
-        { error: "Requisição inválida." },
-        { status: 400, headers: corsHeaders },
+      return jsonResponse({ error: "Requisição inválida." }, 400);
+    }
+
+    const identifier =
+      typeof body.identifier === "string" ? body.identifier.trim() : "";
+    const password = typeof body.password === "string" ? body.password : "";
+
+    if (!identifier || !password) {
+      return jsonResponse(
+        { error: "Informe o usuário/e-mail e a senha." },
+        400,
       );
     }
 
-    const identifier = body.identifier?.trim();
-    const password = body.password;
-
-    if (!identifier || !password) {
-      return Response.json(
-        { error: "Informe o usuário/e-mail e a senha." },
-        { status: 400, headers: corsHeaders },
+    // Evita entradas excessivas e caracteres de controle em identificadores.
+    if (
+      identifier.length > MAX_IDENTIFIER_LENGTH ||
+      password.length > MAX_PASSWORD_LENGTH ||
+      /[\u0000-\u001F\u007F]/.test(identifier)
+    ) {
+      return jsonResponse(
+        { error: "Usuário ou senha incorretos." },
+        401,
       );
     }
 
     const normalizedIdentifier = identifier.toLowerCase();
+    const pattern = escapeLikePattern(normalizedIdentifier);
 
-    const { data: profiles, error: profileError } = await ctx.supabaseAdmin
-      .from("profiles")
-      .select("id,username,name,role")
-      .or(
-        `username.ilike.${normalizedIdentifier},name.ilike.${normalizedIdentifier}`,
-      )
-      .limit(2);
+    // Busca username isoladamente. Não interpolar entrada do usuário em .or().
+    const { data: usernameMatches, error: usernameError } =
+      await ctx.supabaseAdmin
+        .from("profiles")
+        .select("id,username,name,role")
+        .ilike("username", pattern)
+        .limit(2);
 
-    if (profileError) {
-      console.error("Erro ao localizar perfil:", profileError);
-
-      return Response.json(
-        { error: "Não foi possível localizar o usuário." },
-        { status: 500, headers: corsHeaders },
+    if (usernameError) {
+      console.error("Erro ao localizar perfil por login:", usernameError);
+      return jsonResponse(
+        { error: "Não foi possível concluir a autenticação." },
+        500,
       );
     }
 
-    if (!profiles || profiles.length === 0) {
-      return Response.json(
-        { error: "Usuário ou senha incorretos." },
-        { status: 401, headers: corsHeaders },
-      );
+    let profile: {
+      id: string;
+      username: string;
+      name: string;
+      role: string;
+    } | null = null;
+
+    if (usernameMatches?.length === 1) {
+      profile = usernameMatches[0];
+    } else if (usernameMatches?.length === 0) {
+      // Só procura pelo nome se não houve username correspondente.
+      const { data: nameMatches, error: nameError } = await ctx.supabaseAdmin
+        .from("profiles")
+        .select("id,username,name,role")
+        .ilike("name", pattern)
+        .limit(2);
+
+      if (nameError) {
+        console.error("Erro ao localizar perfil por nome:", nameError);
+        return jsonResponse(
+          { error: "Não foi possível concluir a autenticação." },
+          500,
+        );
+      }
+
+      // Nome só serve como identificador se corresponder a um único perfil.
+      if (nameMatches?.length === 1) {
+        profile = nameMatches[0];
+      }
     }
 
-    if (profiles.length > 1) {
-      return Response.json(
-        { error: "O identificador informado corresponde a mais de um usuário." },
-        { status: 409, headers: corsHeaders },
-      );
+    // Não revela se o identificador existe nem se o nome é ambíguo.
+    if (!profile) {
+      return jsonResponse({ error: "Usuário ou senha incorretos." }, 401);
     }
-
-    const profile = profiles[0];
 
     const { data: authUserData, error: authUserError } =
       await ctx.supabaseAdmin.auth.admin.getUserById(profile.id);
 
     if (authUserError || !authUserData.user?.email) {
-      console.error("Erro ao localizar usuário do Auth:", authUserError);
-
-      return Response.json(
-        { error: "Não foi possível localizar a conta de autenticação." },
-        { status: 500, headers: corsHeaders },
+      console.error("Erro ao localizar conta de autenticação:", authUserError);
+      return jsonResponse(
+        { error: "Não foi possível concluir a autenticação." },
+        500,
       );
     }
 
@@ -100,10 +147,9 @@ export default {
 
     if (!supabaseUrl || !publishableKeysRaw) {
       console.error("Configuração pública do Supabase não está disponível.");
-
-      return Response.json(
+      return jsonResponse(
         { error: "Configuração de autenticação indisponível." },
-        { status: 500, headers: corsHeaders },
+        500,
       );
     }
 
@@ -113,10 +159,9 @@ export default {
       publishableKeys = JSON.parse(publishableKeysRaw);
     } catch (error) {
       console.error("SUPABASE_PUBLISHABLE_KEYS inválido:", error);
-
-      return Response.json(
+      return jsonResponse(
         { error: "Configuração de autenticação inválida." },
-        { status: 500, headers: corsHeaders },
+        500,
       );
     }
 
@@ -124,10 +169,9 @@ export default {
 
     if (!publishableKey) {
       console.error("Chave publishable padrão não encontrada.");
-
-      return Response.json(
+      return jsonResponse(
         { error: "Configuração de autenticação indisponível." },
-        { status: 500, headers: corsHeaders },
+        500,
       );
     }
 
@@ -146,13 +190,17 @@ export default {
       });
 
     if (authError || !authData.session || !authData.user) {
-      return Response.json(
-        { error: "Usuário ou senha incorretos." },
-        { status: 401, headers: corsHeaders },
-      );
+      if (authError?.status === 429) {
+        return jsonResponse(
+          { error: "Muitas tentativas. Aguarde antes de tentar novamente." },
+          429,
+        );
+      }
+
+      return jsonResponse({ error: "Usuário ou senha incorretos." }, 401);
     }
 
-    return Response.json(
+    return jsonResponse(
       {
         session: authData.session,
         user: {
@@ -162,7 +210,7 @@ export default {
           role: profile.role,
         },
       },
-      { status: 200, headers: corsHeaders },
+      200,
     );
   }),
 };
