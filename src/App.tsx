@@ -13,10 +13,15 @@ import { jsPDF } from "jspdf";
 import autoTable from "jspdf-autotable";
 import * as XLSX from "xlsx";
 import { supabase } from './lib/supabase';
+import { guardedSupabaseRequest } from './lib/supabaseRequestGuard';
+import { enqueueLancamentoDraftWrite } from './lib/lancamentoDraftQueue';
 import { 
   processLancamentosInSequence,
   processTransferenciaPosicao,
   validateLancamentoRow,
+  getSlotIdentityMismatch,
+  getAuxiliarySlotIdentity,
+  isBasePhysicalSlotAtOwnAddress,
   generateId
 } from "./data/mockStorage";
 import { 
@@ -72,6 +77,7 @@ import {
 } from "lucide-react";
 
 const HISTORY_PAGE_SIZE = 1000;
+const MAX_READ_PAGES = 50; // Limite defensivo: no máximo 50 páginas (50.000 registros) por carga.
 const HISTORY_DASHBOARD_DAYS = 60;
 const PRODUCT_SEARCH_PAGE_SIZE = 100;
 
@@ -103,6 +109,11 @@ const CONSULTOR_QUICK_QUESTIONS = {
   ],
 } as const;
 
+const LANCAMENTO_DRAFT_LOCAL_KEY = "eb_lancamento_draft_v1";
+const LANCAMENTO_DRAFT_CLEAR_MARKER_PREFIX = "eb_lancamento_draft_clear_pending_v1:";
+const getLancamentoDraftClearMarkerKey = (userId: string): string =>
+  `${LANCAMENTO_DRAFT_CLEAR_MARKER_PREFIX}${userId}`;
+
 interface LancamentoDraftRecord {
   user_id: string;
   rows: LancamentoRow[];
@@ -112,14 +123,17 @@ interface LancamentoDraftRecord {
 const loadLancamentoDraftFromSupabase = async (
   userId: string
 ): Promise<LancamentoRow[] | null> => {
-  const { data, error } = await supabase
-    .from("lancamento_drafts")
-    .select("rows,updated_at")
-    .eq("user_id", userId)
-    .maybeSingle();
+  const response = await guardedSupabaseRequest(`lancamento-draft.read:${userId}`, () =>
+    supabase
+      .from("lancamento_drafts")
+      .select("rows,updated_at")
+      .eq("user_id", userId)
+      .maybeSingle()
+  );
+  const { data, error } = response;
 
   if (error) {
-    console.error("Erro ao carregar rascunho de lançamento:", error);
+    if (!response.blocked) console.error("Erro ao carregar rascunho de lançamento:", error);
     return null;
   }
 
@@ -142,32 +156,75 @@ const saveLancamentoDraftToSupabase = async (
     updated_at: new Date().toISOString(),
   };
 
-  const { error } = await supabase
-    .from("lancamento_drafts")
-    .upsert(draft, { onConflict: "user_id" });
+  try {
+    const { error } = await supabase
+      .from("lancamento_drafts")
+      .upsert(draft, { onConflict: "user_id" });
 
-  if (error) {
-    console.error("Erro ao salvar rascunho de lançamento:", error);
+    if (error) {
+      console.error("Erro ao salvar rascunho de lançamento:", error);
+      return false;
+    }
+
+    return true;
+  } catch (error) {
+    console.error("Falha de conexão ao salvar rascunho de lançamento:", error);
     return false;
   }
-
-  return true;
 };
 
 const deleteLancamentoDraftFromSupabase = async (
   userId: string
 ): Promise<boolean> => {
-  const { error } = await supabase
-    .from("lancamento_drafts")
-    .delete()
-    .eq("user_id", userId);
+  try {
+    const { error } = await supabase
+      .from("lancamento_drafts")
+      .delete()
+      .eq("user_id", userId);
 
-  if (error) {
-    console.error("Erro ao excluir rascunho de lançamento:", error);
+    if (error) {
+      console.error("Erro ao excluir rascunho de lançamento:", error);
+      return false;
+    }
+
+    return true;
+  } catch (error) {
+    console.error("Falha de conexão ao excluir rascunho de lançamento:", error);
     return false;
   }
+};
 
-  return true;
+/**
+ * Limpa o conteúdo remoto de forma segura e depois tenta remover a linha.
+ * O upsert vazio faz com que, se o DELETE falhar, outros dispositivos leiam um
+ * rascunho vazio em vez de restaurar as linhas já lançadas. São no máximo duas
+ * requisições; não há loop nem retry automático.
+ */
+const clearLancamentoDraftFromSupabase = async (
+  userId: string
+): Promise<{ contentCleared: boolean; rowDeleted: boolean }> => {
+  let emptyDraftPersisted = false;
+  try {
+    const { error } = await supabase
+      .from("lancamento_drafts")
+      .upsert(
+        { user_id: userId, rows: [], updated_at: new Date().toISOString() },
+        { onConflict: "user_id" },
+      );
+    if (error) {
+      console.error("Erro ao zerar rascunho remoto antes da exclusão:", error);
+    } else {
+      emptyDraftPersisted = true;
+    }
+  } catch (error) {
+    console.error("Falha de conexão ao zerar rascunho remoto:", error);
+  }
+
+  const rowDeleted = await deleteLancamentoDraftFromSupabase(userId);
+  return {
+    contentCleared: emptyDraftPersisted || rowDeleted,
+    rowDeleted,
+  };
 };
 
 const getTodayIsoDate = (date = new Date()): string => {
@@ -240,28 +297,46 @@ const loadSlotsFromSupabase = (): Promise<WarehouseSlot[]> => {
   if (slotsLoadPromise) return slotsLoadPromise;
 
   slotsLoadPromise = (async (): Promise<WarehouseSlot[]> => {
-    let allData: any[] = [];
+    const allData: any[] = [];
     let from = 0;
+    let paginationComplete = false;
 
-    while (true) {
-      const { data, error } = await supabase
-        .from("slots")
-        .select("id,estoque,modulo,posicao,referencia,descricao,saldo,dataChacote,ultimaData,ultimaHora,ultimoResponsavel,galpao,restricao,observacao")
-        .range(from, from + HISTORY_PAGE_SIZE - 1);
+    for (let page = 0; page < MAX_READ_PAGES; page += 1) {
+      const response = await guardedSupabaseRequest(`slots.list:${from}`, () =>
+        supabase
+          .from("slots")
+          .select("id,estoque,modulo,posicao,referencia,descricao,saldo,dataChacote,ultimaData,ultimaHora,ultimoResponsavel,galpao,restricao,observacao")
+          .order("id", { ascending: true })
+          .range(from, from + HISTORY_PAGE_SIZE - 1),
+        "slots.list",
+      );
+      const { data, error } = response;
 
       if (error) {
-        console.error("Erro ao carregar slots:", error);
+        if (!response.blocked) console.error("Erro ao carregar slots:", error);
         const cached = await readOfflineSnapshot<WarehouseSlot[]>("slots");
         return cached ?? [];
       }
 
-      if (!data || data.length === 0) break;
+      if (!data || data.length === 0) {
+        paginationComplete = true;
+        break;
+      }
 
-      allData = [...allData, ...data];
+      allData.push(...data);
 
-      if (data.length < HISTORY_PAGE_SIZE) break;
+      if (data.length < HISTORY_PAGE_SIZE) {
+        paginationComplete = true;
+        break;
+      }
 
       from += HISTORY_PAGE_SIZE;
+    }
+
+    if (!paginationComplete) {
+      console.error(`Carga de slots interrompida no limite de ${MAX_READ_PAGES} páginas; evitando consultas sem fim.`);
+      const cached = await readOfflineSnapshot<WarehouseSlot[]>("slots");
+      return cached ?? [];
     }
 
     const result = allData as WarehouseSlot[];
@@ -288,8 +363,7 @@ const loadSlotsFromSupabase = (): Promise<WarehouseSlot[]> => {
 const saveSlotsToSupabase = async (slotsData: WarehouseSlot[]): Promise<boolean> => {
   if (slotsData.length === 0) return true;
 
-  slotsLoadPromise = null;
-
+  // Não invalide uma carga em andamento: isso permitiria duas paginações concorrentes.
   const seenIds = new Set<string>();
   const duplicatedIds = new Set<string>();
 
@@ -328,6 +402,26 @@ interface HistoryLoadOptions {
   endDate?: string;
 }
 
+// slot_id é um vínculo auxiliar para navegação do histórico; não é usado para
+// calcular saldos. Detectamos compatibilidade da coluna uma vez por sessão para
+// que um schema antigo não quebre todas as consultas/gravações de history.
+let historySlotIdColumnSupported: boolean | null = null;
+
+const isMissingSlotIdColumnError = (error: unknown): boolean => {
+  const item = error as { code?: string; message?: string; details?: string; hint?: string } | null;
+  const code = String(item?.code ?? "").toUpperCase();
+  const message = `${item?.message ?? ""} ${item?.details ?? ""} ${item?.hint ?? ""}`;
+  return /slot_id/i.test(message) && (
+    code === "42703" || code === "PGRST204" || code === "PGRST205" ||
+    /column .*slot_id.*does not exist|slot_id.*schema cache|could not find .*slot_id/i.test(message)
+  );
+};
+
+const historySelectColumns = (includeSlotId: boolean): string =>
+  "id,dataLancamento,quemLancou,data,estoque,modulo,posicao,referencia,quantidade,tipo,dataChacote,hora,responsavel,galpao,observacao" +
+  (includeSlotId ? ",slot_id" : "") +
+  ",restricao";
+
 const mapHistoryRowFromSupabase = (row: any): HistoricoMov => {
   const { slot_id, slotId: legacySlotId, ...rest } = row ?? {};
 
@@ -338,10 +432,90 @@ const mapHistoryRowFromSupabase = (row: any): HistoricoMov => {
 };
 
 const mapHistoryRowsForSupabase = (rows: HistoricoMov[]) =>
-  rows.map(({ slotId, ...row }) => ({
-    ...row,
-    slot_id: slotId ?? null,
-  }));
+  rows.map(({ slotId, ...row }) => {
+    if (historySlotIdColumnSupported === false) return row;
+    const normalizedSlotId = typeof slotId === "string" ? slotId.trim() : "";
+    return { ...row, slot_id: normalizedSlotId || null };
+  });
+
+const normalizeHistoricalStock = (value: string): string =>
+  String(value ?? "").trim().toUpperCase().replace(/^E/i, "");
+
+const normalizeHistoricalModule = (value: string): string => {
+  const raw = String(value ?? "").trim().toUpperCase().replace(/^[RM]/i, "");
+  return /^\d+$/.test(raw) ? String(Number(raw)) : raw;
+};
+
+const normalizeHistoricalPosition = (value: string): string =>
+  String(value ?? "").trim().toUpperCase();
+
+const normalizeHistoricalRestriction = (value?: string): string => {
+  const restriction = String(value ?? "nenhuma").trim().toLowerCase();
+  return ["teste", "autorizacao", "outra"].includes(restriction) ? restriction : "nenhuma";
+};
+
+/**
+ * A history record may legitimately refer to an auxiliary item row that was
+ * removed when its saldo reached zero. Retain the historical ID only when the
+ * ID's encoded address and (for auxiliary rows) SKU/restriction still match the
+ * movement itself; otherwise drop the optional link, never the movement.
+ */
+const historicalSlotIdMatchesMovement = (movement: HistoricoMov, slotId: string): boolean => {
+  const estoque = normalizeHistoricalStock(movement.estoque);
+  const module = normalizeHistoricalModule(movement.modulo);
+  const position = normalizeHistoricalPosition(movement.posicao || "");
+
+  if (estoque === "1") {
+    const parts = slotId.split("-");
+    if (parts.length < 3) return false;
+    const idStock = normalizeHistoricalStock(parts[0]);
+    const idModule = normalizeHistoricalModule(parts[1]);
+    const idSku = parts.slice(2).join("-").trim().toUpperCase();
+    return idStock === estoque && idModule === module &&
+      idSku === String(movement.referencia || "").trim().toUpperCase();
+  }
+
+  if (estoque !== "2" && estoque !== "3") return false;
+  const marker = "::ITEM::";
+  const markerIndex = slotId.indexOf(marker);
+  const addressId = markerIndex >= 0 ? slotId.slice(0, markerIndex) : slotId;
+  const addressParts = addressId.split("-");
+  if (addressParts.length < 3) return false;
+
+  const idStock = normalizeHistoricalStock(addressParts[0]);
+  const idModule = normalizeHistoricalModule(addressParts[1]);
+  const idPosition = normalizeHistoricalPosition(addressParts.slice(2).join("-"));
+  if (idStock !== estoque || idModule !== module || idPosition !== position) return false;
+
+  if (markerIndex < 0) return true; // A base ID names the physical address.
+  const [encodedSku = "", encodedRestriction = "", ...extra] = slotId.slice(markerIndex + marker.length).split("::");
+  if (!encodedSku.trim() || !encodedRestriction.trim() || extra.length > 0) return false;
+  return encodedSku.trim().toUpperCase() === String(movement.referencia || "").trim().toUpperCase() &&
+    normalizeHistoricalRestriction(encodedRestriction) === normalizeHistoricalRestriction(movement.restricao);
+};
+
+/** Remove stale/incorrect optional links; never drops the movement itself. */
+const validateHistorySlotLinks = (
+  rows: HistoricoMov[],
+  knownSlotIds: Set<string>,
+): HistoricoMov[] => {
+  let invalidCount = 0;
+  const validated = rows.map(movement => {
+    const slotId = typeof movement.slotId === "string" ? movement.slotId.trim() : "";
+    if (slotId && !knownSlotIds.has(slotId) && !historicalSlotIdMatchesMovement(movement, slotId)) {
+      invalidCount += 1;
+      return { ...movement, slotId: undefined };
+    }
+    return { ...movement, slotId: slotId || undefined };
+  });
+
+  if (invalidCount > 0) {
+    console.warn(
+      `${invalidCount} movimentação(ões) serão gravadas sem slot_id porque o ID não corresponde ao endereço/SKU/restrição da movimentação.`
+    );
+  }
+  return validated;
+};
 
 /**
  * Carrega histórico por período, paginado para não depender do limite padrão do Supabase.
@@ -351,40 +525,72 @@ const mapHistoryRowsForSupabase = (rows: HistoricoMov[]) =>
 const loadHistoryFromSupabaseUncached = async (
   options: HistoryLoadOptions = {}
 ): Promise<HistoricoMov[]> => {
-  let allData: any[] = [];
+  const allData: any[] = [];
   let from = 0;
+  let paginationComplete = false;
 
-  while (true) {
-    let query = supabase
-      .from("history")
-      .select("id,dataLancamento,quemLancou,data,estoque,modulo,posicao,referencia,quantidade,tipo,dataChacote,hora,responsavel,galpao,observacao,slot_id,restricao")
-      .order("data", { ascending: false })
-      .order("hora", { ascending: false })
-      .range(from, from + HISTORY_PAGE_SIZE - 1);
+  for (let page = 0; page < MAX_READ_PAGES; page += 1) {
+    const includeSlotId = historySlotIdColumnSupported !== false;
+    const buildHistoryQuery = (withSlotId: boolean) => {
+      let query = supabase
+        .from("history")
+        .select(historySelectColumns(withSlotId))
+        .order("data", { ascending: false })
+        .order("hora", { ascending: false })
+        .order("id", { ascending: false })
+        .range(from, from + HISTORY_PAGE_SIZE - 1);
+      if (options.startDate) query = query.gte("data", options.startDate);
+      if (options.endDate) query = query.lte("data", options.endDate);
+      return query;
+    };
 
-    if (options.startDate) {
-      query = query.gte("data", options.startDate);
+    let usedSlotIdColumn = includeSlotId;
+    let response = await guardedSupabaseRequest(
+      includeSlotId
+        ? `history.list:${options.startDate ?? ""}:${options.endDate ?? ""}:${from}`
+        : `history.list.without-slot-id:${options.startDate ?? ""}:${options.endDate ?? ""}:${from}`,
+      () => buildHistoryQuery(includeSlotId),
+      includeSlotId ? "history.list.with-slot-id" : "history.list.without-slot-id",
+    );
+
+    if (response.error && includeSlotId && isMissingSlotIdColumnError(response.error)) {
+      historySlotIdColumnSupported = false;
+      usedSlotIdColumn = false;
+      console.warn("A coluna history.slot_id não existe no schema atual. O histórico será carregado sem esse vínculo opcional.");
+      response = await guardedSupabaseRequest(
+        `history.list.without-slot-id:${options.startDate ?? ""}:${options.endDate ?? ""}:${from}`,
+        () => buildHistoryQuery(false),
+        "history.list.without-slot-id",
+      );
     }
 
-    if (options.endDate) {
-      query = query.lte("data", options.endDate);
-    }
-
-    const { data, error } = await query;
-
+    const { data, error } = response;
     if (error) {
-      console.error("Erro ao carregar histórico:", error);
+      if (!response.blocked) console.error("Erro ao carregar histórico:", error);
       const cached = await readOfflineSnapshot<HistoricoMov[]>("history");
       return cached ?? [];
     }
+    if (usedSlotIdColumn) historySlotIdColumnSupported = true;
 
-    if (!data || data.length === 0) break;
+    if (!data || data.length === 0) {
+      paginationComplete = true;
+      break;
+    }
 
-    allData = [...allData, ...data];
+    allData.push(...data);
 
-    if (data.length < HISTORY_PAGE_SIZE) break;
+    if (data.length < HISTORY_PAGE_SIZE) {
+      paginationComplete = true;
+      break;
+    }
 
     from += HISTORY_PAGE_SIZE;
+  }
+
+  if (!paginationComplete) {
+    console.error(`Carga de histórico interrompida no limite de ${MAX_READ_PAGES} páginas; evitando consultas sem fim. Usando o cache disponível.`);
+    const cached = await readOfflineSnapshot<HistoricoMov[]>("history");
+    return cached ?? [];
   }
 
   const result = allData.map(mapHistoryRowFromSupabase);
@@ -429,19 +635,42 @@ const loadLatestHistoryRecord = (): Promise<HistoricoMov | null> => {
   if (latestHistoryLoadPromise) return latestHistoryLoadPromise;
 
   latestHistoryLoadPromise = (async (): Promise<HistoricoMov | null> => {
-    const { data, error } = await supabase
-      .from("history")
-      .select("id,dataLancamento,quemLancou,data,estoque,modulo,posicao,referencia,quantidade,tipo,dataChacote,hora,responsavel,galpao,observacao,slot_id,restricao")
-      .lte("data", getTodayIsoDate())
-      .order("data", { ascending: false })
-      .order("hora", { ascending: false })
-      .limit(1)
-      .maybeSingle();
+    const includeSlotId = historySlotIdColumnSupported !== false;
+    const buildLatestHistoryQuery = (withSlotId: boolean) =>
+      supabase
+        .from("history")
+        .select(historySelectColumns(withSlotId))
+        .lte("data", getTodayIsoDate())
+        .order("data", { ascending: false })
+        .order("hora", { ascending: false })
+        .order("id", { ascending: false })
+        .limit(1)
+        .maybeSingle();
 
+    let usedSlotIdColumn = includeSlotId;
+    let response = await guardedSupabaseRequest(
+      includeSlotId ? "history.latest" : "history.latest.without-slot-id",
+      () => buildLatestHistoryQuery(includeSlotId),
+      includeSlotId ? "history.latest.with-slot-id" : "history.latest.without-slot-id",
+    );
+
+    if (response.error && includeSlotId && isMissingSlotIdColumnError(response.error)) {
+      historySlotIdColumnSupported = false;
+      usedSlotIdColumn = false;
+      console.warn("A coluna history.slot_id não existe no schema atual. A última movimentação será carregada sem esse vínculo opcional.");
+      response = await guardedSupabaseRequest(
+        "history.latest.without-slot-id",
+        () => buildLatestHistoryQuery(false),
+        "history.latest.without-slot-id",
+      );
+    }
+
+    const { data, error } = response;
     if (error) {
-      console.error("Erro ao carregar última movimentação:", error);
+      if (!response.blocked) console.error("Erro ao carregar última movimentação:", error);
       return null;
     }
+    if (usedSlotIdColumn) historySlotIdColumnSupported = true;
 
     return data ? mapHistoryRowFromSupabase(data) : null;
   })();
@@ -459,13 +688,30 @@ const loadLatestHistoryRecord = (): Promise<HistoricoMov | null> => {
 };
 
 const appendHistoryToSupabase = async (
-  historyData: HistoricoMov[]
+  historyData: HistoricoMov[],
+  knownSlotIds?: Set<string>,
 ): Promise<boolean> => {
   if (historyData.length === 0) return true;
 
-  const { error } = await supabase
+  // slot_id é um vínculo auxiliar (sem FK no esquema auditado). Mantém a
+  // movimentação mesmo quando o endereço mudou, mas não grava um vínculo órfão.
+  const validatedHistory = knownSlotIds
+    ? validateHistorySlotLinks(historyData, knownSlotIds)
+    : historyData;
+
+  // INSERT não é repetido automaticamente: uma resposta de rede perdida pode
+  // acontecer depois de o banco ter confirmado a gravação, gerando duplicatas.
+  let { error } = await supabase
     .from("history")
-    .insert(mapHistoryRowsForSupabase(historyData));
+    .insert(mapHistoryRowsForSupabase(validatedHistory));
+
+  if (error && historySlotIdColumnSupported !== false && isMissingSlotIdColumnError(error)) {
+    historySlotIdColumnSupported = false;
+    console.warn("A coluna history.slot_id não existe no schema atual. Repetindo uma única vez sem o vínculo opcional.");
+    ({ error } = await supabase
+      .from("history")
+      .insert(mapHistoryRowsForSupabase(validatedHistory)));
+  }
 
   if (error) {
     console.error("Erro ao inserir histórico:", error);
@@ -486,11 +732,14 @@ const mapDivergenciaRowFromSupabase = (row: any) => {
   };
 };
 
+let divergenciasSlotIdColumnSupported: boolean | null = null;
+
 const mapDivergenciasForSupabase = (rows: Divergencia[]) =>
-  rows.map(({ slotId, ...row }) => ({
-    ...row,
-    slot_id: slotId ?? null,
-  }));
+  rows.map(({ slotId, ...row }) => {
+    if (divergenciasSlotIdColumnSupported === false) return row;
+    const normalizedSlotId = typeof slotId === "string" ? slotId.trim() : "";
+    return { ...row, slot_id: normalizedSlotId || null };
+  });
 
 const normalizeDivergenciaRow = (row: any): Divergencia | null => {
   const rawStatus = String(row?.status ?? "").trim().toLowerCase();
@@ -515,34 +764,52 @@ const loadDivergenciasFromSupabase = (): Promise<Divergencia[]> => {
   if (divergenciasLoadPromise) return divergenciasLoadPromise;
 
   divergenciasLoadPromise = (async (): Promise<Divergencia[]> => {
-    let allData: any[] = [];
+    const allData: any[] = [];
     let from = 0;
+    let paginationComplete = false;
 
-    while (true) {
+    for (let page = 0; page < MAX_READ_PAGES; page += 1) {
       // Carregamos todas as divergências, não somente "Aberta".
-      // Isso evita perder registros por diferença de caixa/espaços no status
-      // e também permite que o painel mostre o histórico de corrigidas.
-      const { data, error } = await supabase
-        .from("divergencias")
-        .select("*")
-        .range(from, from + HISTORY_PAGE_SIZE - 1);
+      // Isso mantém o histórico, mas limita cada carga para evitar paginação infinita.
+      const response = await guardedSupabaseRequest(`divergencias.list:${from}`, () =>
+        supabase
+          .from("divergencias")
+          .select("*")
+          .order("id", { ascending: true })
+          .range(from, from + HISTORY_PAGE_SIZE - 1),
+        "divergencias.list",
+      );
+      const { data, error } = response;
 
       if (error) {
-        console.error("Erro ao carregar divergências:", error);
-
+        if (!response.blocked) console.error("Erro ao carregar divergências:", error);
         const cached = await readOfflineSnapshot<Divergencia[]>("divergencias");
         return (cached ?? [])
           .map(normalizeDivergenciaRow)
           .filter((div): div is Divergencia => Boolean(div));
       }
 
-      if (!data || data.length === 0) break;
+      if (!data || data.length === 0) {
+        paginationComplete = true;
+        break;
+      }
 
-      allData = [...allData, ...data];
+      allData.push(...data);
 
-      if (data.length < HISTORY_PAGE_SIZE) break;
+      if (data.length < HISTORY_PAGE_SIZE) {
+        paginationComplete = true;
+        break;
+      }
 
       from += HISTORY_PAGE_SIZE;
+    }
+
+    if (!paginationComplete) {
+      console.error(`Carga de divergências interrompida no limite de ${MAX_READ_PAGES} páginas; evitando consultas sem fim. Usando o cache disponível.`);
+      const cached = await readOfflineSnapshot<Divergencia[]>("divergencias");
+      return (cached ?? [])
+        .map(normalizeDivergenciaRow)
+        .filter((div): div is Divergencia => Boolean(div));
     }
 
     const result = allData
@@ -570,11 +837,20 @@ const saveDivergenciasToSupabase = async (
 ): Promise<boolean> => {
   if (divergenciasData.length === 0) return true;
 
-  divergenciasLoadPromise = null;
-
-  const { error } = await supabase
+  // Não invalide uma leitura em andamento ao salvar: isso evita consultas duplicadas.
+  let { error } = await supabase
     .from("divergencias")
     .upsert(mapDivergenciasForSupabase(divergenciasData));
+
+  if (error && divergenciasSlotIdColumnSupported !== false && isMissingSlotIdColumnError(error)) {
+    divergenciasSlotIdColumnSupported = false;
+    console.warn("A coluna divergencias.slot_id não existe no schema atual. Salvando divergências sem esse vínculo opcional.");
+    ({ error } = await supabase
+      .from("divergencias")
+      .upsert(mapDivergenciasForSupabase(divergenciasData)));
+  } else if (!error) {
+    divergenciasSlotIdColumnSupported = true;
+  }
 
   if (error) {
     console.error("Erro ao salvar divergências:", error);
@@ -903,7 +1179,13 @@ useEffect(() => {
   let active = true;
   let initialLoadComplete = false;
   let loadGeneration = 0;
-  let fallbackLoadStarted = false;
+  let initialLoadInFlight = false;
+  let lastInitialLoadAt = 0;
+  let channelConnected = false;
+  let hadConnectionError = false;
+  let resyncAfterLoad = false;
+  let reconnectResyncTimer: ReturnType<typeof setTimeout> | null = null;
+  const INITIAL_LOAD_COOLDOWN_MS = 30_000;
   const changesDuringInitialLoad = new Map<string, WarehouseSlot | null>();
   const pendingSlotChanges = new Map<string, WarehouseSlot | null>();
   let slotFlushTimer: ReturnType<typeof setTimeout> | null = null;
@@ -935,8 +1217,35 @@ useEffect(() => {
     scheduleOfflineSnapshot();
   };
 
-  const startInitialLoad = () => {
+  const startInitialLoad = (reason: "initial" | "fallback" | "reconnect" = "initial") => {
     if (!active) return;
+    if (initialLoadInFlight) {
+      if (reason === "reconnect") resyncAfterLoad = true;
+      return;
+    }
+
+    if (reason === "reconnect" && lastInitialLoadAt > 0) {
+      const remaining = INITIAL_LOAD_COOLDOWN_MS - (Date.now() - lastInitialLoadAt);
+      if (remaining > 0) {
+        if (reconnectResyncTimer === null) {
+          reconnectResyncTimer = setTimeout(() => {
+            reconnectResyncTimer = null;
+            // Never query just because a timer elapsed while Realtime is down.
+            // The next SUBSCRIBED confirmation will schedule a resync if needed.
+            if (channelConnected) startInitialLoad("reconnect");
+          }, remaining);
+        }
+        return;
+      }
+    }
+
+    if (reconnectResyncTimer !== null) {
+      clearTimeout(reconnectResyncTimer);
+      reconnectResyncTimer = null;
+    }
+
+    lastInitialLoadAt = Date.now();
+    initialLoadInFlight = true;
     const generation = ++loadGeneration;
     initialLoadComplete = false;
     changesDuringInitialLoad.clear();
@@ -960,6 +1269,13 @@ useEffect(() => {
       })
       .catch(error => {
         console.error("Erro ao carregar posições da Pesquisa de Estoque:", error);
+      })
+      .finally(() => {
+        initialLoadInFlight = false;
+        if (resyncAfterLoad && active && channelConnected) {
+          resyncAfterLoad = false;
+          startInitialLoad("reconnect");
+        }
       });
   };
 
@@ -991,16 +1307,22 @@ useEffect(() => {
       if (!active) return;
 
       if (status === "SUBSCRIBED") {
-        fallbackLoadStarted = false;
+        channelConnected = true;
         console.info("[Realtime] Pesquisa de estoque conectada.");
-        startInitialLoad();
+        if (hadConnectionError) {
+          hadConnectionError = false;
+          startInitialLoad("reconnect");
+        } else if (!initialLoadComplete && lastInitialLoadAt === 0) {
+          startInitialLoad("initial");
+        }
       } else if (status === "CHANNEL_ERROR" || status === "TIMED_OUT" || status === "CLOSED") {
+        channelConnected = false;
         console.warn("[Realtime] Atualização ao vivo da Pesquisa de Estoque indisponível:", status);
-        // Mantém a pesquisa utilizável sem polling. Se o canal voltar, a assinatura
-        // confirmada dispara uma nova carga para recuperar eventos perdidos.
-        if (!fallbackLoadStarted) {
-          fallbackLoadStarted = true;
-          startInitialLoad();
+        hadConnectionError = true;
+        // If the initial snapshot has not started yet, perform a single fallback
+        // read. After data is loaded, wait for SUBSCRIBED before a reconnect read.
+        if (!initialLoadComplete && lastInitialLoadAt === 0) {
+          startInitialLoad("fallback");
         }
       }
     });
@@ -1009,7 +1331,9 @@ useEffect(() => {
     active = false;
     if (slotFlushTimer !== null) clearTimeout(slotFlushTimer);
     if (snapshotTimer !== null) clearTimeout(snapshotTimer);
+    if (reconnectResyncTimer !== null) clearTimeout(reconnectResyncTimer);
     pendingSlotChanges.clear();
+    changesDuringInitialLoad.clear();
     void supabase.removeChannel(channel);
   };
 }, [authUserId, currentUser, activeTab]);
@@ -1066,13 +1390,26 @@ useEffect(() => {
   }
 
   const loadHistory = async () => {
+    const today = getTodayIsoDate();
+    const needsDashboardWindow = activeTab === "dashboard" || activeTab === "ai";
+
+    // Dashboard/IA precisam da janela de 60 dias para indicadores e análises.
+    // A tela Histórico consulta somente o dia selecionado por padrão; períodos
+    // maiores são carregados sob demanda pelo botão "Consultar período".
     const data = await loadHistoryFromSupabase({
-      startDate: getIsoDateDaysAgo(HISTORY_DASHBOARD_DAYS),
-      endDate: getTodayIsoDate()
+      startDate: needsDashboardWindow
+        ? getIsoDateDaysAgo(HISTORY_DASHBOARD_DAYS)
+        : today,
+      endDate: today,
     });
 
+    if (!needsDashboardWindow) {
+      setHistory(data);
+      return;
+    }
+
     // Mantém o indicador de "última movimentação" do Dashboard mesmo
-    // quando o último movimento aconteceu há mais de 30 dias.
+    // quando o último movimento aconteceu fora da janela dos últimos 60 dias.
     const latest = await loadLatestHistoryRecord();
     const merged = latest && !data.some(item => item.id === latest.id)
       ? [latest, ...data]
@@ -1081,7 +1418,9 @@ useEffect(() => {
     setHistory(merged);
   };
 
-  loadHistory();
+  void loadHistory().catch(error => {
+    console.error("Erro inesperado ao preparar histórico da tela:", error);
+  });
 }, [activeTab]);
 
 useEffect(() => {
@@ -1093,18 +1432,94 @@ useEffect(() => {
 
   let active = true;
   let initialLoadComplete = false;
-  let initialLoadStarted = false;
+  let initialLoadInFlight = false;
+  let lastInitialLoadAt = 0;
+  let loadGeneration = 0;
+  let channelConnected = false;
+  let hadConnectionError = false;
+  let resyncAfterLoad = false;
+  let reconnectResyncTimer: ReturnType<typeof setTimeout> | null = null;
+  let divergenceFlushTimer: ReturnType<typeof setTimeout> | null = null;
+  const RECONNECT_RESYNC_COOLDOWN_MS = 30_000;
+  const CHANGES_FLUSH_DELAY_MS = 50;
   const changesDuringInitialLoad = new Map<string, Divergencia | null>();
+  const pendingChanges = new Map<string, Divergencia | null>();
 
-  const startInitialLoad = () => {
-    if (!active || initialLoadStarted) return;
-    initialLoadStarted = true;
+  const flushPendingChanges = () => {
+    divergenceFlushTimer = null;
+    if (!active || !initialLoadComplete || pendingChanges.size === 0) return;
 
-    // A carga inicial começa depois que o canal conecta, evitando uma janela
-    // em que uma alteração remota poderia ocorrer antes da assinatura.
+    const changes = Array.from(pendingChanges.entries());
+    pendingChanges.clear();
+
+    const next = updateDivergenciasState(current => {
+      const byId = new Map(current.map(item => [item.id, item]));
+      for (const [id, incoming] of changes) {
+        if (incoming === null) byId.delete(id);
+        else byId.set(id, incoming);
+      }
+      return Array.from(byId.values());
+    });
+
+    // Lotes de eventos Realtime se reflejan en estado y cache una sola vez,
+    // evitando miles de escrituras locales si llegan muchas divergencias juntas.
+    void saveOfflineSnapshot("divergencias", next);
+  };
+
+  const schedulePendingChangesFlush = () => {
+    if (!active || !initialLoadComplete || divergenceFlushTimer !== null) return;
+    divergenceFlushTimer = setTimeout(flushPendingChanges, CHANGES_FLUSH_DELAY_MS);
+  };
+
+  const startInitialLoad = (reason: "initial" | "fallback" | "reconnect" = "initial") => {
+    if (!active) return;
+    if (initialLoadInFlight) {
+      if (reason === "reconnect") resyncAfterLoad = true;
+      return;
+    }
+
+    if (reason === "reconnect" && lastInitialLoadAt > 0) {
+      const remaining = RECONNECT_RESYNC_COOLDOWN_MS - (Date.now() - lastInitialLoadAt);
+      if (remaining > 0) {
+        // No crie um loop de cargas se o canal oscilar. No máximo uma
+        // ressincronização completa fica agendada dentro da janela de 30 s.
+        if (reconnectResyncTimer === null) {
+          reconnectResyncTimer = setTimeout(() => {
+            reconnectResyncTimer = null;
+            // Não consulte o banco enquanto o websocket permanece desconectado.
+            // A próxima confirmação SUBSCRIBED agendará a ressincronização.
+            if (channelConnected) startInitialLoad("reconnect");
+          }, remaining);
+        }
+        return;
+      }
+    }
+
+    if (reconnectResyncTimer !== null) {
+      clearTimeout(reconnectResyncTimer);
+      reconnectResyncTimer = null;
+    }
+
+    // Os eventos pendentes já foram confirmados no banco antes de serem
+    // publicados; a fotografia seguinte recupera o estado atual. Cancele
+    // apenas a gravação local pendente para não aplicá-la duas vezes.
+    pendingChanges.clear();
+    if (divergenceFlushTimer !== null) {
+      clearTimeout(divergenceFlushTimer);
+      divergenceFlushTimer = null;
+    }
+
+    initialLoadInFlight = true;
+    initialLoadComplete = false;
+    lastInitialLoadAt = Date.now();
+    const generation = ++loadGeneration;
+    changesDuringInitialLoad.clear();
+
+    // A fotografia completa é refeita após uma reconexão bem-sucedida para
+    // recuperar eventos ocorridos enquanto o websocket esteve desconectado.
     void loadDivergenciasFromSupabase()
       .then(data => {
-        if (!active) return;
+        if (!active || generation !== loadGeneration) return;
 
         const mergedById = new Map<string, Divergencia>(data.map(item => [item.id, item]));
         for (const [id, eventRow] of changesDuringInitialLoad) {
@@ -1113,6 +1528,7 @@ useEffect(() => {
         }
 
         const merged = Array.from(mergedById.values());
+        changesDuringInitialLoad.clear();
         initialLoadComplete = true;
         divergenciasRef.current = merged;
         setDivergencias(merged);
@@ -1120,6 +1536,15 @@ useEffect(() => {
       })
       .catch(error => {
         console.error("Erro ao inicializar sincronização de divergências:", error);
+      })
+      .finally(() => {
+        if (generation === loadGeneration) {
+          initialLoadInFlight = false;
+          if (resyncAfterLoad && active) {
+            resyncAfterLoad = false;
+            startInitialLoad("reconnect");
+          }
+        }
       });
   };
 
@@ -1128,7 +1553,7 @@ useEffect(() => {
     .on(
       "postgres_changes",
       { event: "*", schema: "public", table: "divergencias" },
-      (payload) => {
+      payload => {
         if (!active) return;
 
         const eventType = payload.eventType;
@@ -1136,42 +1561,46 @@ useEffect(() => {
         const eventId = String((rawRow as any)?.id ?? "");
         if (!eventId) return;
 
-        if (eventType === "DELETE") {
-          if (!initialLoadComplete) changesDuringInitialLoad.set(eventId, null);
-          const next = updateDivergenciasState(current => current.filter(item => item.id !== eventId));
-          void saveOfflineSnapshot("divergencias", next);
+        const incoming = eventType === "DELETE" ? null : normalizeDivergenciaRow(rawRow);
+        if (eventType !== "DELETE" && !incoming) return;
+
+        if (!initialLoadComplete) {
+          changesDuringInitialLoad.set(eventId, incoming);
           return;
         }
 
-        const incoming = normalizeDivergenciaRow(rawRow);
-        if (!incoming) return;
-
-        // Durante a consulta inicial, o evento prevalece sobre a fotografia
-        // paginada para o mesmo identificador.
-        if (!initialLoadComplete) {
-          changesDuringInitialLoad.set(incoming.id, incoming);
-        }
-
-        const next = updateDivergenciasState(current => {
-          const exists = current.some(item => item.id === incoming.id);
-          if (!exists) return [incoming, ...current];
-          return current.map(item => item.id === incoming.id ? incoming : item);
-        });
-        void saveOfflineSnapshot("divergencias", next);
+        pendingChanges.set(eventId, incoming);
+        schedulePendingChangesFlush();
       }
     )
-    .subscribe((status) => {
+    .subscribe(status => {
       if (status === "SUBSCRIBED") {
+        channelConnected = true;
         console.info("[Realtime] Sincronização de divergências conectada.");
-        startInitialLoad();
+        if (hadConnectionError) {
+          hadConnectionError = false;
+          startInitialLoad("reconnect");
+        } else if (!initialLoadComplete && lastInitialLoadAt === 0) {
+          startInitialLoad("initial");
+        }
       } else if (status === "CHANNEL_ERROR" || status === "TIMED_OUT" || status === "CLOSED") {
+        channelConnected = false;
         console.warn("[Realtime] Sincronização de divergências indisponível:", status);
-        startInitialLoad();
+        hadConnectionError = true;
+        // Se ainda não houve fotografia inicial, carrega uma vez como fallback.
+        // Após já ter dados, aguarda a próxima conexão para ressincronizar.
+        if (!initialLoadComplete && lastInitialLoadAt === 0) {
+          startInitialLoad("fallback");
+        }
       }
     });
 
   return () => {
     active = false;
+    if (reconnectResyncTimer !== null) clearTimeout(reconnectResyncTimer);
+    if (divergenceFlushTimer !== null) clearTimeout(divergenceFlushTimer);
+    pendingChanges.clear();
+    changesDuringInitialLoad.clear();
     void supabase.removeChannel(channel);
   };
 }, [currentUser, authUserId]);
@@ -1189,12 +1618,15 @@ useEffect(() => {
     }
 
     const promise = (async (): Promise<Product[]> => {
-      const { data, error } = await supabase
-        .from("products")
-        .select("referencia,descricao,paletizacao");
+      const response = await guardedSupabaseRequest("products.list", () =>
+        supabase
+          .from("products")
+          .select("referencia,descricao,paletizacao")
+      );
+      const { data, error } = response;
 
       if (error) {
-        console.error("Erro ao carregar produtos:", error);
+        if (!response.blocked) console.error("Erro ao carregar produtos:", error);
         const cached = await readOfflineSnapshot<Product[]>("products");
         return cached ?? [];
       }
@@ -1617,7 +2049,8 @@ const deleteProduct = async (
   const appendHistory = async (newMovements: HistoricoMov[]): Promise<boolean> => {
     if (newMovements.length === 0) return true;
 
-    const saved = await appendHistoryToSupabase(newMovements);
+    const knownSlotIds = new Set<string>(slotsRef.current.map(slot => String(slot.id).trim()));
+    const saved = await appendHistoryToSupabase(newMovements, knownSlotIds);
 
     if (saved) {
       const nextHistory = [...newMovements, ...history];
@@ -1659,6 +2092,301 @@ const deleteProduct = async (
     }
 
     return saved;
+  };
+
+  /**
+   * Persistência transacional dos fluxos diários de entrada, saída, lote e
+   * transferência. Envia snapshots completos dos endereços impactados para as
+   * RPCs atômicas existentes; nunca usa fallback para upsert + histórico em
+   * chamadas separadas se a RPC falhar ou tiver resposta ambígua.
+   */
+  const persistStockMutationAtomically = async (
+    expectedSlotsSnapshot: WarehouseSlot[],
+    updatedSlots: WarehouseSlot[],
+    newMovements: HistoricoMov[],
+    expectedDivergenciasSnapshot: Divergencia[],
+    updatedDivergencias: Divergencia[],
+  ): Promise<{ ok: boolean; reason?: string; deletedSlotIds: string[] }> => {
+    const failed = (reason: string) => ({ ok: false, reason, deletedSlotIds: [] as string[] });
+    if (!navigator.onLine) {
+      return failed("A operação de estoque exige conexão com o Supabase. Nenhuma gravação foi iniciada.");
+    }
+
+    const scopeKey = (row: { estoque: string; modulo: string; posicao?: string }): string =>
+      JSON.stringify([
+        normalizeHistoricalStock(row.estoque),
+        normalizeHistoricalModule(row.modulo),
+        normalizeHistoricalStock(row.estoque) === "1"
+          ? ""
+          : normalizeHistoricalPosition(row.posicao || ""),
+      ]);
+    const scopeKeys = new Set<string>();
+    const expectedSlotsById = new Map(expectedSlotsSnapshot.map(slot => [slot.id, slot]));
+    const updatedSlotsById = new Map(updatedSlots.map(slot => [slot.id, slot]));
+    const expectedDivergenciasById = new Map(expectedDivergenciasSnapshot.map(div => [div.id, div]));
+    const updatedDivergenciasById = new Map(updatedDivergencias.map(div => [div.id, div]));
+
+    if (expectedSlotsById.size !== expectedSlotsSnapshot.length || updatedSlotsById.size !== updatedSlots.length) {
+      return failed("Há IDs de endereço duplicados no snapshot local. Atualize os dados antes de lançar.");
+    }
+    if (
+      new Set(newMovements.map(movement => movement.id)).size !== newMovements.length ||
+      new Set(updatedDivergencias.map(div => div.id)).size !== updatedDivergencias.length
+    ) {
+      return failed("Há IDs duplicados no histórico ou nas divergências do payload. Nenhuma gravação foi iniciada.");
+    }
+
+    for (const expected of expectedSlotsSnapshot) {
+      const next = updatedSlotsById.get(expected.id);
+      if (!next || JSON.stringify(expected) !== JSON.stringify(next)) {
+        scopeKeys.add(scopeKey(expected));
+        if (next) scopeKeys.add(scopeKey(next));
+      }
+    }
+    for (const next of updatedSlots) {
+      if (!expectedSlotsById.has(next.id)) scopeKeys.add(scopeKey(next));
+    }
+    for (const movement of newMovements) scopeKeys.add(scopeKey(movement));
+    for (const next of updatedDivergencias) {
+      const expected = expectedDivergenciasById.get(next.id);
+      if (!expected || JSON.stringify(expected) !== JSON.stringify(next)) {
+        scopeKeys.add(scopeKey(next));
+        if (expected) scopeKeys.add(scopeKey(expected));
+      }
+    }
+
+    if (scopeKeys.size === 0 && newMovements.length === 0) {
+      return { ok: true, deletedSlotIds: [] };
+    }
+
+    const changedExistingDivergence = updatedDivergencias.some(div => {
+      const expected = expectedDivergenciasById.get(div.id);
+      return Boolean(expected && JSON.stringify(expected) !== JSON.stringify(div));
+    });
+    const newDivergencesOnly = updatedDivergencias.filter(div => !expectedDivergenciasById.has(div.id));
+    const anySlotStateChanged = updatedSlots.some(slot => {
+      const expected = expectedSlotsById.get(slot.id);
+      return !expected || JSON.stringify(expected) !== JSON.stringify(slot);
+    }) || expectedSlotsSnapshot.some(slot => !updatedSlotsById.has(slot.id));
+
+    // Conflict-only batch rows do not mutate stock or append movements. Save
+    // their new open divergences separately so an inconsistent legacy slot can
+    // be reported without passing that bad row through the stock writer.
+    if (
+      !anySlotStateChanged &&
+      newMovements.length === 0 &&
+      newDivergencesOnly.length > 0 &&
+      !changedExistingDivergence &&
+      newDivergencesOnly.every(div => div.status === "Aberta")
+    ) {
+      const saved = await saveDivergenciasToSupabase(newDivergencesOnly);
+      if (!saved) return failed("A divergência foi identificada, mas o Supabase não confirmou seu registro. Nenhum saldo foi alterado.");
+      const merged = updateDivergenciasState(current => {
+        const byId = new Map(current.map(div => [div.id, div]));
+        newDivergencesOnly.forEach(div => byId.set(div.id, div));
+        return Array.from(byId.values());
+      });
+      await saveOfflineSnapshot("divergencias", merged);
+      return { ok: true, deletedSlotIds: [] };
+    }
+
+    // Existing divergence records may be included unchanged in a stock write,
+    // but resolving one must use the dedicated resolve_stock_divergence_atomic RPC.
+    for (const expected of expectedDivergenciasSnapshot) {
+      if (!scopeKeys.has(scopeKey(expected))) continue;
+      const next = updatedDivergenciasById.get(expected.id);
+      if (next && JSON.stringify(expected) !== JSON.stringify(next)) {
+        return failed("Uma divergência existente mudou de status/dados. Use o fluxo específico de correção de divergência.");
+      }
+    }
+
+    const isCanonicalSlotSnapshot = (slot: WarehouseSlot): string | null => {
+      const stock = normalizeHistoricalStock(slot.estoque);
+      const module = String(slot.modulo ?? "").trim();
+      const normalizedModule = normalizeHistoricalModule(module);
+      const position = normalizeHistoricalPosition(slot.posicao || "");
+
+      if (!module || module !== normalizedModule || !/^\d+$/.test(module)) {
+        return `o módulo '${module}' do registro '${slot.id}' não é canônico. Corrija os módulos antigos com zero à esquerda antes de movimentar esse endereço.`;
+      }
+      if (stock === "1") {
+        if (position !== "") return `o endereço E1 '${slot.id}' tem uma posição física inválida.`;
+        if (String(slot.referencia || "").trim()) {
+          const expectedId = `1-${module}-${String(slot.referencia).trim().toUpperCase()}`;
+          if (slot.id !== expectedId) return `o ID E1 '${slot.id}' não corresponde ao SKU armazenado '${slot.referencia}'.`;
+        }
+        return null;
+      }
+      if (stock !== "2" && stock !== "3") return `o estoque '${slot.estoque}' do ID '${slot.id}' é inválido.`;
+      if (!position || position !== String(slot.posicao || "")) {
+        return `a posição física do ID '${slot.id}' não está normalizada.`;
+      }
+      const baseId = `${stock}-${module}-${position}`;
+      if (slot.id.includes("::ITEM::")) {
+        const identity = getAuxiliarySlotIdentity(slot.id);
+        if (!identity || identity.addressId !== baseId) {
+          return `o ID auxiliar '${slot.id}' não corresponde ao endereço físico ${baseId}.`;
+        }
+        const mismatch = getSlotIdentityMismatch(slot);
+        if (mismatch) return mismatch;
+        return null;
+      }
+      if (slot.id !== baseId) return `o ID base '${slot.id}' deveria ser '${baseId}'.`;
+      const mismatch = getSlotIdentityMismatch(slot);
+      return mismatch;
+    };
+
+    const expectedSlotsInScopes = expectedSlotsSnapshot.filter(slot => scopeKeys.has(scopeKey(slot)));
+    const finalSlotsInScopes = updatedSlots.filter(slot => scopeKeys.has(scopeKey(slot)));
+    const expectedDivergenciasInScopes = expectedDivergenciasSnapshot.filter(div => scopeKeys.has(scopeKey(div)));
+
+    // Fail closed on malformed IDs/modules in the complete address snapshot,
+    // not just on the row the operator intended to edit.
+    for (const slot of [...expectedSlotsInScopes, ...finalSlotsInScopes]) {
+      const issue = isCanonicalSlotSnapshot(slot);
+      if (issue) return failed(issue);
+    }
+
+    const expectedSlotIdsInScope = new Set(expectedSlotsInScopes.map(slot => slot.id));
+    const finalSlotIdsInScope = new Set(finalSlotsInScopes.map(slot => slot.id));
+    for (const id of expectedSlotIdsInScope) {
+      if (!finalSlotIdsInScope.has(id)) {
+        return failed(`O snapshot da operação removeu o ID '${id}' sem a rotina de exclusão atômica. Recarregue e tente novamente.`);
+      }
+    }
+
+    // Fully exhausted logical rows are removed only inside the same PostgreSQL
+    // transaction that writes their exact, balanced movement history. E2/E3
+    // auxiliaries and E1 SKU rows are eligible; physical E2/E3 base-address
+    // rows are never deleted because they represent real configured vacancies.
+    const deleteSlotIds: string[] = [];
+    for (const expected of expectedSlotsInScopes) {
+      const stock = normalizeHistoricalStock(expected.estoque);
+      const isAuxiliary = expected.id.includes("::ITEM::");
+      const isE1SkuRow = stock === "1";
+      if ((!isAuxiliary && !isE1SkuRow) || Number(expected.saldo || 0) <= 0 || !String(expected.referencia || "").trim()) continue;
+
+      const next = updatedSlotsById.get(expected.id);
+      if (!next || Number(next.saldo || 0) !== 0 || String(next.referencia || "").trim() || String(next.descricao || "").trim()) continue;
+
+      let identityReference = String(expected.referencia || "").trim().toUpperCase();
+      let identityRestriction = normalizeHistoricalRestriction(expected.restricao);
+      if (isAuxiliary) {
+        const identity = getAuxiliarySlotIdentity(expected.id);
+        if (!identity || identity.referencia !== identityReference || identity.restricao !== identityRestriction) continue;
+      } else {
+        const canonicalE1Id = `1-${normalizeHistoricalModule(expected.modulo)}-${identityReference}`;
+        if (expected.id !== canonicalE1Id || String(expected.posicao || "") !== "") continue;
+      }
+
+      const sameLogicalHistory = newMovements.filter(movement =>
+        scopeKey(movement) === scopeKey(expected) &&
+        String(movement.referencia || "").trim().toUpperCase() === identityReference &&
+        normalizeHistoricalRestriction(movement.restricao) === identityRestriction
+      );
+      if (sameLogicalHistory.length === 0 || sameLogicalHistory.some(movement => movement.slotId !== expected.id)) continue;
+      const exits = sameLogicalHistory
+        .filter(movement => movement.tipo === "Saída")
+        .reduce((sum, movement) => sum + Number(movement.quantidade || 0), 0);
+      const entries = sameLogicalHistory
+        .filter(movement => movement.tipo === "Entrada")
+        .reduce((sum, movement) => sum + Number(movement.quantidade || 0), 0);
+      if (exits > 0 && Number(expected.saldo || 0) + entries - exits === 0) {
+        deleteSlotIds.push(expected.id);
+      }
+    }
+
+    const deleteIds = new Set(deleteSlotIds);
+    const finalSlotsPayload = finalSlotsInScopes.filter(slot => !deleteIds.has(slot.id));
+
+    // Generic stock mutations cannot delete divergences or silently change their
+    // status. Merge updated rows into the full snapshot for every impacted scope.
+    const finalDivergenciasById = new Map(
+      expectedDivergenciasInScopes.map(div => [div.id, div])
+    );
+    for (const div of updatedDivergencias) {
+      if (scopeKeys.has(scopeKey(div))) finalDivergenciasById.set(div.id, div);
+    }
+    const finalDivergenciasInScopes = Array.from(finalDivergenciasById.values());
+
+    const allKnownSlotIds = new Set<string>([
+      ...expectedSlotsInScopes.map(slot => slot.id),
+      ...finalSlotsInScopes.map(slot => slot.id),
+    ]);
+    for (const movement of newMovements) {
+      if (movement.slotId && !historicalSlotIdMatchesMovement(movement, movement.slotId)) {
+        return failed(`O histórico ${movement.id} referencia o ID '${movement.slotId}', mas ele não corresponde ao SKU/restrição da movimentação. Nenhum dado foi gravado.`);
+      }
+    }
+    const validatedMovements = validateHistorySlotLinks(newMovements, allKnownSlotIds);
+
+    const rpcName = deleteSlotIds.length > 0
+      ? "apply_stock_mutation_atomic_with_deletes"
+      : "apply_stock_mutation_atomic";
+    const rpcArgs = deleteSlotIds.length > 0
+      ? {
+          p_expected_slots: expectedSlotsInScopes,
+          p_slots: finalSlotsPayload,
+          p_expected_divergencias: mapDivergenciasForSupabase(expectedDivergenciasInScopes),
+          p_divergencias: mapDivergenciasForSupabase(finalDivergenciasInScopes),
+          p_history: mapHistoryRowsForSupabase(validatedMovements),
+          p_delete_slot_ids: deleteSlotIds,
+        }
+      : {
+          p_expected_slots: expectedSlotsInScopes,
+          p_slots: finalSlotsPayload,
+          p_expected_divergencias: mapDivergenciasForSupabase(expectedDivergenciasInScopes),
+          p_divergencias: mapDivergenciasForSupabase(finalDivergenciasInScopes),
+          p_history: mapHistoryRowsForSupabase(validatedMovements),
+        };
+
+    // This is a write request; deliberately do not auto-retry on a network error.
+    const { data, error } = await supabase.rpc(rpcName, rpcArgs as never);
+    if (error || data?.success !== true) {
+      const reason = data?.message || data?.code || error?.message || "A transação não foi confirmada pelo Supabase.";
+      console.error("Transação de estoque revertida/sem confirmação:", {
+        rpc: rpcName,
+        code: data?.code ?? error?.code,
+        message: reason,
+      });
+      return failed(
+        `O Supabase não confirmou a transação atômica (${data?.code || error?.code || "SEM_CONFIRMACAO"}). ` +
+        `${reason} Não repita automaticamente: atualize o endereço e confira o histórico antes de tentar novamente.`
+      );
+    }
+
+    // The RPC committed the full transaction. Replace only its locked scopes;
+    // physical base-address rows remain, while exhausted logical SKU rows that
+    // the delete RPC removed are omitted from the refreshed client snapshot.
+    const nextSlots = updateSlotsState(current => [
+      ...current.filter(slot => !scopeKeys.has(scopeKey(slot))),
+      ...finalSlotsPayload,
+    ]);
+    await saveOfflineSnapshot("slots", nextSlots);
+
+    const nextDivergencias = updateDivergenciasState(current => [
+      ...current.filter(div => !scopeKeys.has(scopeKey(div))),
+      ...finalDivergenciasInScopes,
+    ]);
+    await saveOfflineSnapshot("divergencias", nextDivergencias);
+
+    const movementIds = new Set(newMovements.map(movement => movement.id));
+    const nextHistory = [
+      ...newMovements,
+      ...history.filter(movement => !movementIds.has(movement.id)),
+    ];
+    setHistory(nextHistory);
+    await saveOfflineSnapshot("history", nextHistory);
+    setHistoryQueryRows(previous => {
+      if (!previous) return previous;
+      const inSelectedPeriod = newMovements.filter(
+        movement => movement.data >= histDateStart && movement.data <= histDateEnd
+      );
+      const selectedIds = new Set(inSelectedPeriod.map(movement => movement.id));
+      return [...inSelectedPeriod, ...previous.filter(movement => !selectedIds.has(movement.id))];
+    });
+
+    return { ok: true, deletedSlotIds: deleteSlotIds };
   };
 
   /**
@@ -1709,10 +2437,13 @@ const deleteProduct = async (
       return false;
     }
 
+    const knownSlotIds = new Set<string>(updatedSlots.map(slot => String(slot.id).trim()));
+    const validatedMovements = validateHistorySlotLinks(newMovements, knownSlotIds);
+
     const { data, error } = await supabase.rpc("resolve_stock_divergence_atomic", {
       p_expected_slots: expectedSlots,
       p_slots: changedSlots,
-      p_history: mapHistoryRowsForSupabase(newMovements),
+      p_history: mapHistoryRowsForSupabase(validatedMovements),
       p_expected_divergencias: mapDivergenciasForSupabase(expectedDivergencias),
       p_divergencias: mapDivergenciasForSupabase(changedDivergencias),
     });
@@ -1729,7 +2460,6 @@ const deleteProduct = async (
 
     // Atualiza a interface/cache apenas após a confirmação da transação no banco.
     const nextSlots = mergeSlotsState(changedSlots);
-    slotsLoadPromise = null;
     await saveOfflineSnapshot("slots", nextSlots);
 
     const movementIds = new Set(newMovements.map(movement => movement.id));
@@ -1752,7 +2482,6 @@ const deleteProduct = async (
       ];
     });
 
-    divergenciasLoadPromise = null;
     const mergedDivergencias = updateDivergenciasState(current => {
       const byId = new globalThis.Map(current.map(div => [div.id, div]));
       changedDivergencias.forEach(div => byId.set(div.id, div));
@@ -1821,53 +2550,191 @@ const deleteProduct = async (
       }
     }
 
-    const normalizedEstoque = currentDiv.estoque.replace(/^E/, "");
-    const normalizedModulo = currentDiv.modulo.replace(/^[RM]/i, "");
-    const normalizedPosicao = currentDiv.posicao || "";
-    const targetSlotIdx = currentDiv.slotId
-      ? updatedSlots.findIndex(slot => slot.id === currentDiv.slotId)
-      : updatedSlots.findIndex(slot =>
-          slot.estoque === normalizedEstoque &&
-          slot.modulo === normalizedModulo &&
-          slot.posicao === normalizedPosicao &&
-          (
-            currentDiv.refAtual === "Vazio" ||
-            !currentDiv.refAtual ||
-            slot.referencia.toUpperCase() === currentDiv.refAtual.toUpperCase()
-          ) &&
-          (slot.restricao || "nenhuma") === (currentDiv.restricao || slot.restricao || "nenhuma")
-        );
+    const normalizeStock = (value: string): string =>
+      String(value ?? "").trim().toUpperCase().replace(/^E/i, "");
+    const normalizeModule = (value: string): string => {
+      const raw = String(value ?? "").trim().toUpperCase().replace(/^[RM]/i, "");
+      return /^\d+$/.test(raw) ? String(Number(raw)) : raw;
+    };
+    const normalizedEstoque = normalizeStock(currentDiv.estoque);
+    const normalizedModulo = normalizeModule(currentDiv.modulo);
+    const normalizedPosicao = String(currentDiv.posicao || "").trim().toUpperCase();
+    const samePhysicalAddress = (slot: WarehouseSlot): boolean =>
+      normalizeStock(slot.estoque) === normalizedEstoque &&
+      normalizeModule(slot.modulo) === normalizedModulo &&
+      String(slot.posicao || "").trim().toUpperCase() === normalizedPosicao;
+
+    const expectedReference = String(currentDiv.refAtual || "").trim().toUpperCase();
+    const expectedEmpty = expectedReference === "" || expectedReference === "VAZIO";
+    const expectedRestriction = normalizeHistoricalRestriction(currentDiv.restricao);
+    const correctedRestriction: Restricao = galpaoValue === "12"
+      ? "autorizacao"
+      : normalizeHistoricalRestriction(restricaoValue || currentDiv.restricao) as Restricao;
+    const canonicalAddressId = `${normalizedEstoque}-${normalizedModulo}-${normalizedPosicao}`;
+
+    const slotMatchesExpectedState = (slot: WarehouseSlot): boolean => {
+      if (!samePhysicalAddress(slot) || getSlotIdentityMismatch(slot) !== null) return false;
+      const currentReference = String(slot.referencia || "").trim().toUpperCase();
+      const currentBalance = Number(slot.saldo || 0);
+      const currentRestriction = normalizeHistoricalRestriction(slot.restricao);
+
+      if (!expectedEmpty) {
+        return currentReference === expectedReference && currentRestriction === expectedRestriction;
+      }
+
+      if (currentReference !== "" || currentBalance !== 0) return false;
+      if (action === "descartar") {
+        // Descatar uma divergência vazia só pode tocar no ID originalmente
+        // associado ou na linha física base; nunca em um auxiliar aleatório.
+        return slot.id === currentDiv.slotId || slot.id === canonicalAddressId;
+      }
+
+      if (normalizedEstoque === "1") {
+        // No E1 o ID identifica a Rua + SKU, portanto não reutilizamos a linha
+        // vazia de outro SKU como se fosse o item solicitado.
+        return slot.id === `1-${normalizedModulo}-${cleanSku}`;
+      }
+
+      if (slot.id.includes("::ITEM::")) {
+        const identity = getAuxiliarySlotIdentity(slot.id);
+        return Boolean(identity && identity.addressId === canonicalAddressId &&
+          identity.referencia === cleanSku && identity.restricao === correctedRestriction);
+      }
+
+      return slot.id === canonicalAddressId && isBasePhysicalSlotAtOwnAddress(slot);
+    };
+
+    const addressCandidates = updatedSlots
+      .map((slot, index) => ({ slot, index }))
+      .filter(({ slot }) => slotMatchesExpectedState(slot));
+
+    const slotByIdIndex = currentDiv.slotId
+      ? addressCandidates.find(({ slot }) => slot.id === currentDiv.slotId)?.index ?? -1
+      : -1;
+
+    let targetSlotIdx = slotByIdIndex;
+    if (targetSlotIdx < 0 && expectedEmpty && action === "sobrescrever") {
+      // Primeiro o ID base vazio; depois, somente um auxiliar que já codifica
+      // exatamente o SKU/restrição de destino. Nunca se reaproveita um auxiliar
+      // vazio pertencente a outro SKU.
+      targetSlotIdx = addressCandidates.find(({ slot }) => slot.id === canonicalAddressId)?.index ??
+        addressCandidates[0]?.index ?? -1;
+    } else if (targetSlotIdx < 0 && expectedEmpty && action === "descartar") {
+      targetSlotIdx = addressCandidates.find(({ slot }) => slot.id === canonicalAddressId)?.index ?? -1;
+    } else if (targetSlotIdx < 0 && !expectedEmpty && addressCandidates.length === 1) {
+      targetSlotIdx = addressCandidates[0].index;
+    }
+
+    if (!expectedEmpty && addressCandidates.length > 1) {
+      alert(
+        `A divergência ${currentDiv.id} tem mais de um registro que corresponde à SKU/restrição informada no endereço. ` +
+        "A correção foi interrompida para não escolher um slot_id arbitrariamente. Confira os registros do endereço."
+      );
+      return false;
+    }
 
     let effectiveSlotId: string | undefined =
-      targetSlotIdx >= 0 ? updatedSlots[targetSlotIdx].id : currentDiv.slotId;
+      targetSlotIdx >= 0 ? updatedSlots[targetSlotIdx].id : undefined;
+    const correctionExtraMovements: HistoricoMov[] = [];
+
+    if (action === "descartar" && targetSlotIdx < 0) {
+      alert(
+        `Não foi possível localizar com segurança o endereço da divergência ${currentDiv.id}. ` +
+        "A divergência não foi marcada como corrigida. Atualize os dados e tente novamente."
+      );
+      return false;
+    }
 
     if (action === "sobrescrever" && targetSlotIdx === -1) {
-      if (normalizedEstoque === "1") {
-        const e1Index = updatedSlots.findIndex(slot =>
-          slot.estoque === "1" &&
-          slot.modulo === normalizedModulo &&
-          slot.referencia.toUpperCase() === cleanSku
+      // Não crie uma segunda linha para um item que já existe no endereço, nem
+      // transforme silenciosamente um ID antigo em uma nova identidade.
+      const occupiedAtAddress = updatedSlots.filter(slot =>
+        samePhysicalAddress(slot) && Number(slot.saldo || 0) > 0 && Boolean(String(slot.referencia || "").trim())
+      );
+      const duplicateTarget = occupiedAtAddress.find(slot =>
+        String(slot.referencia || "").trim().toUpperCase() === cleanSku &&
+        normalizeHistoricalRestriction(slot.restricao) === correctedRestriction
+      );
+      if (duplicateTarget) {
+        alert(
+          `O item ${cleanSku} / ${correctedRestriction} já existe no endereço pelo ID '${duplicateTarget.id}'. ` +
+          "A divergência não será aplicada a uma segunda linha. Confira o saldo físico e o ID atual."
         );
-        if (e1Index >= 0) {
-          effectiveSlotId = updatedSlots[e1Index].id;
-        }
-      } else {
-        const restriction = currentDiv.restricao || "nenhuma";
-        const addressId = `${normalizedEstoque}-${normalizedModulo}-${normalizedPosicao}`;
-        const itemId = `${addressId}::ITEM::${cleanSku}::${restriction}`;
-        const reusableIndex = updatedSlots.findIndex(slot =>
-          slot.estoque === normalizedEstoque &&
-          slot.modulo === normalizedModulo &&
-          slot.posicao === normalizedPosicao &&
-          slot.saldo === 0 &&
-          slot.id.includes("::ITEM::")
-        );
+        return false;
+      }
 
-        if (reusableIndex >= 0) {
-          effectiveSlotId = updatedSlots[reusableIndex].id;
+      const hasNormal = occupiedAtAddress.some(slot => normalizeHistoricalRestriction(slot.restricao) === "nenhuma");
+      const hasRestricted = occupiedAtAddress.some(slot => normalizeHistoricalRestriction(slot.restricao) !== "nenhuma");
+      if (
+        (correctedRestriction === "nenhuma" && occupiedAtAddress.some(slot => slot.referencia.trim().toUpperCase() !== cleanSku)) ||
+        (correctedRestriction === "nenhuma" && hasRestricted) ||
+        (correctedRestriction !== "nenhuma" && hasNormal)
+      ) {
+        alert(
+          "A correção criaria uma combinação de restrições incompatível com os itens já presentes na posição. " +
+          "Confira o cadastro físico e a restrição antes de corrigir a divergência."
+        );
+        return false;
+      }
+
+      if (normalizedEstoque === "1") {
+        const e1Id = `1-${normalizedModulo}-${cleanSku}`;
+        const existingE1 = updatedSlots.findIndex(slot => slot.id === e1Id);
+        if (existingE1 >= 0) {
+          const row = updatedSlots[existingE1];
+          if (row.referencia.trim() || Number(row.saldo || 0) > 0) {
+            alert(`O ID E1 '${e1Id}' já tem saldo. A correção foi interrompida para não sobrescrever outra identidade.`);
+            return false;
+          }
+          targetSlotIdx = existingE1;
         } else {
           updatedSlots.push({
-            id: itemId,
+            id: e1Id,
+            estoque: normalizedEstoque,
+            modulo: normalizedModulo,
+            posicao: "",
+            referencia: "",
+            descricao: "",
+            saldo: 0,
+            dataChacote: "",
+            ultimaData: "",
+            ultimaHora: "",
+            ultimoResponsavel: "",
+            galpao: galpaoValue,
+            restricao: correctedRestriction,
+            observacao: "",
+          });
+          targetSlotIdx = updatedSlots.length - 1;
+        }
+      } else {
+        const baseRowIndex = updatedSlots.findIndex(slot =>
+          slot.id === canonicalAddressId && samePhysicalAddress(slot) &&
+          slot.referencia.trim() === "" && Number(slot.saldo || 0) === 0 &&
+          isBasePhysicalSlotAtOwnAddress(slot)
+        );
+        const targetItemId = `${canonicalAddressId}::ITEM::${cleanSku}::${correctedRestriction}`;
+        const exactItemIndex = updatedSlots.findIndex(slot => slot.id === targetItemId);
+        if (exactItemIndex >= 0) {
+          const row = updatedSlots[exactItemIndex];
+          if (getSlotIdentityMismatch(row) !== null || row.referencia.trim() || Number(row.saldo || 0) > 0) {
+            alert(`O ID '${targetItemId}' já existe com outro estado. A correção foi interrompida para não duplicar ou sobrescrever estoque.`);
+            return false;
+          }
+          targetSlotIdx = exactItemIndex;
+        } else if (baseRowIndex >= 0) {
+          targetSlotIdx = baseRowIndex;
+        } else {
+          const configured = warehousePositions.some(position =>
+            position.ativo && normalizeStock(position.estoque) === normalizedEstoque &&
+            normalizeModule(position.modulo) === normalizedModulo &&
+            String(position.posicao || "").trim().toUpperCase() === normalizedPosicao
+          );
+          if (!configured) {
+            alert(`A posição ${canonicalAddressId} não está cadastrada como física/ativa. Não será criado um ID novo fora do layout.`);
+            return false;
+          }
+          updatedSlots.push({
+            id: targetItemId,
             estoque: normalizedEstoque,
             modulo: normalizedModulo,
             posicao: normalizedPosicao,
@@ -1878,12 +2745,70 @@ const deleteProduct = async (
             ultimaData: "",
             ultimaHora: "",
             ultimoResponsavel: "",
-            galpao: currentDiv.restricao === "autorizacao" ? "12" : "3",
-            restricao: restriction,
+            galpao: galpaoValue,
+            restricao: correctedRestriction,
             observacao: "",
           });
-          effectiveSlotId = itemId;
+          targetSlotIdx = updatedSlots.length - 1;
         }
+      }
+      effectiveSlotId = updatedSlots[targetSlotIdx]?.id;
+    }
+
+    if (action === "sobrescrever" && targetSlotIdx >= 0) {
+      const selected = updatedSlots[targetSlotIdx];
+      const selectedReference = String(selected.referencia || "").trim().toUpperCase();
+      const selectedRestriction = normalizeHistoricalRestriction(selected.restricao);
+      const identityWillChange = Boolean(selectedReference) &&
+        (selectedReference !== cleanSku || selectedRestriction !== correctedRestriction);
+
+      // An auxiliary ID encodes SKU + restriction; an E1 ID encodes SKU.
+      // Changing those identities in-place would create the historical mismatch
+      // reported in production, so refuse it instead of silently keeping the old ID.
+      if (identityWillChange && (
+        selected.id.includes("::ITEM::") || normalizedEstoque === "1"
+      )) {
+        alert(
+          `O ID '${selected.id}' codifica a identidade atual do item (${selectedReference} / ${selectedRestriction}) ` +
+          `e não pode ser reutilizado como ${cleanSku} / ${correctedRestriction}. ` +
+          "A correção foi interrompida para evitar um slot_id incorreto. Faça a reconciliação física da identidade antes de concluir esta divergência."
+        );
+        return false;
+      }
+
+      const duplicateTarget = updatedSlots.find(slot =>
+        slot.id !== selected.id && samePhysicalAddress(slot) &&
+        Number(slot.saldo || 0) > 0 &&
+        String(slot.referencia || "").trim().toUpperCase() === cleanSku &&
+        normalizeHistoricalRestriction(slot.restricao) === correctedRestriction
+      );
+      if (duplicateTarget && identityWillChange) {
+        alert(
+          `O item ${cleanSku} / ${correctedRestriction} já tem saldo no ID '${duplicateTarget.id}'. ` +
+          "A correção não pode sobrescrever o ID base e criar um segundo registro para a mesma identidade."
+        );
+        return false;
+      }
+
+      if (identityWillChange && Number(selected.saldo || 0) > 0) {
+        correctionExtraMovements.push({
+          id: `CORR-${generateId()}`,
+          dataLancamento: targetDate,
+          quemLancou: correctedBy,
+          data: targetDate,
+          estoque: selected.estoque,
+          modulo: selected.modulo,
+          posicao: selected.posicao,
+          referencia: selected.referencia,
+          quantidade: Number(selected.saldo),
+          tipo: "Saída",
+          dataChacote: selected.dataChacote || "",
+          hora: currentHour,
+          responsavel: correctedBy,
+          observacao: `Retirada da identidade anterior durante correção física da divergência ${currentDiv.id}`,
+          slotId: selected.id,
+          restricao: selectedRestriction as Restricao,
+        });
       }
     }
 
@@ -1891,66 +2816,24 @@ const deleteProduct = async (
       ? updatedSlots.findIndex(slot => slot.id === effectiveSlotId)
       : -1;
 
-    if (action === "descartar") {
-      if (resolvedSlotIdx >= 0) {
-        updatedSlots[resolvedSlotIdx] = {
-          ...updatedSlots[resolvedSlotIdx],
-          referencia: "",
-          descricao: "",
-          saldo: 0,
-          dataChacote: "",
-          observacao: "",
-          ultimaData: targetDate,
-          ultimaHora: currentHour,
-          ultimoResponsavel: correctedBy,
-        };
-      }
-    } else if (resolvedSlotIdx >= 0) {
-      updatedSlots[resolvedSlotIdx] = {
-        ...updatedSlots[resolvedSlotIdx],
-        referencia: product!.referencia,
-        descricao: product!.descricao,
-        saldo: quantity,
-        dataChacote: dataChacoteValue.trim(),
-        galpao: currentDiv.restricao === "autorizacao"
-          ? "12"
-          : (updatedSlots[resolvedSlotIdx].galpao || "3"),
-        restricao: currentDiv.restricao || updatedSlots[resolvedSlotIdx].restricao || "nenhuma",
-        ultimaData: targetDate,
-        ultimaHora: currentHour,
-        ultimoResponsavel: correctedBy,
-      };
+    // The existing divergence-resolution RPC cannot delete an emptied logical
+    // E1/auxiliary row in the same transaction. Do not commit a discard that
+    // would leave a blank SKU-specific ID behind; the operator can retry after
+    // the dedicated atomic delete-capable resolution RPC is deployed.
+    if (
+      action === "descartar" &&
+      resolvedSlotIdx >= 0 &&
+      (updatedSlots[resolvedSlotIdx].id.includes("::ITEM::") || normalizedEstoque === "1") &&
+      (Number(updatedSlots[resolvedSlotIdx].saldo || 0) > 0 || Boolean(String(updatedSlots[resolvedSlotIdx].referencia || "").trim()))
+    ) {
+      alert(
+        "Esta divergência está vinculada a um ID lógico de SKU (E1/auxiliar). " +
+        "A rotina transacional atual não consegue excluir esse ID vazio junto com a correção. " +
+        "A operação foi bloqueada para não deixar uma linha vazia/fantasma nem separar o histórico da correção. " +
+        "Nenhum dado foi alterado."
+      );
+      return false;
     }
-
-    const updatedDivergencias = divergencias.map(item => {
-      const sameItem =
-        item.status === "Aberta" &&
-        (
-          (currentDiv.slotId && item.slotId === currentDiv.slotId) ||
-          (!currentDiv.slotId &&
-            item.estoque === currentDiv.estoque &&
-            item.modulo === currentDiv.modulo &&
-            item.posicao === currentDiv.posicao)
-        );
-
-      if (!sameItem) return item;
-
-      return {
-        ...item,
-        status: "Corrigida" as const,
-        refNova: action === "descartar" ? "" : (product?.referencia || cleanSku),
-        saldoFinal: action === "descartar" ? 0 : quantity,
-        dataCorrecao: targetDate,
-        corrigidoPor: correctedBy,
-        slotId: effectiveSlotId || item.slotId,
-        restricao: galpaoValue === "12" ? "autorizacao" : restricaoValue,
-        observacao:
-          `${item.observacao || "Divergência gerada durante a operação."} ` +
-          `Correção física registrada por ${correctedBy}. Galpão: ${galpaoValue}. ` +
-          `Restrição: ${galpaoValue === "12" ? "autorizacao" : restricaoValue}. ` +
-          `${observacaoValue.trim()}`.trim(),
-      };
-    });
 
     if (action === "sobrescrever" && resolvedSlotIdx < 0) {
       alert(
@@ -1959,7 +2842,95 @@ const deleteProduct = async (
       return false;
     }
 
-    const newLog: HistoricoMov = {
+    const correctionTargetBefore = resolvedSlotIdx >= 0
+      ? { ...updatedSlots[resolvedSlotIdx] }
+      : undefined;
+    const oldTargetReference = String(correctionTargetBefore?.referencia || "").trim().toUpperCase();
+    const oldTargetRestriction = normalizeHistoricalRestriction(correctionTargetBefore?.restricao);
+    const oldTargetBalance = Number(correctionTargetBefore?.saldo || 0);
+
+    const addCorrectionExit = (slot: WarehouseSlot, description: string) => {
+      const balance = Number(slot.saldo || 0);
+      const reference = String(slot.referencia || "").trim().toUpperCase();
+      if (balance <= 0 || !reference) return;
+      correctionExtraMovements.push({
+        id: `CORR-${generateId()}`,
+        dataLancamento: targetDate,
+        quemLancou: correctedBy,
+        data: targetDate,
+        estoque: slot.estoque,
+        modulo: slot.modulo,
+        posicao: slot.posicao,
+        referencia: slot.referencia,
+        quantidade: balance,
+        tipo: "Saída",
+        dataChacote: slot.dataChacote || "",
+        hora: currentHour,
+        responsavel: correctedBy,
+        observacao: description,
+        slotId: slot.id,
+        restricao: normalizeHistoricalRestriction(slot.restricao) as Restricao,
+      });
+    };
+
+    if (resolvedSlotIdx >= 0) {
+      const selected = updatedSlots[resolvedSlotIdx];
+      if (action === "descartar") {
+        addCorrectionExit(selected, `Baixa da identidade descartada durante correção da divergência ${currentDiv.id}`);
+        updatedSlots[resolvedSlotIdx] = {
+          ...selected,
+          referencia: "",
+          descricao: "",
+          saldo: 0,
+          dataChacote: "",
+          galpao: "3",
+          restricao: selected.id.includes("::ITEM::")
+            ? (getAuxiliarySlotIdentity(selected.id)?.restricao || normalizeHistoricalRestriction(selected.restricao) as Restricao)
+            : "nenhuma",
+          observacao: "",
+          ultimaData: targetDate,
+          ultimaHora: currentHour,
+          ultimoResponsavel: correctedBy,
+        };
+      } else if (quantity === 0) {
+        if (!correctionExtraMovements.some(movement => movement.slotId === selected.id && movement.tipo === "Saída")) {
+          addCorrectionExit(selected, `Baixa física confirmada durante correção da divergência ${currentDiv.id}`);
+        }
+        updatedSlots[resolvedSlotIdx] = {
+          ...selected,
+          referencia: "",
+          descricao: "",
+          saldo: 0,
+          dataChacote: "",
+          galpao: "3",
+          restricao: selected.id.includes("::ITEM::")
+            ? (getAuxiliarySlotIdentity(selected.id)?.restricao || normalizeHistoricalRestriction(selected.restricao) as Restricao)
+            : "nenhuma",
+          observacao: "",
+          ultimaData: targetDate,
+          ultimaHora: currentHour,
+          ultimoResponsavel: correctedBy,
+        };
+      } else {
+        // IDs auxiliares e IDs E1 não podem ser reatribuídos a outra identidade.
+        // Para a base física E2/E3 o ID representa o endereço, então a SKU pode
+        // ser corrigida desde que não exista outra linha ocupada com a mesma identidade.
+        updatedSlots[resolvedSlotIdx] = {
+          ...selected,
+          referencia: product!.referencia,
+          descricao: product!.descricao,
+          saldo: quantity,
+          dataChacote: dataChacoteValue.trim(),
+          galpao: galpaoValue,
+          restricao: correctedRestriction,
+          ultimaData: targetDate,
+          ultimaHora: currentHour,
+          ultimoResponsavel: correctedBy,
+        };
+      }
+    }
+
+    const newLogTemplate: HistoricoMov = {
       id: `CORR-${generateId()}`,
       dataLancamento: targetDate,
       quemLancou: correctedBy,
@@ -1975,12 +2946,69 @@ const deleteProduct = async (
       responsavel: correctedBy,
       observacao: `Correção de divergência: ${currentDiv.id}`,
       slotId: effectiveSlotId,
-      restricao: currentDiv.restricao || (resolvedSlotIdx >= 0 ? (updatedSlots[resolvedSlotIdx].restricao || "nenhuma") : "nenhuma"),
+      restricao: action === "descartar" ? expectedRestriction as Restricao : correctedRestriction,
     };
+
+    // History expresses the adjustment, not the final count as a new addition:
+    // same identity => signed delta; identity change => salida del SKU anterior
+    // (if any) plus entrada del SKU confirmado. The RPC commits this log,
+    // slot snapshot and divergence status as one transaction.
+    const movementsToPersist: HistoricoMov[] = [...correctionExtraMovements];
+    if (action === "descartar") {
+      if (movementsToPersist.length === 0) movementsToPersist.push(newLogTemplate);
+    } else if (quantity === 0) {
+      if (movementsToPersist.length === 0) {
+        movementsToPersist.push({
+          ...newLogTemplate,
+          tipo: "Saída",
+          quantidade: 0,
+          observacao: `Conferência física em zero para a divergência ${currentDiv.id}`,
+        });
+      }
+    } else {
+      const sameIdentityBeforeCorrection = Boolean(
+        correctionTargetBefore &&
+        oldTargetReference === cleanSku &&
+        oldTargetRestriction === correctedRestriction
+      );
+      if (sameIdentityBeforeCorrection && correctionTargetBefore) {
+        const delta = quantity - oldTargetBalance;
+        if (delta > 0) {
+          movementsToPersist.push({ ...newLogTemplate, tipo: "Entrada", quantidade: delta });
+        } else if (delta < 0) {
+          movementsToPersist.push({ ...newLogTemplate, tipo: "Saída", quantidade: Math.abs(delta) });
+        } else {
+          movementsToPersist.push({
+            ...newLogTemplate,
+            tipo: "Entrada",
+            quantidade: 0,
+            observacao: `Saldo físico confirmado sem ajuste para a divergência ${currentDiv.id}`,
+          });
+        }
+      } else {
+        movementsToPersist.push({ ...newLogTemplate, tipo: "Entrada", quantidade: quantity });
+      }
+    }
+
+    const updatedDivergencias = divergenciasRef.current.map(item => item.id !== currentDiv.id
+      ? item
+      : {
+          ...item,
+          refNova: action === "sobrescrever" && product ? product.referencia : item.refNova,
+          saldoFinal: action === "sobrescrever" ? quantity : 0,
+          status: "Corrigida" as const,
+          dataCorrecao: targetDate,
+          corrigidoPor: correctedBy,
+          slotId: effectiveSlotId,
+          observacao: observacaoValue.trim() || item.observacao || "",
+          restricao: action === "descartar"
+            ? expectedRestriction as Restricao
+            : correctedRestriction,
+        });
 
     const saved = await persistDivergenceResolutionAtomically(
       updatedSlots,
-      [newLog],
+      movementsToPersist,
       updatedDivergencias
     );
     if (!saved) {
@@ -2144,9 +3172,16 @@ const deleteProduct = async (
   );
 
   // --- LANÇAMENTO (TABULAR BATCH LEDGER) ---
+  // Bloqueio síncrono evita duplo clique antes do próximo render do React.
+  const batchLaunchInFlightRef = useRef(false);
+  const [batchLaunchLoading, setBatchLaunchLoading] = useState(false);
+  // Invalida timers antigos quando o rascunho é limpo. Assim, um timer que já
+  // estava agendado não pode gravar novamente os dados recém-lançados.
+  const lancamentoDraftRevisionRef = useRef(0);
+
   const [lancamentoRows, setLancamentoRows] = useState<LancamentoRow[]>(() => {
     try {
-      const saved = localStorage.getItem("eb_lancamento_draft_v1");
+      const saved = localStorage.getItem(LANCAMENTO_DRAFT_LOCAL_KEY);
       if (!saved) return [];
       const parsed = JSON.parse(saved);
       return Array.isArray(parsed) ? parsed : [];
@@ -2159,15 +3194,16 @@ const deleteProduct = async (
 
   // Rascunho local: protege o preenchimento contra F5/atualização da página.
   useEffect(() => {
+    const revision = lancamentoDraftRevisionRef.current;
+    const rowsSnapshot = lancamentoRows;
     const timeout = window.setTimeout(() => {
+      // Um timer da versão anterior não pode regravar dados depois de limpar.
+      if (revision !== lancamentoDraftRevisionRef.current) return;
       try {
-        if (lancamentoRows.length > 0) {
-          localStorage.setItem(
-            "eb_lancamento_draft_v1",
-            JSON.stringify(lancamentoRows)
-          );
+        if (rowsSnapshot.length > 0) {
+          localStorage.setItem(LANCAMENTO_DRAFT_LOCAL_KEY, JSON.stringify(rowsSnapshot));
         } else {
-          localStorage.removeItem("eb_lancamento_draft_v1");
+          localStorage.removeItem(LANCAMENTO_DRAFT_LOCAL_KEY);
         }
       } catch (error) {
         console.error("Erro ao salvar rascunho local de lançamento:", error);
@@ -2177,10 +3213,11 @@ const deleteProduct = async (
     return () => window.clearTimeout(timeout);
   }, [lancamentoRows]);
 
-  // O Supabase passa a ser o rascunho compartilhado por usuário. O localStorage
-  // continua como proteção rápida para F5/offline e para a transição inicial.
+  // O Supabase mantém o rascunho compartilhado por usuário. Um marcador local
+  // pendente impede restaurar um rascunho antigo se a exclusão remota falhou.
   useEffect(() => {
     let cancelled = false;
+    const revisionAtHydrationStart = lancamentoDraftRevisionRef.current;
 
     if (!authUserId) {
       setLancamentoDraftReady(false);
@@ -2192,8 +3229,49 @@ const deleteProduct = async (
     setLancamentoDraftReady(false);
 
     const hydrateDraft = async () => {
+      const markerKey = getLancamentoDraftClearMarkerKey(authUserId);
+      let pendingClearMarker: string | null = null;
+      try {
+        pendingClearMarker = localStorage.getItem(markerKey);
+      } catch (error) {
+        console.warn("Não foi possível consultar o marcador de limpeza do rascunho:", error);
+      }
+
+      if (pendingClearMarker !== null) {
+        // A exclusão anterior não foi confirmada. Invalide qualquer timer local
+        // pendente, nunca restaure as linhas antigas e tente excluir uma vez.
+        lancamentoDraftRevisionRef.current += 1;
+        try {
+          localStorage.removeItem(LANCAMENTO_DRAFT_LOCAL_KEY);
+        } catch (error) {
+          console.warn("Não foi possível limpar o rascunho local antigo:", error);
+        }
+        setLancamentoRows([]);
+        const clearResult = await enqueueLancamentoDraftWrite(() =>
+          clearLancamentoDraftFromSupabase(authUserId)
+        );
+        if (clearResult.rowDeleted) {
+          try {
+            if (localStorage.getItem(markerKey) === pendingClearMarker) {
+              localStorage.removeItem(markerKey);
+            }
+          } catch (error) {
+            console.warn("Não foi possível remover o marcador de limpeza:", error);
+          }
+        }
+        if (!cancelled) {
+          setLancamentoRows([]);
+          setLancamentoDraftReady(true);
+        }
+        return;
+      }
+
       const remoteRows = await loadLancamentoDraftFromSupabase(authUserId);
       if (cancelled) return;
+      if (revisionAtHydrationStart !== lancamentoDraftRevisionRef.current) {
+        setLancamentoDraftReady(true);
+        return;
+      }
 
       if (remoteRows === null) {
         // Falha de leitura não apaga o rascunho local existente.
@@ -2203,17 +3281,17 @@ const deleteProduct = async (
 
       if (remoteRows.length > 0) {
         setLancamentoRows(remoteRows);
-      } else if (lancamentoRows.length > 0) {
-        // Migra o rascunho local existente para a conta autenticada na primeira
-        // abertura após esta funcionalidade ser habilitada.
-        await saveLancamentoDraftToSupabase(authUserId, lancamentoRows);
-      } else {
+      } else if (lancamentoRows.length === 0) {
         setLancamentoRows([]);
+        try {
+          localStorage.removeItem(LANCAMENTO_DRAFT_LOCAL_KEY);
+        } catch (error) {
+          console.warn("Não foi possível limpar o rascunho local vazio:", error);
+        }
       }
-
-      if (!cancelled) {
-        setLancamentoDraftReady(true);
-      }
+      // Se houver apenas rascunho local, o efeito de sincronização abaixo o
+      // migra após a hidratação estar marcada como pronta.
+      if (!cancelled) setLancamentoDraftReady(true);
     };
 
     void hydrateDraft();
@@ -2224,26 +3302,81 @@ const deleteProduct = async (
   }, [authUserId]);
 
   useEffect(() => {
-    if (!authUserId || !lancamentoDraftReady) return;
+    if (!authUserId || !lancamentoDraftReady || lancamentoRows.length === 0) return;
 
+    const revision = lancamentoDraftRevisionRef.current;
+    const rowsSnapshot = lancamentoRows;
+    const markerKey = getLancamentoDraftClearMarkerKey(authUserId);
     const timeout = window.setTimeout(() => {
-      if (lancamentoRows.length === 0) {
-        void deleteLancamentoDraftFromSupabase(authUserId);
-        return;
-      }
-
-      void saveLancamentoDraftToSupabase(authUserId, lancamentoRows);
+      if (revision !== lancamentoDraftRevisionRef.current) return;
+      void enqueueLancamentoDraftWrite(async () => {
+        // A operação também revalida após esperar na fila: uma exclusão que
+        // entrou na fila primeiro invalida qualquer upsert antigo pendente.
+        if (revision !== lancamentoDraftRevisionRef.current) return true;
+        const saved = await saveLancamentoDraftToSupabase(authUserId, rowsSnapshot);
+        if (saved && revision === lancamentoDraftRevisionRef.current) {
+          try {
+            localStorage.removeItem(markerKey);
+          } catch (error) {
+            console.warn("Não foi possível remover o marcador do rascunho:", error);
+          }
+        }
+        return saved;
+      });
     }, 500);
 
     return () => window.clearTimeout(timeout);
   }, [authUserId, lancamentoDraftReady, lancamentoRows]);
 
-  const clearLancamentoDraft = () => {
+  const clearLancamentoDraftAndPersist = async (
+    userId: string | null
+  ): Promise<{ contentCleared: boolean; rowDeleted: boolean }> => {
+    const revision = ++lancamentoDraftRevisionRef.current;
+    const markerKey = userId ? getLancamentoDraftClearMarkerKey(userId) : null;
+    const markerToken = `${Date.now()}-${revision}`;
+
+    // Limpa a tela e o cache local imediatamente, sem aguardar o debounce.
+    try {
+      localStorage.removeItem(LANCAMENTO_DRAFT_LOCAL_KEY);
+      if (markerKey) localStorage.setItem(markerKey, markerToken);
+    } catch (error) {
+      console.error("Não foi possível registrar a limpeza local do rascunho:", error);
+    }
+    setLancamentoRows([]);
+    setLancamentoDraftReady(true);
+
+    if (!userId || !markerKey) {
+      return { contentCleared: true, rowDeleted: true };
+    }
+
+    // A limpeza entra na mesma fila que os upserts: qualquer salvamento antigo
+    // termina antes; o upsert vazio protege o conteúdo remoto se o DELETE falhar.
+    const clearResult = await enqueueLancamentoDraftWrite(() =>
+      clearLancamentoDraftFromSupabase(userId)
+    );
+    if (clearResult.rowDeleted) {
+      try {
+        if (localStorage.getItem(markerKey) === markerToken) {
+          localStorage.removeItem(markerKey);
+        }
+      } catch (error) {
+        console.warn("Não foi possível remover o marcador de limpeza do rascunho:", error);
+      }
+    }
+    return clearResult;
+  };
+
+  const clearLancamentoDraft = async () => {
     if (lancamentoRows.length === 0) return;
     if (!confirm("Limpar o rascunho atual do lançamento? Os dados ainda não lançados serão perdidos.")) {
       return;
     }
-    setLancamentoRows([]);
+    const clearResult = await clearLancamentoDraftAndPersist(authUserId);
+    if (!clearResult.rowDeleted) {
+      alert(clearResult.contentCleared
+        ? "O conteúdo do rascunho foi zerado no Supabase, então as linhas antigas não serão restauradas. A exclusão física ficou pendente e será tentada novamente no próximo login neste navegador."
+        : "O rascunho foi limpo desta tela, mas o Supabase não confirmou nem a limpeza remota nem a exclusão. Neste navegador, a restauração será bloqueada e a limpeza tentada novamente no próximo login. Se acessar por outro dispositivo, confira o rascunho antes de usar.");
+    }
   };
 
   // Bulk Excel import panel state
@@ -2345,9 +3478,9 @@ const lancamentoInputRefs = useRef<Record<string, HTMLInputElement | null>>({});
   
   const removeLancamentoRow = (id: string) => {
     if (lancamentoRows.length === 1) {
-  setLancamentoRows([]);
-  return;
-}
+      void clearLancamentoDraftAndPersist(authUserId);
+      return;
+    }
     setLancamentoRows(lancamentoRows.filter(r => r.id !== id));
   };
 
@@ -2543,6 +3676,10 @@ if (
 
   // Executing batch launches with Travas (blocking validators)
   const handleLancarLote = async () => {
+    if (!lancamentoDraftReady) {
+      alert("Aguarde a recuperação do rascunho antes de lançar o lote.");
+      return;
+    }
     // Perform validators for each active field. Operational conflicts such as
     // occupied positions and restriction mismatches are handled by the
     // sequential processor as divergences, so they must not abort the batch.
@@ -2551,6 +3688,9 @@ if (
       alert("Por favor, preencha pelo menos um lançamento contendo código SKU válido.");
       return;
     }
+    if (batchLaunchInFlightRef.current) return;
+    batchLaunchInFlightRef.current = true;
+    setBatchLaunchLoading(true);
 
     try {
       // Capture only structural/input errors here. Physical conflicts are
@@ -2614,54 +3754,42 @@ if (
       );
 
       const updatedDivergencias = [...newDivergencias, ...divergencias];
-
-      // Quando há divergência, ela é registrada antes da alteração física.
-      // Assim, se a segunda persistência falhar, a posição continua protegida
-      // pela divergência aberta em vez de ficar alterada sem registro.
-      if (newDivergencias.length > 0) {
-        const divergenciasSaved = await persistDivergenciasUpdate(updatedDivergencias);
-        if (!divergenciasSaved) {
-          alert(
-            "O lote não foi concluído porque as divergências não puderam ser registradas no Supabase. " +
-            "Os dados preenchidos foram preservados no rascunho. Não repita a operação antes de verificar a conexão."
-          );
-          return;
-        }
-      }
-
-      // Persistência incremental: somente o que foi alterado é enviado ao Supabase.
-      const slotsSaved = await persistSlotsUpdate(updatedSlots);
-      if (!slotsSaved) {
+      const transaction = await persistStockMutationAtomically(
+        slots,
+        updatedSlots,
+        newHistory,
+        divergencias,
+        updatedDivergencias,
+      );
+      if (!transaction.ok) {
         alert(
-          newDivergencias.length > 0
-            ? "As divergências foram registradas, mas não foi possível atualizar os endereços no Supabase. A posição permanece protegida para revisão e os dados do lote foram preservados."
-            : "O lote não foi concluído porque não foi possível salvar os endereços no Supabase. Os dados preenchidos foram preservados no rascunho."
+          "O lote foi interrompido e não foi confirmado pelo Supabase.\n\n" +
+          `${transaction.reason || "Atualize os dados e confira o estoque antes de tentar novamente."}`
         );
         return;
       }
 
-      const historySaved = await appendHistory(newHistory);
-      if (!historySaved) {
-        // O endereço já foi salvo. Recarregamos para manter a tela fiel ao banco.
-        const latestSlots = await loadSlotsFromSupabase();
-        updateSlotsState(() => latestSlots);
-        alert(
-          "Os endereços foram salvos, mas o histórico não pôde ser gravado. " +
-          "Os dados preenchidos foram preservados no rascunho; não repita a operação antes de verificar a conexão."
-        );
-        return;
-      }
-
-      alert(`Lote processado!\n✔️ ${processedCount} movimentações consolidadas de modo sequencial.\n⚠️ ${errorCount} divergências identificadas e enviadas para revisão.`);
-
-      // Clear grid only after all persistent writes succeeded.
-      setLancamentoRows([]);
+      // O estoque já foi confirmado atomicamente. Limpe a tela/cache agora e
+      // aguarde a exclusão remota para não permitir que o lote antigo reapareça
+      // ao reautenticar. A exclusão falhar não transforma o estoque confirmado
+      // em falha nem deve incentivar o operador a relançar.
+      const draftClearResult = await clearLancamentoDraftAndPersist(authUserId);
+      const completedMessage =
+        `Lote processado!\n✔️ ${processedCount} movimentações consolidadas de modo sequencial.\n⚠️ ${errorCount} divergências identificadas e enviadas para revisão.`;
+      alert(draftClearResult.rowDeleted
+        ? `${completedMessage}\n✓ Rascunho removido do dispositivo e do Supabase.`
+        : draftClearResult.contentCleared
+          ? `${completedMessage}\n✓ O conteúdo remoto do rascunho foi zerado. A exclusão física ficou pendente e será tentada novamente no próximo login; as linhas antigas não serão restauradas.`
+          : `${completedMessage}\n\nATENÇÃO: o estoque foi confirmado, mas o Supabase não confirmou a limpeza do rascunho. Neste navegador, a restauração será bloqueada e a limpeza tentada novamente no próximo login. Se acessar por outro dispositivo, confira o rascunho antes de usar. NÃO lance o lote novamente; confira o histórico se houver qualquer dúvida.`);
     } catch (error) {
       console.error("Erro inesperado ao processar lote:", error);
       alert(
         "O lote não foi concluído por causa de um erro inesperado. " +
         "Os dados preenchidos foram preservados no rascunho para nova tentativa."
       );
+    } finally {
+      batchLaunchInFlightRef.current = false;
+      setBatchLaunchLoading(false);
     }
   };
 
@@ -2792,20 +3920,17 @@ if (
 
     if (newDivergencias.length > 0) {
       const updatedDivergencias = [...newDivergencias, ...divergencias];
-      const divergenciasSaved = await persistDivergenciasUpdate(updatedDivergencias);
-      if (!divergenciasSaved) {
+      const transaction = await persistStockMutationAtomically(
+        slots,
+        updatedSlots,
+        newHistory,
+        divergencias,
+        updatedDivergencias,
+      );
+      if (!transaction.ok) {
         alert(
-          "A divergência foi identificada, mas não pôde ser registrada no Supabase. " +
-          "Os dados preenchidos foram preservados para nova tentativa. Verifique a conexão antes de repetir a operação."
-        );
-        return false;
-      }
-
-      const slotsSaved = await persistSlotsUpdate(updatedSlots);
-      if (!slotsSaved) {
-        alert(
-          "A divergência foi registrada, mas não foi possível limpar a posição no Supabase. " +
-          "A posição permanece protegida para revisão. Não repita a operação antes de verificar a conexão."
+          "O lançamento foi interrompido e não foi confirmado pelo Supabase.\n\n" +
+          `${transaction.reason || "Atualize o endereço e confira o histórico antes de tentar novamente."}`
         );
         return false;
       }
@@ -2826,23 +3951,19 @@ if (
       return true;
     }
 
-    const slotsSaved = await persistSlotsUpdate(updatedSlots);
-    if (!slotsSaved) {
-      alert("O lançamento não foi concluído porque não foi possível salvar o endereço no Supabase.");
+    const transaction = await persistStockMutationAtomically(
+      slots,
+      updatedSlots,
+      newHistory,
+      divergencias,
+      divergencias,
+    );
+    if (!transaction.ok) {
+      alert(
+        "O lançamento foi interrompido e não foi confirmado pelo Supabase.\n\n" +
+        `${transaction.reason || "Atualize o endereço e confira o histórico antes de tentar novamente."}`
+      );
       return false;
-    }
-
-    if (newHistory.length > 0) {
-      const historySaved = await appendHistory(newHistory);
-      if (!historySaved) {
-        const latestSlots = await loadSlotsFromSupabase();
-        updateSlotsState(() => latestSlots);
-        alert(
-          "O endereço foi salvo, mas o histórico não pôde ser registrado. " +
-          "Não repita a operação antes de verificar a conexão com o Supabase."
-        );
-        return false;
-      }
     }
 
     setUnitCorredor("");
@@ -2898,19 +4019,17 @@ if (
       observacao: observation.trim(),
     }));
 
-    const slotsSaved = await persistSlotsUpdate(result.updatedSlots);
-    if (!slotsSaved) {
-      alert("A transferência não foi concluída porque não foi possível salvar as posições no Supabase.");
-      return false;
-    }
-
-    const historySaved = await appendHistory(historyWithObservation);
-    if (!historySaved) {
-      const latestSlots = await loadSlotsFromSupabase();
-      updateSlotsState(() => latestSlots);
+    const transaction = await persistStockMutationAtomically(
+      slots,
+      result.updatedSlots,
+      historyWithObservation,
+      divergencias,
+      divergencias,
+    );
+    if (!transaction.ok) {
       alert(
-        "As posições foram atualizadas, mas o histórico não pôde ser registrado. " +
-        "Não repita a operação antes de verificar a conexão."
+        "A transferência foi interrompida e não foi confirmada pelo Supabase.\n\n" +
+        `${transaction.reason || "Atualize a origem e o destino antes de tentar novamente."}`
       );
       return false;
     }
@@ -7592,11 +8711,12 @@ const pct = total > 0 ? (occupied / total) * 100 : 0;
                       {showBulkImport ? "Ocultar Colagem Rápida" : "Colar do Excel / CSV"}
                     </button>
                     <button
-                      onClick={() => canExecuteBatchLaunch && handleLancarLote()}
-                      disabled={!canExecuteBatchLaunch}
-                      className="bg-indigo-600 hover:bg-indigo-750 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg px-5 py-2 text-xs font-bold transition shadow-sm uppercase tracking-wider cursor-pointer"
+                      onClick={() => canExecuteBatchLaunch && void handleLancarLote()}
+                      disabled={!canExecuteBatchLaunch || batchLaunchLoading}
+                      aria-busy={batchLaunchLoading}
+                      className="bg-indigo-600 hover:bg-indigo-750 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-60 disabled:cursor-not-allowed text-white rounded-lg px-5 py-2 text-xs font-bold transition shadow-sm uppercase tracking-wider cursor-pointer"
                     >
-                      Lançar Lote Completo
+                      {batchLaunchLoading ? "Processando lote..." : "Lançar Lote Completo"}
                     </button>
                     {lancamentoRows.length > 0 && (
                       <button

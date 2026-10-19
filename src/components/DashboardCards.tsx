@@ -1,10 +1,11 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { OccupancyAnalysisDrawer } from "./OccupancyAnalysisDrawer";
 import { FreeCapacityDrawer } from "./FreeCapacityDrawer";
 import { OccupationRateDrawer } from "./OccupationRateDrawer";
 import { SkuAnalysisDrawer } from "./SkuAnalysisDrawer";
 import { TotalStockDrawer } from "./TotalStockDrawer";
 import { supabase } from "../lib/supabase";
+import { guardedSupabaseRequest } from "../lib/supabaseRequestGuard";
 import { 
   Box, 
   Layers, 
@@ -112,6 +113,8 @@ export const DashboardCards: React.FC<DashboardCardsProps> = ({
   const [showSkuAnalysis, setShowSkuAnalysis] = useState(false);
   const [showTotalStockAnalysis, setShowTotalStockAnalysis] = useState(false);
   const [occupancyHistory, setOccupancyHistory] = useState<OccupancySnapshot[]>([]);
+  const occupancyWriteTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastAutomaticOccupancyAttemptRef = useRef(0);
   
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [drawerDays, setDrawerDays] = useState(7);
@@ -212,27 +215,34 @@ export const DashboardCards: React.FC<DashboardCardsProps> = ({
       ? (occupiedSlots / totalSlots) * 100
       : 0;
 
-  const loadOccupancyHistory = async () => {
+  const loadOccupancyHistory = async (shouldUpdate: () => boolean = () => true) => {
     const startDate = new Date();
     startDate.setDate(startDate.getDate() - 180);
     const startIso = `${startDate.getFullYear()}-${String(startDate.getMonth() + 1).padStart(2, "0")}-${String(startDate.getDate()).padStart(2, "0")}`;
 
-    const { data, error } = await supabase
-      .from("occupancy_history")
-      .select("snapshot_date,occupied_positions,free_positions,total_positions,occupancy_percent,total_pieces")
-      .gte("snapshot_date", startIso)
-      .order("snapshot_date", { ascending: true });
+    const response = await guardedSupabaseRequest("occupancy-history.read", () =>
+      supabase
+        .from("occupancy_history")
+        .select("snapshot_date,occupied_positions,free_positions,total_positions,occupancy_percent,total_pieces")
+        .gte("snapshot_date", startIso)
+        .order("snapshot_date", { ascending: true })
+    );
 
-    if (error) {
-      console.error("Erro ao carregar histórico de ocupação:", error);
-      return;
+    if (response.error) {
+      // O guard registra uma falha terminal uma única vez. Não gere um novo
+      // log a cada montagem do Dashboard enquanto o circuito estiver aberto.
+      if (!response.blocked) console.error("Erro ao carregar histórico de ocupação:", response.error);
+      return false;
     }
 
-    setOccupancyHistory((data || []) as OccupancySnapshot[]);
+    if (shouldUpdate()) setOccupancyHistory((response.data || []) as OccupancySnapshot[]);
+    return true;
   };
 
   useEffect(() => {
-    loadOccupancyHistory();
+    let active = true;
+    void loadOccupancyHistory(() => active);
+    return () => { active = false; };
   }, []);
 
   const saveOccupancySnapshot = async () => {
@@ -240,20 +250,20 @@ export const DashboardCards: React.FC<DashboardCardsProps> = ({
     const now = new Date();
     const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
 
-    const { error } = await supabase
-      .from("occupancy_history")
-      .upsert({
-        snapshot_date: today,
-        occupied_positions: occupiedSlots,
-        free_positions: freeSlots,
-        total_positions: totalSlots,
-        occupancy_percent: Number(
-          occupationRate.toFixed(2)
-        ),
-        total_pieces: totalStoredQuantity
-      });
+    const response = await guardedSupabaseRequest("occupancy-history.write", () =>
+      supabase
+        .from("occupancy_history")
+        .upsert({
+          snapshot_date: today,
+          occupied_positions: occupiedSlots,
+          free_positions: freeSlots,
+          total_positions: totalSlots,
+          occupancy_percent: Number(occupationRate.toFixed(2)),
+          total_pieces: totalStoredQuantity,
+        }, { onConflict: "snapshot_date" })
+    );
 
-    if (error) throw error;
+    if (response.error) throw response.error;
 
     await loadOccupancyHistory();
     alert("Snapshot registrado com sucesso.");
@@ -270,27 +280,46 @@ export const DashboardCards: React.FC<DashboardCardsProps> = ({
   useEffect(() => {
     if (!canPerformActions || totalSlots <= 0) return;
 
-    const now = new Date();
-    const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+    // Um snapshot diário não precisa ser regravado a cada movimentação. Debounce
+    // mudanças rápidas de slots e limite gravações automáticas a no máximo uma
+    // a cada 15 minutos; erro terminal abre o circuito compartilhado.
+    if (occupancyWriteTimerRef.current !== null) {
+      clearTimeout(occupancyWriteTimerRef.current);
+    }
 
-    supabase
-      .from("occupancy_history")
-      .upsert({
+    const now = Date.now();
+    const remainingCooldown = Math.max(0, 15 * 60 * 1000 - (now - lastAutomaticOccupancyAttemptRef.current));
+    const delay = Math.max(750, remainingCooldown);
+
+    occupancyWriteTimerRef.current = setTimeout(() => {
+      occupancyWriteTimerRef.current = null;
+      const snapshotNow = new Date();
+      const today = `${snapshotNow.getFullYear()}-${String(snapshotNow.getMonth() + 1).padStart(2, "0")}-${String(snapshotNow.getDate()).padStart(2, "0")}`;
+      const payload = {
         snapshot_date: today,
         occupied_positions: occupiedSlots,
         free_positions: freeSlots,
         total_positions: totalSlots,
         occupancy_percent: Number(occupationRate.toFixed(2)),
         total_pieces: totalStoredQuantity,
-      })
-      .then(({ error }) => {
-        if (error) {
-          console.error("Erro ao registrar snapshot automático de ocupação:", error);
-          return;
-        }
+      };
 
-        loadOccupancyHistory();
+      lastAutomaticOccupancyAttemptRef.current = Date.now();
+      void guardedSupabaseRequest("occupancy-history.write", () =>
+        supabase.from("occupancy_history").upsert(payload, { onConflict: "snapshot_date" })
+      ).then(({ error, blocked }) => {
+        if (error && !blocked) {
+          console.error("Erro ao registrar snapshot automático de ocupação:", error);
+        }
       });
+    }, delay);
+
+    return () => {
+      if (occupancyWriteTimerRef.current !== null) {
+        clearTimeout(occupancyWriteTimerRef.current);
+        occupancyWriteTimerRef.current = null;
+      }
+    };
   }, [
     canPerformActions,
     totalSlots,

@@ -1,5 +1,6 @@
 import { supabase } from "./supabase";
 import { E1_CAPACITY } from "../constants/layout";
+import { guardedSupabaseRequest } from "./supabaseRequestGuard";
 import { WarehouseLayoutEntry } from "../types";
 
 const DEFAULT_E1_LAYOUT: WarehouseLayoutEntry[] = Object.entries(E1_CAPACITY)
@@ -94,15 +95,18 @@ export async function loadWarehouseLayout(): Promise<{
   data: WarehouseLayoutEntry[];
   error: string | null;
 }> {
-  const { data, error } = await supabase
-    .from("warehouse_layout")
-    .select("id,estoque,modulo,capacidade,ativo,updated_at")
-    .in("estoque", ["1", "2", "3"])
-    .order("estoque", { ascending: true })
-    .order("modulo", { ascending: true });
+  const response = await guardedSupabaseRequest("warehouse-layout.read", () =>
+    supabase
+      .from("warehouse_layout")
+      .select("id,estoque,modulo,capacidade,ativo,updated_at")
+      .in("estoque", ["1", "2", "3"])
+      .order("estoque", { ascending: true })
+      .order("modulo", { ascending: true })
+  );
+  const { data, error } = response;
 
   if (error) {
-    console.error("Erro ao carregar configuração física dos estoques:", error);
+    if (!response.blocked) console.error("Erro ao carregar configuração física dos estoques:", error);
     return {
       data: getDefaultE1Layout(),
       error: error.message || "Não foi possível carregar a configuração física.",

@@ -7,6 +7,44 @@ export function generateId(): string {
   return Math.random().toString(36).substring(2, 9).toUpperCase();
 }
 
+/**
+ * Gera um ID estável para o registro de uma linha de lançamento.
+ * Se a resposta da RPC se perder depois de o banco confirmar a transação e o
+ * rascunho reaparecer, o mesmo payload produzirá o mesmo ID de histórico. A PK
+ * history.id rejeitará a segunda gravação e a transação atômica será revertida.
+ * Se o operador alterar os dados da linha, o hash muda e permite nova operação.
+ */
+function getStableLaunchRecordId(prefix: string, row: LancamentoRow): string {
+  const payload = [
+    row.id,
+    row.data,
+    row.estoque,
+    row.modulo,
+    row.posicao,
+    row.referencia,
+    row.quantidade,
+    row.tipo,
+    row.dataChacote,
+    row.hora,
+    row.responsavel,
+    row.galpao,
+    row.restricao,
+    row.observacao,
+  ].map(value => String(value ?? "")).join("\u001f");
+
+  // FNV-1a 32-bit: row.id (random and stable for the draft line) supplies the
+  // primary identity; the hash distinguishes edits to the same line.
+  let hash = 0x811c9dc5;
+  for (let index = 0; index < payload.length; index += 1) {
+    hash ^= payload.charCodeAt(index);
+    hash = Math.imul(hash, 0x01000193) >>> 0;
+  }
+  const rowId = String(row.id || generateId())
+    .replace(/[^A-Za-z0-9_-]/g, "_")
+    .slice(0, 80);
+  return `${prefix}-${rowId}-${hash.toString(36).toUpperCase()}`;
+}
+
 const sameNumericModule = (left: string, right: string): boolean => {
   const leftNumber = Number(left);
   const rightNumber = Number(right);
@@ -179,6 +217,26 @@ export function validateLancamentoRow(
     }
   }
 
+  // E2/E3 auxiliary IDs encode SKU and restriction. If an occupied row's
+  // stored fields disagree with its ID, do not launch anything at that address:
+  // otherwise processing could select it by the stored fields and persist a
+  // history.slot_id that names a different item.
+  if ((est === "2" || est === "3") && pos && currentSlots?.length) {
+    const conflictingSlot = currentSlots.find(slot =>
+      sameAddress(slot, est, String(parseInt(mod, 10)), pos) &&
+      slot.saldo > 0 &&
+      Boolean(String(slot.referencia || "").trim()) &&
+      getSlotIdentityMismatch(slot) !== null
+    );
+
+    if (conflictingSlot) {
+      errors.push(
+        `Endereço ${est}-${mod}-${pos} contém o item auxiliar '${conflictingSlot.id}' ` +
+        "cujo SKU/restrição no registro não corresponde ao ID. Corrija o registro antes de lançar entrada/saída neste endereço."
+      );
+    }
+  }
+
   // 6. Quantidade
   if (row.quantidade === "" || !Number.isInteger(Number(row.quantidade)) || Number(row.quantidade) <= 0) {
     errors.push(`Linha ${rowNumber}: Quantidade é obrigatória e deve ser um número inteiro maior que zero.`);
@@ -249,11 +307,113 @@ const isE2E3 = (estoque: string): boolean =>
 const isAuxiliarySlotId = (id: string): boolean =>
   id.includes("::ITEM::");
 
+export const getAuxiliarySlotIdentity = (id: string): { addressId: string; referencia: string; restricao: Restricao } | null => {
+  const marker = "::ITEM::";
+  const markerIndex = id.indexOf(marker);
+  if (markerIndex < 0) return null;
+
+  const [rawReference = "", rawRestriction = "", ...extraParts] = id.slice(markerIndex + marker.length).split("::");
+  const normalizedRestriction = rawRestriction.trim().toLowerCase();
+  if (
+    !rawReference.trim() ||
+    !normalizedRestriction ||
+    !["nenhuma", "teste", "autorizacao", "outra"].includes(normalizedRestriction) ||
+    extraParts.length > 0
+  ) return null;
+
+  return {
+    addressId: id.slice(0, markerIndex),
+    referencia: rawReference.trim().toUpperCase(),
+    restricao: normalizedRestriction as Restricao,
+  };
+};
+
+const addressIdMatchesSlot = (addressId: string, slot: WarehouseSlot): boolean => {
+  const parts = addressId.trim().split("-");
+  if (parts.length < 3) return false;
+
+  const idStock = normalizeEstoque(parts[0]);
+  const idModule = normalizeModulo(parts[1]);
+  const idPosition = normalizePosicao(parts.slice(2).join("-"));
+  return idStock === normalizeEstoque(slot.estoque) &&
+    idModule === normalizeModulo(slot.modulo) &&
+    idPosition === normalizePosicao(slot.posicao || "");
+};
+
+/** True if the stock ID still names this physical address and, for auxiliary
+ * IDs, the stored SKU/restriction agrees with the suffix encoded in the ID.
+ * Empty auxiliary rows may be reused only by the exact same item ID; their
+ * old reference fields are deliberately ignored while completely empty. */
+export const getSlotIdentityMismatch = (slot: WarehouseSlot): string | null => {
+  const rawStock = String(slot.estoque ?? "").trim();
+  const rawModule = String(slot.modulo ?? "").trim();
+  const rawPosition = String(slot.posicao ?? "");
+  const stock = normalizeEstoque(rawStock);
+  const module = normalizeModulo(rawModule);
+  const position = normalizePosicao(rawPosition);
+
+  // Encontrar por coordenadas normalizadas não autoriza gravar sobre uma linha
+  // legada não canônica. O chamador deve registrar conflito e não criar outro ID.
+  if (rawStock !== stock) {
+    return `o estoque armazenado '${rawStock}' não está normalizado (esperado '${stock}')`;
+  }
+  if (rawModule !== module) {
+    return `o módulo armazenado '${rawModule}' não está normalizado (esperado '${module}')`;
+  }
+
+  if (stock === "1") {
+    if (rawPosition !== "") return `o endereço E1 '${slot.id}' possui posição física inesperada '${rawPosition}'`;
+    const prefix = `1-${module}-`;
+    if (!slot.id.startsWith(prefix) || slot.id.length <= prefix.length) {
+      return `o ID E1 '${slot.id}' não segue o padrão '1-${module}-SKU'`;
+    }
+    const encodedSku = slot.id.slice(prefix.length).trim().toUpperCase();
+    const storedSku = String(slot.referencia || "").trim().toUpperCase();
+    if (storedSku && storedSku !== encodedSku) {
+      return `o SKU armazenado '${storedSku}' não corresponde ao SKU '${encodedSku}' do ID E1 '${slot.id}'`;
+    }
+    return null;
+  }
+
+  if (!isE2E3(stock)) return null;
+  if (rawPosition !== position) {
+    return `a posição armazenada '${rawPosition}' não está normalizada (esperado '${position}')`;
+  }
+
+  const canonicalAddressId = `${stock}-${module}-${position}`;
+  const identity = isAuxiliarySlotId(slot.id) ? getAuxiliarySlotIdentity(slot.id) : null;
+  const encodedAddress = identity?.addressId ?? slot.id;
+  if (encodedAddress !== canonicalAddressId || !addressIdMatchesSlot(encodedAddress, slot)) {
+    return `o ID '${slot.id}' não corresponde ao endereço físico canônico ${canonicalAddressId}`;
+  }
+
+  if (!isAuxiliarySlotId(slot.id)) return null;
+  if (!identity) return `o ID auxiliar '${slot.id}' não contém SKU e restrição válidos`;
+
+  const isOccupiedOrHasReference = Number(slot.saldo || 0) > 0 || Boolean(String(slot.referencia || "").trim());
+  if (!isOccupiedOrHasReference) return null;
+
+  if (String(slot.referencia || "").trim().toUpperCase() !== identity.referencia) {
+    return `o SKU armazenado '${slot.referencia}' não corresponde ao SKU '${identity.referencia}' do ID '${slot.id}'`;
+  }
+  if (normalizeRestricao(slot.restricao) !== identity.restricao) {
+    return `a restrição armazenada '${normalizeRestricao(slot.restricao)}' não corresponde à restrição '${identity.restricao}' do ID '${slot.id}'`;
+  }
+  return null;
+};
+
+
+/** Checks an E2/E3 base-address row against its own physical coordinates. */
+export const isBasePhysicalSlotAtOwnAddress = (slot: WarehouseSlot): boolean =>
+  isE2E3(normalizeEstoque(slot.estoque)) &&
+  !isAuxiliarySlotId(slot.id) &&
+  getSlotIdentityMismatch(slot) === null;
+
 const buildAddressId = (
   estoque: string,
   modulo: string,
   posicao: string
-): string => `${estoque}-${modulo}-${posicao}`;
+): string => `${normalizeEstoque(estoque)}-${normalizeModulo(modulo)}-${normalizePosicao(posicao)}`;
 
 const buildItemId = (
   addressId: string,
@@ -268,9 +428,9 @@ const sameAddress = (
   modulo: string,
   posicao: string
 ): boolean =>
-  slot.estoque === estoque &&
+  normalizeEstoque(slot.estoque) === normalizeEstoque(estoque) &&
   sameNumericModule(slot.modulo, modulo) &&
-  slot.posicao === posicao;
+  normalizePosicao(slot.posicao || "") === normalizePosicao(posicao || "");
 
 const sameLogicalItem = (
   slot: WarehouseSlot,
@@ -281,6 +441,7 @@ const sameLogicalItem = (
   restricao: Restricao
 ): boolean =>
   sameAddress(slot, estoque, modulo, posicao) &&
+  getSlotIdentityMismatch(slot) === null &&
   slot.referencia.trim().toUpperCase() === referencia.toUpperCase() &&
   normalizeRestricao(slot.restricao) === restricao;
 
@@ -464,18 +625,18 @@ export function processLancamentosInSequence(
       sameAddress(slot, estVal, modVal, posVal)
     );
 
-    let exactSlotIdx = slots.findIndex(slot =>
-      sameLogicalItem(
+    const matchingLogicalIndexes = slots
+      .map((slot, index) => ({ slot, index }))
+      .filter(({ slot }) => sameLogicalItem(
         slot,
         estVal,
         modVal,
         posVal,
         refUpper,
         requestedRestricao
-      )
-    );
-
-    const exactSlot = exactSlotIdx >= 0 ? slots[exactSlotIdx] : undefined;
+      ))
+      .map(({ index }) => index);
+    let exactSlotIdx = matchingLogicalIndexes[0] ?? -1;
 
     const createDivergence = (
       tipoDivergencia: Divergencia["tipoDivergencia"],
@@ -532,6 +693,60 @@ export function processLancamentosInSequence(
       });
     };
 
+    // Normalize coordinates only for locating candidates. If a row is stored in
+    // a non-canonical form (e.g. module "03" or position "a1 "), stop the move
+    // and report a divergence instead of creating a second canonical ID beside it.
+    const inconsistentAtAddress = addressSlots.find(slot => getSlotIdentityMismatch(slot) !== null);
+    if (inconsistentAtAddress) {
+      createDivergence(
+        "ID de Endereço Inconsistente",
+        `A movimentação foi bloqueada: ${getSlotIdentityMismatch(inconsistentAtAddress)}. ` +
+        "Confira e normalize o registro existente antes de lançar. Nenhum saldo foi alterado nem outro ID foi criado.",
+        row.tipo === "Saída" ? -qty : qty,
+        inconsistentAtAddress,
+        false,
+        inconsistentAtAddress.referencia || "Vazio",
+        Number(inconsistentAtAddress.saldo || 0)
+      );
+      continue;
+    }
+
+    // A line-base can be reused by different SKUs over time; an E1 line or an
+    // auxiliary E2/E3 line cannot be reassigned to an identity encoded in another ID.
+    if (isE2E3(estVal)) {
+      const expectedBaseId = buildAddressId(estVal, modVal, posVal);
+      const expectedItemId = buildItemId(expectedBaseId, refUpper, requestedRestricao);
+      const idCollision = slots.find(slot =>
+        (slot.id === expectedBaseId || slot.id === expectedItemId) &&
+        (!sameAddress(slot, estVal, modVal, posVal) || getSlotIdentityMismatch(slot) !== null)
+      );
+      if (idCollision) {
+        createDivergence(
+          "ID já associado a outro endereço",
+          `A movimentação foi bloqueada porque o ID determinístico '${idCollision.id}' já existe, ` +
+          "mas seus campos físicos não correspondem ao endereço solicitado. Nenhum registro novo foi criado.",
+          row.tipo === "Saída" ? -qty : qty,
+          undefined,
+          false,
+          "Vazio",
+          0
+        );
+        continue;
+      }
+
+      if (matchingLogicalIndexes.length > 1) {
+        createDivergence(
+          "Item Duplicado na Posição",
+          `Foram encontrados ${matchingLogicalIndexes.length} registros para ${refUpper} / ${requestedRestricao} ` +
+          `em ${estVal}-${modVal}-${posVal}. A movimentação foi bloqueada para não escolher um ID arbitrariamente.`,
+          row.tipo === "Saída" ? -qty : qty,
+          slots[matchingLogicalIndexes[0]],
+          false
+        );
+        continue;
+      }
+    }
+
     // Legacy address-level divergences remain conservative for compatibility.
     if (blockedAddressKeys.has(addressBlockKey)) {
       createDivergence(
@@ -566,9 +781,9 @@ export function processLancamentosInSequence(
     if (estVal === "1") {
       // Preserve the existing E1 behavior exactly: one logical row per SKU.
       exactSlotIdx = slots.findIndex(slot =>
-        slot.estoque === "1" &&
-        slot.modulo === modVal &&
-        slot.referencia.toUpperCase() === refUpper
+        normalizeEstoque(slot.estoque) === "1" &&
+        normalizeModulo(slot.modulo) === modVal &&
+        String(slot.referencia || "").trim().toUpperCase() === refUpper
       );
     }
 
@@ -638,21 +853,34 @@ export function processLancamentosInSequence(
         }
 
         if (exactSlotIdx === -1) {
-          // Reuse an empty auxiliary row first, then the physical base row.
-          // This avoids unbounded row growth because DELETE is not enabled by
-          // the current slots RLS policy.
-          const reusableIdx = slots.findIndex(slot =>
+          // Reuse an empty auxiliary only when its ID already encodes the item
+          // being entered. Reusing any empty auxiliary row by address alone
+          // would leave an ID that names a different SKU/restriction.
+          // Prefer the exact auxiliary ID first, then the generic base address.
+          const baseAddressId = buildAddressId(estVal, modVal, posVal);
+          const requestedItemId = buildItemId(baseAddressId, refUpper, requestedRestricao);
+          const reusableExactAuxIdx = slots.findIndex(slot =>
+            slot.id === requestedItemId &&
             sameAddress(slot, estVal, modVal, posVal) &&
             slot.saldo === 0 &&
-            (isAuxiliarySlotId(slot.id) || slot.id === buildAddressId(estVal, modVal, posVal))
+            !String(slot.referencia || "").trim()
           );
+          const reusableBaseIdx = slots.findIndex(slot =>
+            slot.id === baseAddressId &&
+            sameAddress(slot, estVal, modVal, posVal) &&
+            !isAuxiliarySlotId(slot.id) &&
+            slot.saldo === 0 &&
+            !String(slot.referencia || "").trim()
+          );
+          const reusableIdx = reusableExactAuxIdx >= 0
+            ? reusableExactAuxIdx
+            : reusableBaseIdx;
 
           if (reusableIdx >= 0) {
             exactSlotIdx = reusableIdx;
           } else {
-            const baseAddressId = buildAddressId(estVal, modVal, posVal);
             const newSlot: WarehouseSlot = {
-              id: buildItemId(baseAddressId, refUpper, requestedRestricao),
+              id: requestedItemId,
               estoque: estVal,
               modulo: modVal,
               posicao: posVal,
@@ -695,7 +923,7 @@ export function processLancamentosInSequence(
       activeSlot.ultimoResponsavel = row.responsavel || batchOperator;
 
       newHistory.push({
-        id: `MOV-${generateId()}`,
+        id: getStableLaunchRecordId("MOV", row),
         dataLancamento: batchDate,
         quemLancou: batchOperator,
         data: row.data,
@@ -758,12 +986,18 @@ export function processLancamentosInSequence(
       activeSlot.descricao = "";
       activeSlot.dataChacote = "";
       activeSlot.galpao = "3";
-      activeSlot.restricao = "nenhuma";
+      // Keep an auxiliary slot's restriction aligned with its immutable ID
+      // suffix so a later entry can safely reuse the same exact item ID.
+      activeSlot.restricao = isAuxiliarySlotId(activeSlot.id)
+        ? (getAuxiliarySlotIdentity(activeSlot.id)?.restricao || normalizeRestricao(activeSlot.restricao))
+        : "nenhuma";
       activeSlot.observacao = "";
     }
 
+    const completedSlotId = activeSlot.id;
+
     newHistory.push({
-      id: `MOV-${generateId()}`,
+      id: getStableLaunchRecordId("MOV", row),
       dataLancamento: batchDate,
       quemLancou: batchOperator,
       data: row.data,
@@ -778,10 +1012,13 @@ export function processLancamentosInSequence(
       responsavel: row.responsavel || batchOperator,
       galpao: activeSlot.galpao || row.galpao || "3",
       observacao: row.observacao?.trim() || "",
-      slotId: activeSlot.id,
+      slotId: completedSlotId,
       restricao: requestedRestricao,
     });
 
+    // The caller persists the now-empty auxiliary row first, appends history,
+    // and then deletes only that exact empty ID. This order prevents a failed
+    // history insert from losing the slot identity needed to reconcile the move.
     processedCount++;
   }
 
@@ -845,6 +1082,37 @@ export function processTransferenciaPosicao(
     };
   }
 
+  // Transfers move one item row, but the target must be the canonical physical
+  // base slot, never an auxiliary item row. Fail closed if either ID contradicts
+  // its address or an auxiliary source contradicts its encoded SKU/restriction.
+  if (
+    getSlotIdentityMismatch(source) !== null ||
+    !isBasePhysicalSlotAtOwnAddress(destination)
+  ) {
+    return {
+      updatedSlots: currentSlots,
+      newHistory: [],
+      newDivergencias: [],
+      processedCount: 0,
+      errorCount: 1,
+    };
+  }
+
+  const destinationHasOtherStock = slots.some(slot =>
+    slot.id !== destination.id &&
+    sameAddress(slot, destination.estoque, normalizeModulo(destination.modulo), normalizePosicao(destination.posicao)) &&
+    (Number(slot.saldo || 0) > 0 || Boolean(String(slot.referencia || "").trim()))
+  );
+  if (destinationHasOtherStock) {
+    return {
+      updatedSlots: currentSlots,
+      newHistory: [],
+      newDivergencias: [],
+      processedCount: 0,
+      errorCount: 1,
+    };
+  }
+
   if (!source.referencia || source.saldo <= 0) {
     return {
       updatedSlots: currentSlots,
@@ -869,6 +1137,9 @@ export function processTransferenciaPosicao(
   const reference = source.referencia;
   const description = source.descricao;
   const chacote = source.dataChacote;
+  const sourceGalpao = source.galpao || "3";
+  const itemRestriction = normalizeRestricao(source.restricao);
+  const sourceWasAuxiliary = isAuxiliarySlotId(source.id);
   const hour = new Date().toLocaleTimeString("pt-BR", {
     hour: "2-digit",
     minute: "2-digit",
@@ -878,8 +1149,8 @@ export function processTransferenciaPosicao(
   destination.descricao = description;
   destination.saldo = quantity;
   destination.dataChacote = chacote;
-  destination.galpao = source.galpao || "3";
-  destination.restricao = source.restricao || "nenhuma";
+  destination.galpao = sourceGalpao;
+  destination.restricao = itemRestriction;
   destination.observacao = source.observacao || "";
   destination.ultimaData = movementDate;
   destination.ultimaHora = hour;
@@ -890,7 +1161,9 @@ export function processTransferenciaPosicao(
   source.saldo = 0;
   source.dataChacote = "";
   source.galpao = "3";
-  source.restricao = "nenhuma";
+  source.restricao = sourceWasAuxiliary
+    ? (getAuxiliarySlotIdentity(source.id)?.restricao || itemRestriction)
+    : "nenhuma";
   source.observacao = "";
   source.ultimaData = movementDate;
   source.ultimaHora = hour;
@@ -914,8 +1187,10 @@ export function processTransferenciaPosicao(
       dataChacote: chacote,
       hora: hour,
       responsavel: operator,
-      galpao: source.galpao || "3",
+      galpao: sourceGalpao,
       observacao: "",
+      slotId: source.id,
+      restricao: itemRestriction,
     },
     {
       id: `MOV-${generateId()}`,
@@ -931,8 +1206,10 @@ export function processTransferenciaPosicao(
       dataChacote: chacote,
       hora: hour,
       responsavel: operator,
-      galpao: destination.galpao || source.galpao || "3",
+      galpao: destination.galpao || sourceGalpao,
       observacao: "",
+      slotId: destination.id,
+      restricao: itemRestriction,
     }
   );
 

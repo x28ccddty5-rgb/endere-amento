@@ -546,13 +546,28 @@ export function MobileShell({
     setDivergenciaResolveSku(div.refNova || (div.refAtual === "Vazio" ? "" : div.refAtual) || "");
     setDivergenciaResolveQty(String(Math.abs(div.movimentacao)));
     setDivergenciaResolveChacote(div.dataChacote || "");
-    const targetSlot = slots.find(slot =>
-      div.slotId
-        ? slot.id === div.slotId
-        : slot.estoque === div.estoque &&
-          slot.modulo === div.modulo &&
-          slot.posicao === div.posicao
-    );
+    const normalizeStock = (value: string): string =>
+      String(value ?? "").trim().toUpperCase().replace(/^E/i, "");
+    const normalizeModule = (value: string): string => {
+      const raw = String(value ?? "").trim().toUpperCase().replace(/^[RM]/i, "");
+      return /^\d+$/.test(raw) ? String(Number(raw)) : raw;
+    };
+    const samePhysicalAddress = (slot: (typeof slots)[number]): boolean =>
+      normalizeStock(slot.estoque) === normalizeStock(div.estoque) &&
+      normalizeModule(slot.modulo) === normalizeModule(div.modulo) &&
+      String(slot.posicao || "").trim().toUpperCase() === String(div.posicao || "").trim().toUpperCase();
+    const expectedReference = String(div.refAtual || "").trim().toUpperCase();
+    const expectedEmpty = expectedReference === "" || expectedReference === "VAZIO";
+    const expectedRestriction = String(div.restricao || "").trim().toLowerCase();
+    const targetSlot = (div.slotId
+      ? slots.find(slot => slot.id === div.slotId && samePhysicalAddress(slot))
+      : undefined) ?? slots.find(slot => {
+          if (!samePhysicalAddress(slot)) return false;
+          const ref = String(slot.referencia || "").trim().toUpperCase();
+          const restriction = String(slot.restricao || "nenhuma").trim().toLowerCase();
+          return (expectedEmpty ? ref === "" && Number(slot.saldo || 0) === 0 : ref === expectedReference) &&
+            (!expectedRestriction || restriction === expectedRestriction);
+        });
     const initialGalpao = (targetSlot?.galpao || (div.restricao === "autorizacao" ? "12" : "3")) as Galpao;
     setDivergenciaResolveGalpao(initialGalpao);
     setDivergenciaResolveRestricao(

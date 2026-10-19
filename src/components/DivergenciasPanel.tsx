@@ -97,13 +97,28 @@ export const DivergenciasPanel: React.FC<DivergenciasPanelProps> = ({
     setResolveQty(Math.abs(d.movimentacao));
     setResolveSkuVal(d.refNova || d.refAtual || "");
     setResolveDataChacoteVal(d.dataChacote || "");
-    const targetSlot = slots.find(slot =>
-      d.slotId
-        ? slot.id === d.slotId
-        : slot.estoque === d.estoque &&
-          slot.modulo === d.modulo &&
-          slot.posicao === d.posicao
-    );
+    const normalizeStock = (value: string): string =>
+      String(value ?? "").trim().toUpperCase().replace(/^E/i, "");
+    const normalizeModule = (value: string): string => {
+      const raw = String(value ?? "").trim().toUpperCase().replace(/^[RM]/i, "");
+      return /^\d+$/.test(raw) ? String(Number(raw)) : raw;
+    };
+    const samePhysicalAddress = (slot: (typeof slots)[number]): boolean =>
+      normalizeStock(slot.estoque) === normalizeStock(d.estoque) &&
+      normalizeModule(slot.modulo) === normalizeModule(d.modulo) &&
+      String(slot.posicao || "").trim().toUpperCase() === String(d.posicao || "").trim().toUpperCase();
+    const expectedReference = String(d.refAtual || "").trim().toUpperCase();
+    const expectedEmpty = expectedReference === "" || expectedReference === "VAZIO";
+    const expectedRestriction = String(d.restricao || "").trim().toLowerCase();
+    const matchesReferenceAndRestriction = (slot: (typeof slots)[number]): boolean => {
+      const ref = String(slot.referencia || "").trim().toUpperCase();
+      const restriction = String(slot.restricao || "nenhuma").trim().toLowerCase();
+      return (expectedEmpty ? ref === "" && Number(slot.saldo || 0) === 0 : ref === expectedReference) &&
+        (!expectedRestriction || restriction === expectedRestriction);
+    };
+    const targetSlot = (d.slotId
+      ? slots.find(slot => slot.id === d.slotId && samePhysicalAddress(slot))
+      : undefined) ?? slots.find(slot => samePhysicalAddress(slot) && matchesReferenceAndRestriction(slot));
     const initialGalpao = (targetSlot?.galpao || (d.restricao === "autorizacao" ? "12" : "3")) as "3" | "12";
     setResolveGalpao(initialGalpao);
     setResolveRestricao(

@@ -1,5 +1,6 @@
 import { supabase } from "./supabase";
 import { WarehousePositionConfig } from "../types";
+import { guardedSupabaseRequest } from "./supabaseRequestGuard";
 
 const mapRow = (row: any): WarehousePositionConfig => ({
   id: String(row.id),
@@ -54,20 +55,28 @@ export async function loadWarehousePositions(): Promise<{
   error: string | null;
 }> {
   const pageSize = 1000;
+  const maxPages = 50;
   const rows: any[] = [];
+  let paginationComplete = false;
 
-  for (let from = 0; ; from += pageSize) {
-    const { data, error } = await supabase
-      .from("warehouse_layout_positions")
-      .select("id,estoque,modulo,posicao,ativo,updated_at")
-      .in("estoque", ["2", "3"])
-      .order("estoque", { ascending: true })
-      .order("modulo", { ascending: true })
-      .order("posicao", { ascending: true })
-      .range(from, from + pageSize - 1);
+  for (let page = 0; page < maxPages; page += 1) {
+    const from = page * pageSize;
+    const response = await guardedSupabaseRequest(`warehouse-positions.read:${from}`, () =>
+      supabase
+        .from("warehouse_layout_positions")
+        .select("id,estoque,modulo,posicao,ativo,updated_at")
+        .in("estoque", ["2", "3"])
+        .order("estoque", { ascending: true })
+        .order("modulo", { ascending: true })
+        .order("posicao", { ascending: true })
+        .order("id", { ascending: true })
+        .range(from, from + pageSize - 1),
+      "warehouse-positions.read",
+    );
+    const { data, error } = response;
 
     if (error) {
-      console.error("Erro ao carregar posições físicas dos estoques:", error);
+      if (!response.blocked) console.error("Erro ao carregar posições físicas dos estoques:", error);
       return {
         data: [],
         error: error.message || "Não foi possível carregar as posições físicas.",
@@ -76,13 +85,19 @@ export async function loadWarehousePositions(): Promise<{
 
     rows.push(...(data || []));
 
-    if (!data || data.length < pageSize) break;
+    if (!data || data.length < pageSize) {
+      paginationComplete = true;
+      break;
+    }
   }
 
-  return {
-    data: normalizeWarehousePositions(rows.map(mapRow)),
-    error: null,
-  };
+  if (!paginationComplete) {
+    const message = `Carga de posições físicas interrompida no limite de ${maxPages} páginas para evitar consultas sem fim.`;
+    console.error(message);
+    return { data: [], error: message };
+  }
+
+  return { data: normalizeWarehousePositions(rows.map(mapRow)), error: null };
 }
 
 
