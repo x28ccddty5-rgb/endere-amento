@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { processLancamentosInSequence, processTransferenciaPosicao } from '../src/data/mockStorage.ts';
 import { enqueueLancamentoDraftWrite } from '../src/lib/lancamentoDraftQueue.ts';
+import { findCorroboratedDivergenceSlot } from '../src/lib/divergenceResolution.ts';
 
 const products = [
   { referencia: 'AAA', descricao: 'Produto AAA' },
@@ -247,4 +248,118 @@ test('fila de rascunho: falha em uma operação não bloqueia as próximas', asy
   await assert.rejects(failed, /erro de rede simulado/);
   assert.equal(await next, 'ok');
   assert.deepEqual(events, ['falha', 'proxima']);
+});
+
+const makeDivergence = (overrides = {}) => ({
+  id: 'DIV-1',
+  status: 'Aberta',
+  estoque: '2',
+  modulo: '69',
+  posicao: 'A1',
+  refAtual: 'Vazio',
+  refNova: 'AAA',
+  saldoAntes: 0,
+  movimentacao: -800,
+  saldoFinal: 0,
+  restricao: 'nenhuma',
+  slotId: undefined,
+  observacao: '',
+  ...overrides,
+});
+
+const occupiedBaseSlot = (overrides = {}) => blankPhysicalSlot({
+  id: '2-69-A1',
+  estoque: '2',
+  modulo: '69',
+  posicao: 'A1',
+  referencia: 'AAA',
+  descricao: 'Produto AAA',
+  saldo: 800,
+  restricao: 'nenhuma',
+  ...overrides,
+});
+
+test('reconciliação: divergência antiga vazia pode usar slot base ocupado quando uma irmã confirma o SKU atual', () => {
+  const stale = makeDivergence({ id: 'DIV-EMPTY-OLD', refAtual: 'Vazio', refNova: 'AAA' });
+  const confirming = makeDivergence({ id: 'DIV-CURRENT-SKU', refAtual: 'AAA', refNova: 'BBB', movimentacao: 800 });
+  const result = findCorroboratedDivergenceSlot({
+    currentDivergence: stale,
+    divergences: [stale, confirming],
+    slots: [occupiedBaseSlot()],
+    targetSku: 'BBB',
+    targetRestriction: 'nenhuma',
+  });
+  assert.equal(result.kind, 'selected');
+  assert.equal(result.slotId, '2-69-A1');
+  assert.deepEqual(result.supportingDivergenceIds, ['DIV-CURRENT-SKU']);
+});
+
+test('reconciliação: não escolhe slot ocupado sem divergência irmã que confirme SKU/restrição atuais', () => {
+  const stale = makeDivergence({ id: 'DIV-EMPTY-OLD', refAtual: 'Vazio', refNova: 'AAA' });
+  const unrelated = makeDivergence({ id: 'DIV-OTHER', refAtual: 'BBB', restricao: 'nenhuma' });
+  const result = findCorroboratedDivergenceSlot({
+    currentDivergence: stale,
+    divergences: [stale, unrelated],
+    slots: [occupiedBaseSlot({ referencia: 'AAA' })],
+    targetSku: 'BBB',
+    targetRestriction: 'nenhuma',
+  });
+  assert.equal(result.kind, 'none');
+});
+
+test('reconciliação: bloqueia quando duas identidades ocupadas são confirmadas no mesmo endereço', () => {
+  const stale = makeDivergence({ id: 'DIV-EMPTY-OLD', refAtual: 'Vazio' });
+  const siblingA = makeDivergence({ id: 'DIV-A', refAtual: 'AAA' });
+  const siblingB = makeDivergence({ id: 'DIV-B', refAtual: 'BBB', restricao: 'teste' });
+  const slots = [
+    occupiedBaseSlot({ referencia: 'AAA', restricao: 'nenhuma' }),
+    blankPhysicalSlot({
+      id: '2-69-A1::ITEM::BBB::teste', estoque: '2', modulo: '69', posicao: 'A1',
+      referencia: 'BBB', descricao: 'Produto BBB', saldo: 20, restricao: 'teste',
+    }),
+  ];
+  const result = findCorroboratedDivergenceSlot({
+    currentDivergence: stale,
+    divergences: [stale, siblingA, siblingB],
+    slots,
+    targetSku: 'CCC',
+    targetRestriction: 'nenhuma',
+  });
+  assert.equal(result.kind, 'ambiguous');
+  assert.equal(result.slotIds.length, 2);
+});
+
+test('reconciliação: não reaproveita ID auxiliar para outra SKU/restrição', () => {
+  const stale = makeDivergence({ id: 'DIV-EMPTY-OLD', refAtual: 'Vazio' });
+  const sibling = makeDivergence({ id: 'DIV-AUX-CURRENT', refAtual: 'AAA', restricao: 'teste' });
+  const auxiliary = blankPhysicalSlot({
+    id: '2-69-A1::ITEM::AAA::teste', estoque: '2', modulo: '69', posicao: 'A1',
+    referencia: 'AAA', descricao: 'Produto AAA', saldo: 30, restricao: 'teste',
+  });
+  const result = findCorroboratedDivergenceSlot({
+    currentDivergence: stale,
+    divergences: [stale, sibling],
+    slots: [auxiliary],
+    targetSku: 'BBB',
+    targetRestriction: 'teste',
+  });
+  assert.equal(result.kind, 'unsafe-identity');
+  assert.equal(result.slotId, auxiliary.id);
+});
+
+test('reconciliação: não aplica fallback de posição em E1, cujos IDs são por SKU', () => {
+  const stale = makeDivergence({ estoque: '1', modulo: '7', posicao: '', refAtual: 'Vazio' });
+  const sibling = makeDivergence({ id: 'DIV-E1-B', estoque: '1', modulo: '7', posicao: '', refAtual: 'AAA' });
+  const e1Slot = blankPhysicalSlot({
+    id: '1-7-AAA', estoque: '1', modulo: '7', posicao: '',
+    referencia: 'AAA', descricao: 'Produto AAA', saldo: 40,
+  });
+  const result = findCorroboratedDivergenceSlot({
+    currentDivergence: stale,
+    divergences: [stale, sibling],
+    slots: [e1Slot],
+    targetSku: 'AAA',
+    targetRestriction: 'nenhuma',
+  });
+  assert.equal(result.kind, 'none');
 });

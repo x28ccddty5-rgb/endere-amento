@@ -1,22 +1,26 @@
-import React, { useState } from "react";
+import React, { useRef, useState } from "react";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
-import { Divergencia, WarehouseSlot, Product, HistoricoMov } from "../types";
+import { Divergencia, WarehouseSlot, Galpao, Restricao } from "../types";
 import { AlertOctagon, Printer, FileSpreadsheet, Lock, Sparkles, Check, Trash2 } from "lucide-react";
-import { generateId } from "../data/mockStorage";
 import { canExecuteOperations, isReadOnlyRole } from "../constants/permissions";
+import { findCorroboratedDivergenceSlot } from "../lib/divergenceResolution";
 
 interface DivergenciasPanelProps {
   divergencias: Divergencia[];
   slots: WarehouseSlot[];
-  productsList: Product[];
   currentUser: any;
   operator: string;
   launchDate: string;
-  onCommitDivergenceResolution: (
-    updatedSlots: WarehouseSlot[],
-    newMovements: HistoricoMov[],
-    updatedDivergencias: Divergencia[]
+  onResolveDivergencia: (
+    divergence: Divergencia,
+    action: "sobrescrever" | "descartar",
+    sku: string,
+    quantity: number,
+    dataChacote: string,
+    galpao: Galpao,
+    restricao: Restricao,
+    observacao: string
   ) => Promise<boolean>;
   hasAccess: (level: "administrador" | "operador" | "consulta") => boolean;
 }
@@ -24,11 +28,10 @@ interface DivergenciasPanelProps {
 export const DivergenciasPanel: React.FC<DivergenciasPanelProps> = ({
   divergencias,
   slots,
-  productsList,
   currentUser,
   operator,
   launchDate,
-  onCommitDivergenceResolution,
+  onResolveDivergencia,
   hasAccess,
 }) => {
   const isReadOnly = isReadOnlyRole(currentUser?.role);
@@ -42,6 +45,8 @@ export const DivergenciasPanel: React.FC<DivergenciasPanelProps> = ({
   const [resolveGalpao, setResolveGalpao] = useState<"3" | "12">("3");
   const [resolveRestricao, setResolveRestricao] = useState<"nenhuma" | "teste" | "autorizacao" | "outra">("nenhuma");
   const [resolveObservacao, setResolveObservacao] = useState<string>("");
+  const [resolvingCorrection, setResolvingCorrection] = useState(false);
+  const resolutionInFlightRef = useRef(false);
 
 
   // Filter to show only "Aberta" divergences first, but user asked:
@@ -117,16 +122,28 @@ export const DivergenciasPanel: React.FC<DivergenciasPanelProps> = ({
         (!expectedRestriction || restriction === expectedRestriction);
     };
     const targetSlot = (d.slotId
-      ? slots.find(slot => slot.id === d.slotId && samePhysicalAddress(slot))
+      ? slots.find(slot => slot.id === d.slotId && samePhysicalAddress(slot) && matchesReferenceAndRestriction(slot))
       : undefined) ?? slots.find(slot => samePhysicalAddress(slot) && matchesReferenceAndRestriction(slot));
-    const initialGalpao = (targetSlot?.galpao || (d.restricao === "autorizacao" ? "12" : "3")) as "3" | "12";
+    const corroborated = !targetSlot
+      ? findCorroboratedDivergenceSlot({
+          currentDivergence: d,
+          divergences: divergencias,
+          slots,
+          targetSku: d.refNova || d.refAtual || "",
+          targetRestriction: d.restricao || "nenhuma",
+        })
+      : { kind: "none" as const };
+    const effectiveTargetSlot = targetSlot ?? (corroborated.kind === "selected"
+      ? slots.find(slot => slot.id === corroborated.slotId)
+      : undefined);
+    const initialGalpao = (effectiveTargetSlot?.galpao || (d.restricao === "autorizacao" ? "12" : "3")) as "3" | "12";
     setResolveGalpao(initialGalpao);
     setResolveRestricao(
       initialGalpao === "12"
         ? "autorizacao"
-        : (targetSlot?.restricao || d.restricao || "nenhuma")
+        : (effectiveTargetSlot?.restricao || d.restricao || "nenhuma")
     );
-    setResolveObservacao(targetSlot?.observacao || "");
+    setResolveObservacao(effectiveTargetSlot?.observacao || "");
   };
 
   const handleResolveDivergencia = async () => {
@@ -135,191 +152,47 @@ export const DivergenciasPanel: React.FC<DivergenciasPanelProps> = ({
       return;
     }
 
-    if (!selectedDivergenciaId) return;
+    if (!selectedDivergenciaId || resolvingCorrection || resolutionInFlightRef.current) return;
 
-    const div = divergencias.find(d => d.id === selectedDivergenciaId);
-    if (!div) return;
+    const div = divergencias.find(item => item.id === selectedDivergenciaId);
+    if (!div || div.status !== "Aberta") {
+      alert("Esta divergência não está mais aberta. Atualize a tela antes de tentar novamente.");
+      return;
+    }
 
-    let cleanSku = "";
-    let prod: Product | undefined;
-
-    const targetDate = new Date().toISOString().slice(0, 10);
-    const currentHour = new Date().toLocaleTimeString("pt-BR", {
-      hour: "2-digit",
-      minute: "2-digit"
-    });
-
-    if (resolveAction !== "descartar") {
-      cleanSku = resolveSkuVal.trim().toUpperCase();
-      if (cleanSku.startsWith("S")) cleanSku = cleanSku.slice(1);
-
+    const cleanSku = resolveSkuVal.trim().toUpperCase().replace(/^S/, "");
+    if (resolveAction === "sobrescrever") {
       if (!cleanSku) {
         alert("Falta SKU corrigido. Este campo é obrigatório na resolução manual.");
         return;
       }
-
-      if (resolveQty === undefined || String(resolveQty) === "" || resolveQty < 0) {
+      if (!Number.isFinite(resolveQty) || resolveQty < 0) {
         alert("Saldo validado fisicamente é obrigatório e não pode ser negativo.");
         return;
       }
+    }
 
-      prod = productsList.find(
-        p => p.referencia.toUpperCase() === cleanSku
+    resolutionInFlightRef.current = true;
+    setResolvingCorrection(true);
+    try {
+      // Desktop and mobile must share the same physical reconciliation algorithm,
+      // movement-history semantics, and atomic transaction.
+      const saved = await onResolveDivergencia(
+        div,
+        resolveAction,
+        cleanSku,
+        resolveQty,
+        resolveDataChacoteVal,
+        resolveGalpao,
+        resolveGalpao === "12" ? "autorizacao" : resolveRestricao,
+        resolveObservacao.trim(),
       );
 
-      if (!prod) {
-        alert(`Código SKU "${cleanSku}" não cadastrado na Base de dados de referências.`);
-        return;
-      }
+      if (saved) setSelectedDivergenciaId(null);
+    } finally {
+      resolutionInFlightRef.current = false;
+      setResolvingCorrection(false);
     }
-
-    const updatedSlots = [...slots];
-    const normalizeStock = (value: string): string =>
-      String(value ?? "").trim().toUpperCase().replace(/^E/i, "");
-    const normalizeModule = (value: string): string => {
-      const raw = String(value ?? "").trim().toUpperCase().replace(/^[RM]/i, "");
-      return /^\d+$/.test(raw) ? String(Number(raw)) : raw;
-    };
-    const normalizedStock = normalizeStock(div.estoque);
-    const normalizedModule = normalizeModule(div.modulo);
-    const normalizedPosition = String(div.posicao || "").trim().toUpperCase();
-    const samePhysicalAddress = (slot: (typeof updatedSlots)[number]): boolean =>
-      normalizeStock(slot.estoque) === normalizedStock &&
-      normalizeModule(slot.modulo) === normalizedModule &&
-      String(slot.posicao || "").trim().toUpperCase() === normalizedPosition;
-
-    let slotIdx = -1;
-    if (div.slotId) {
-      const slotIdIndex = updatedSlots.findIndex(
-        slot => slot.id === div.slotId && samePhysicalAddress(slot)
-      );
-      if (slotIdIndex >= 0) slotIdx = slotIdIndex;
-    }
-
-    if (slotIdx < 0) {
-      const expectedReference = String(div.refAtual || "").trim().toUpperCase();
-      const expectedEmpty = expectedReference === "" || expectedReference === "VAZIO";
-      const expectedRestriction = String(div.restricao || "").trim().toLowerCase();
-      const candidates = updatedSlots
-        .map((slot, index) => ({ slot, index }))
-        .filter(({ slot }) => samePhysicalAddress(slot))
-        .filter(({ slot }) => {
-          const currentReference = String(slot.referencia || "").trim().toUpperCase();
-          const referenceMatches = expectedEmpty
-            ? currentReference === "" && Number(slot.saldo || 0) === 0
-            : currentReference === expectedReference;
-          const currentRestriction = String(slot.restricao || "nenhuma").trim().toLowerCase();
-          return referenceMatches &&
-            (!expectedRestriction || currentRestriction === expectedRestriction);
-        });
-
-      const canonicalBaseId = `${normalizedStock}-${normalizedModule}-${normalizedPosition}`;
-      const canonicalBase = candidates.find(({ slot }) => slot.id === canonicalBaseId);
-      if (canonicalBase) {
-        slotIdx = canonicalBase.index;
-      } else if (candidates.length === 1) {
-        slotIdx = candidates[0].index;
-      }
-    }
-
-    if (slotIdx === -1) {
-      alert(
-        `Não foi possível identificar com segurança a linha da posição ${div.estoque}-${div.modulo}-${div.posicao}. ` +
-        "A correção foi interrompida para evitar alterar um SKU diferente ou uma posição física inexistente. Atualize a tela e revise a divergência."
-      );
-      return;
-    }
-
-    if (resolveAction === "descartar") {
-      updatedSlots[slotIdx] = {
-        ...updatedSlots[slotIdx],
-        referencia: "",
-        descricao: "",
-        saldo: 0,
-        dataChacote: "",
-        ultimaData: targetDate,
-        ultimaHora: currentHour,
-        ultimoResponsavel: operator,
-      };
-    } else {
-      updatedSlots[slotIdx] = {
-        ...updatedSlots[slotIdx],
-        referencia: cleanSku,
-        descricao: prod?.descricao || updatedSlots[slotIdx].descricao,
-        saldo: resolveQty,
-        ultimaData: targetDate,
-        ultimaHora: currentHour,
-        ultimoResponsavel: operator,
-        dataChacote: resolveDataChacoteVal.trim(),
-        galpao: resolveGalpao,
-        restricao: resolveGalpao === "12" ? "autorizacao" : resolveRestricao,
-        observacao: resolveObservacao.trim(),
-      };
-    }
-
-    // Uma correção física de endereço resolve todas as divergências abertas
-    // daquele endereço. Isso preserva o fluxo operacional anterior e evita
-    // obrigar o responsável a corrigir a mesma posição repetidamente.
-    const updatedDivergencias = divergencias.map(d => {
-      const sameOpenAddress =
-        d.status === "Aberta" &&
-        normalizeStock(d.estoque) === normalizedStock &&
-        normalizeModule(d.modulo) === normalizedModule &&
-        String(d.posicao || "").trim().toUpperCase() === normalizedPosition;
-
-      if (!sameOpenAddress) return d;
-
-      return {
-        ...d,
-        status: "Corrigida" as const,
-        refNova: resolveAction === "descartar" ? "" : cleanSku,
-        saldoFinal: resolveAction === "descartar" ? 0 : resolveQty,
-        slotId: updatedSlots[slotIdx].id,
-        dataCorrecao: targetDate,
-        corrigidoPor: currentUser?.name || operator,
-        observacao:
-          `${d.observacao || ""} Correção física — Galpão ${resolveGalpao}; ` +
-          `Restrição ${resolveGalpao === "12" ? "autorizacao" : resolveRestricao}. ` +
-          `${resolveObservacao.trim()}`.trim(),
-      };
-    });
-
-    const newLog: HistoricoMov = {
-      id: `CORR-${generateId()}`,
-      dataLancamento: targetDate,
-      quemLancou: currentUser?.name || operator,
-      data: targetDate,
-      estoque: div.estoque,
-      modulo: div.modulo,
-      posicao: div.posicao,
-      referencia: resolveAction === "descartar" ? "" : cleanSku,
-      quantidade: resolveAction === "descartar" ? 0 : resolveQty,
-      tipo: resolveAction === "descartar" ? "Saída" : "Entrada",
-      dataChacote:
-        resolveAction === "descartar"
-          ? ""
-          : (resolveDataChacoteVal || "Reconciliação"),
-      hora: currentHour,
-      responsavel: operator,
-      slotId: updatedSlots[slotIdx].id,
-    };
-
-    const saved = await onCommitDivergenceResolution(
-      updatedSlots,
-      [newLog],
-      updatedDivergencias
-    );
-    if (!saved) {
-      alert(
-        "A correção não foi concluída. Não foi possível confirmar o resultado. " +
-        "Atualize os dados e confira o status antes de tentar novamente, para evitar " +
-        "repetir uma correção cuja resposta de rede possa ter sido perdida."
-      );
-      return;
-    }
-
-    setSelectedDivergenciaId(null);
-    alert(`Divergência ${div.id} corrigida com sucesso.`);
   };
 
   const handleExportCSV = () => {
@@ -692,7 +565,8 @@ const tempoMedio =
                   <h4 className="text-md font-black text-slate-920">Ajuste Manual Físico</h4>
                 </div>
                 <button 
-                  onClick={() => setSelectedDivergenciaId(null)}
+                  disabled={resolvingCorrection}
+                  onClick={() => !resolvingCorrection && setSelectedDivergenciaId(null)}
                   className="text-slate-400 hover:text-slate-700 font-black text-md cursor-pointer"
                 >
                   ✕
@@ -870,15 +744,16 @@ const tempoMedio =
               <div className="flex gap-2 pt-3">
                 <button
                   type="button"
-                  disabled={isReadOnly}
-                  onClick={() => !isReadOnly && handleResolveDivergencia()}
+                  disabled={isReadOnly || resolvingCorrection}
+                  onClick={() => !isReadOnly && !resolvingCorrection && handleResolveDivergencia()}
                   className="flex-1 bg-red-600 hover:bg-red-700 text-white rounded-lg py-2.5 text-xs font-bold transition shadow cursor-pointer uppercase text-center"
                 >
-                  Corrigir Divergência
+                  {resolvingCorrection ? "Salvando..." : "Corrigir Divergência"}
                 </button>
                 <button
                   type="button"
-                  onClick={() => setSelectedDivergenciaId(null)}
+                  disabled={resolvingCorrection}
+                  onClick={() => !resolvingCorrection && setSelectedDivergenciaId(null)}
                   className="flex-1 bg-slate-200 text-slate-700 rounded-lg py-2.5 text-xs font-bold hover:bg-slate-300 transition cursor-pointer text-center"
                 >
                   Cancelar
