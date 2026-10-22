@@ -78,6 +78,10 @@ export interface HistoricoMov {
   observacao?: string;
   slotId?: string;
   restricao?: Restricao;
+  naturezaTransacao?: string | null;
+  saldoAnterior?: number | null;
+  saldoFinal?: number | null;
+  correcaoId?: string | null;
 }
 
 export interface Divergencia {
@@ -100,6 +104,7 @@ export interface Divergencia {
   observacao?: string;
   slotId?: string;
   restricao?: Restricao;
+  correcaoId?: string | null;
 }
 
 export type AppMode = "basico" | "avancado";

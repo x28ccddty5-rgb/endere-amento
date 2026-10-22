@@ -56,12 +56,7 @@ interface MobileShellProps {
   onTransferPosition: (sourceId: string, destinationId: string, observation: string) => Promise<boolean>;
   onResolveDivergencia: (
     divergence: Divergencia,
-    action: "sobrescrever" | "descartar",
-    sku: string,
-    quantity: number,
-    dataChacote: string,
-    galpao: Galpao,
-    restricao: Restricao,
+    action: "zerar",
     observacao: string
   ) => Promise<boolean>;
   chatMessages: Array<{ sender: string; text: string }>;
@@ -258,12 +253,6 @@ export function MobileShell({
   const [historyFiltersOpen, setHistoryFiltersOpen] = useState(false);
 
   const [selectedDivergenciaId, setSelectedDivergenciaId] = useState<string | null>(null);
-  const [divergenciaResolveAction, setDivergenciaResolveAction] = useState<"sobrescrever" | "descartar">("sobrescrever");
-  const [divergenciaResolveSku, setDivergenciaResolveSku] = useState("");
-  const [divergenciaResolveQty, setDivergenciaResolveQty] = useState("");
-  const [divergenciaResolveChacote, setDivergenciaResolveChacote] = useState("");
-  const [divergenciaResolveGalpao, setDivergenciaResolveGalpao] = useState<Galpao>("3");
-  const [divergenciaResolveRestricao, setDivergenciaResolveRestricao] = useState<Restricao>("nenhuma");
   const [divergenciaResolveObservacao, setDivergenciaResolveObservacao] = useState("");
   const [resolvingDivergencia, setResolvingDivergencia] = useState(false);
   const [keyboardOpen, setKeyboardOpen] = useState(false);
@@ -542,40 +531,7 @@ export function MobileShell({
 
   const openDivergenciaCorrection = (div: Divergencia) => {
     setSelectedDivergenciaId(div.id);
-    setDivergenciaResolveAction("sobrescrever");
-    setDivergenciaResolveSku(div.refNova || (div.refAtual === "Vazio" ? "" : div.refAtual) || "");
-    setDivergenciaResolveQty(String(Math.abs(div.movimentacao)));
-    setDivergenciaResolveChacote(div.dataChacote || "");
-    const normalizeStock = (value: string): string =>
-      String(value ?? "").trim().toUpperCase().replace(/^E/i, "");
-    const normalizeModule = (value: string): string => {
-      const raw = String(value ?? "").trim().toUpperCase().replace(/^[RM]/i, "");
-      return /^\d+$/.test(raw) ? String(Number(raw)) : raw;
-    };
-    const samePhysicalAddress = (slot: (typeof slots)[number]): boolean =>
-      normalizeStock(slot.estoque) === normalizeStock(div.estoque) &&
-      normalizeModule(slot.modulo) === normalizeModule(div.modulo) &&
-      String(slot.posicao || "").trim().toUpperCase() === String(div.posicao || "").trim().toUpperCase();
-    const expectedReference = String(div.refAtual || "").trim().toUpperCase();
-    const expectedEmpty = expectedReference === "" || expectedReference === "VAZIO";
-    const expectedRestriction = String(div.restricao || "").trim().toLowerCase();
-    const targetSlot = (div.slotId
-      ? slots.find(slot => slot.id === div.slotId && samePhysicalAddress(slot))
-      : undefined) ?? slots.find(slot => {
-          if (!samePhysicalAddress(slot)) return false;
-          const ref = String(slot.referencia || "").trim().toUpperCase();
-          const restriction = String(slot.restricao || "nenhuma").trim().toLowerCase();
-          return (expectedEmpty ? ref === "" && Number(slot.saldo || 0) === 0 : ref === expectedReference) &&
-            (!expectedRestriction || restriction === expectedRestriction);
-        });
-    const initialGalpao = (targetSlot?.galpao || (div.restricao === "autorizacao" ? "12" : "3")) as Galpao;
-    setDivergenciaResolveGalpao(initialGalpao);
-    setDivergenciaResolveRestricao(
-      initialGalpao === "12"
-        ? "autorizacao"
-        : (targetSlot?.restricao || div.restricao || "nenhuma")
-    );
-    setDivergenciaResolveObservacao(targetSlot?.observacao || "");
+    setDivergenciaResolveObservacao("");
   };
 
   const closeDivergenciaCorrection = () => {
@@ -586,36 +542,12 @@ export function MobileShell({
   const submitDivergenciaCorrection = async () => {
     if (!selectedDivergencia || !canExecute || resolvingDivergencia) return;
 
-    const quantity = Number(divergenciaResolveQty);
-
-    if (
-      divergenciaResolveAction === "sobrescrever" &&
-      divergenciaResolveChacote &&
-      parseTypedChacoteDate(divergenciaResolveChacote) === null
-    ) {
-      alert("Informe o Chacote no formato DD/MM/AAAA.");
-      return;
-    }
-
-    if (
-      divergenciaResolveAction === "sobrescrever" &&
-      (!Number.isFinite(quantity) || quantity < 0)
-    ) {
-      alert("Informe um saldo físico válido.");
-      return;
-    }
-
     setResolvingDivergencia(true);
 
     try {
       const saved = await onResolveDivergencia(
         selectedDivergencia,
-        divergenciaResolveAction,
-        divergenciaResolveSku,
-        quantity,
-        divergenciaResolveChacote,
-        divergenciaResolveGalpao,
-        divergenciaResolveGalpao === "12" ? "autorizacao" : divergenciaResolveRestricao,
+        "zerar",
         divergenciaResolveObservacao.trim()
       );
 
@@ -1951,147 +1883,26 @@ export function MobileShell({
                     )}
                   </div>
 
-                  <div className="mt-4 space-y-2">
-                    <div className="text-[10px] font-black uppercase tracking-wide text-slate-500">
-                      Ação corretora
-                    </div>
-
-                    <button
-                      type="button"
-                      disabled={resolvingDivergencia}
-                      onClick={() => setDivergenciaResolveAction("sobrescrever")}
-                      className={`w-full rounded-xl border p-3 text-left ${
-                        divergenciaResolveAction === "sobrescrever"
-                          ? "border-blue-300 bg-blue-50"
-                          : "border-slate-200 bg-white"
-                      }`}
-                    >
-                      <div className="text-xs font-black text-slate-800">
-                        Sobrescrever endereço
-                      </div>
-                      <div className="mt-1 text-[10px] font-medium leading-relaxed text-slate-500">
-                        Registrar o SKU e o saldo que foram confirmados fisicamente no local.
-                      </div>
-                    </button>
-
-                    <button
-                      type="button"
-                      disabled={resolvingDivergencia}
-                      onClick={() => setDivergenciaResolveAction("descartar")}
-                      className={`w-full rounded-xl border p-3 text-left ${
-                        divergenciaResolveAction === "descartar"
-                          ? "border-amber-300 bg-amber-50"
-                          : "border-slate-200 bg-white"
-                      }`}
-                    >
-                      <div className="text-xs font-black text-slate-800">
-                        Zerar endereço
-                      </div>
-                      <div className="mt-1 text-[10px] font-medium leading-relaxed text-slate-500">
-                        Confirmar fisicamente que a posição está vazia.
-                      </div>
-                    </button>
+                  <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-3">
+                    <div className="text-xs font-black uppercase text-amber-900">Zerar endereço (vaga limpa)</div>
+                    <p className="mt-1 text-[10px] font-medium leading-relaxed text-amber-800">
+                      Use somente após confirmar fisicamente que a posição está vazia. Serão registradas as saídas dos saldos cadastrados,
+                      a linha-base ficará com saldo zero, os auxiliares serão removidos e todas as divergências ainda abertas desta posição serão encerradas.
+                      Depois, faça a entrada correta pelo fluxo normal.
+                    </p>
                   </div>
 
-                  {divergenciaResolveAction === "sobrescrever" && (
-                    <div className="mt-4 space-y-3">
-                      <label className="block">
-                        <span className="mb-1 block text-[9px] font-black uppercase text-slate-500">
-                          SKU físico *
-                        </span>
-                        <input
-                          type="text"
-                          value={divergenciaResolveSku}
-                          onChange={event => setDivergenciaResolveSku(event.target.value)}
-                          disabled={resolvingDivergencia}
-                          placeholder="Ex.: 601401G"
-                          className="min-h-12 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 text-base font-black uppercase text-slate-800 outline-none focus:border-blue-400"
-                        />
-                      </label>
-
-                      <label className="block">
-                        <span className="mb-1 block text-[9px] font-black uppercase text-slate-500">
-                          Saldo físico *
-                        </span>
-                        <input
-                          type="number"
-                          min="0"
-                          inputMode="numeric"
-                          value={divergenciaResolveQty}
-                          onChange={event => setDivergenciaResolveQty(event.target.value)}
-                          disabled={resolvingDivergencia}
-                          placeholder="Ex.: 325"
-                          className="min-h-12 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 text-base font-black text-slate-800 outline-none focus:border-blue-400"
-                        />
-                      </label>
-
-                      <label className="block">
-                        <span className="mb-1 block text-[9px] font-black uppercase text-slate-500">
-                          Data do chacote
-                        </span>
-                        <input
-                          type="text"
-                          value={divergenciaResolveChacote}
-                          onChange={event => setDivergenciaResolveChacote(formatChacoteInput(event.target.value))}
-                          disabled={resolvingDivergencia}
-                          placeholder="DD/MM/AAAA"
-                          inputMode="numeric"
-                          maxLength={10}
-                          className="min-h-12 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 text-base font-bold text-slate-800 outline-none focus:border-blue-400"
-                        />
-                      </label>
-                      <div className="grid grid-cols-2 gap-2">
-                        <label className="block">
-                          <span className="mb-1 block text-[9px] font-black uppercase text-slate-500">
-                            Galpão
-                          </span>
-                          <select
-                            value={divergenciaResolveGalpao}
-                            onChange={event => {
-                              const value = event.target.value as Galpao;
-                              setDivergenciaResolveGalpao(value);
-                              if (value === "12") setDivergenciaResolveRestricao("autorizacao");
-                            }}
-                            disabled={resolvingDivergencia}
-                            className="min-h-12 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 text-sm font-bold text-slate-800"
-                          >
-                            <option value="3">Galpão 3</option>
-                            <option value="12">Galpão 12</option>
-                          </select>
-                        </label>
-                        <label className="block">
-                          <span className="mb-1 block text-[9px] font-black uppercase text-slate-500">
-                            Restrição
-                          </span>
-                          <select
-                            value={divergenciaResolveGalpao === "12" ? "autorizacao" : divergenciaResolveRestricao}
-                            onChange={event => setDivergenciaResolveRestricao(event.target.value as Restricao)}
-                            disabled={resolvingDivergencia || divergenciaResolveGalpao === "12"}
-                            className="min-h-12 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 text-sm font-bold text-slate-800 disabled:bg-slate-100"
-                          >
-                            <option value="nenhuma">Nenhuma</option>
-                            <option value="teste">Teste — não separar</option>
-                            <option value="autorizacao">Solicitar autorização</option>
-                            <option value="outra">Outra</option>
-                          </select>
-                        </label>
-                      </div>
-
-                      <label className="block">
-                        <span className="mb-1 block text-[9px] font-black uppercase text-slate-500">
-                          Observação
-                        </span>
-                        <textarea
-                          value={divergenciaResolveObservacao}
-                          onChange={event => setDivergenciaResolveObservacao(event.target.value)}
-                          disabled={resolvingDivergencia}
-                          rows={2}
-                          placeholder="Observação da correção física"
-                          className="w-full resize-none rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm font-semibold text-slate-800"
-                        />
-                      </label>
-                    </div>
-                  )}
+                  <label className="mt-3 block">
+                    <span className="mb-1 block text-[9px] font-black uppercase text-slate-500">Observação (opcional)</span>
+                    <textarea
+                      value={divergenciaResolveObservacao}
+                      onChange={event => setDivergenciaResolveObservacao(event.target.value)}
+                      disabled={resolvingDivergencia}
+                      rows={2}
+                      placeholder="Motivo ou detalhe do zeramento físico"
+                      className="w-full resize-none rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm font-semibold text-slate-800"
+                    />
+                  </label>
 
                   <div className="mt-5 flex gap-2">
                     <button
@@ -2108,7 +1919,7 @@ export function MobileShell({
                       onClick={() => void submitDivergenciaCorrection()}
                       className="min-h-12 flex-1 rounded-xl bg-red-600 text-xs font-black uppercase text-white shadow-sm disabled:opacity-40"
                     >
-                      {resolvingDivergencia ? "Salvando..." : "Confirmar correção"}
+                      {resolvingDivergencia ? "Salvando..." : "Confirmar zeramento"}
                     </button>
                   </div>
                 </div>

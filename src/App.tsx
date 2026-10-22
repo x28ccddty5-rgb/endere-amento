@@ -16,6 +16,7 @@ import { supabase } from './lib/supabase';
 import { guardedSupabaseRequest } from './lib/supabaseRequestGuard';
 import { enqueueLancamentoDraftWrite } from './lib/lancamentoDraftQueue';
 import { findCorroboratedDivergenceSlot } from "./lib/divergenceResolution";
+import { buildZeroPhysicalAddressPlan, ZeroPhysicalAddressPlanError } from "./lib/zeroPhysicalAddressPlan";
 import { 
   processLancamentosInSequence,
   processTransferenciaPosicao,
@@ -421,7 +422,7 @@ const isMissingSlotIdColumnError = (error: unknown): boolean => {
 const historySelectColumns = (includeSlotId: boolean): string =>
   "id,dataLancamento,quemLancou,data,estoque,modulo,posicao,referencia,quantidade,tipo,dataChacote,hora,responsavel,galpao,observacao" +
   (includeSlotId ? ",slot_id" : "") +
-  ",restricao";
+  ",restricao,naturezaTransacao,saldoAnterior,saldoFinal,correcaoId";
 
 const mapHistoryRowFromSupabase = (row: any): HistoricoMov => {
   const { slot_id, slotId: legacySlotId, ...rest } = row ?? {};
@@ -2495,64 +2496,42 @@ const deleteProduct = async (
 
   const handleMobileResolveDivergencia = async (
     div: Divergencia,
-    action: "sobrescrever" | "descartar",
-    skuValue: string,
-    quantity: number,
-    dataChacoteValue: string,
-    galpaoValue: Galpao,
-    restricaoValue: Restricao,
+    action: "sobrescrever" | "zerar",
     observacaoValue: string
   ): Promise<boolean> => {
     if (!currentUser || !canExecuteOperations(currentUser.role)) {
       alert("Seu perfil não possui permissão para corrigir divergências.");
       return false;
     }
+    if (action !== "zerar") {
+      alert("A opção anterior de correção foi removida. Atualize a tela e utilize apenas Zerar endereço.");
+      return false;
+    }
+    if (!navigator.onLine) {
+      alert("O zeramento exige conexão com o Supabase. Nenhum dado foi alterado.");
+      return false;
+    }
 
-    const currentDiv = divergenciasRef.current.find(item => item.id === div.id)
-      ?? divergencias.find(item => item.id === div.id);
+    const liveDivergencias = divergenciasRef.current;
+    const currentDiv = liveDivergencias.find(item => item.id === div.id);
     if (!currentDiv || currentDiv.status !== "Aberta") {
       alert("Esta divergência não está mais aberta. Atualize a tela antes de tentar novamente.");
       return false;
     }
 
-    // Reconcile against the freshest synchronous snapshots, including Realtime changes.
-    const liveDivergencias = divergenciasRef.current.length > 0 ? divergenciasRef.current : divergencias;
-    const updatedSlots = [...slotsRef.current];
-    const targetDate = getTodayIsoDate();
-    const currentHour = new Date().toLocaleTimeString("pt-BR", {
-      hour: "2-digit",
-      minute: "2-digit",
-    });
-    const correctedBy = currentUser.name || operator;
+    const confirmed = window.confirm(
+      `CONFIRME O ZERAMENTO FÍSICO
 
-    let cleanSku = "";
-    let product: Product | undefined;
+` +
+      `Posição: ${currentDiv.estoque}-${currentDiv.modulo}-${currentDiv.posicao}
 
-    if (action === "sobrescrever") {
-      cleanSku = skuValue.trim().toUpperCase();
-      if (cleanSku.startsWith("S")) cleanSku = cleanSku.slice(1);
-
-      if (!cleanSku) {
-        alert("Informe o SKU que está fisicamente no endereço.");
-        return false;
-      }
-
-      if (!Number.isFinite(quantity) || quantity < 0) {
-        alert("Informe um saldo físico válido.");
-        return false;
-      }
-
-      product = productsList.find(item => {
-        const reference = item.referencia.trim().toUpperCase();
-        return reference === cleanSku ||
-          (reference.startsWith("S") && reference.slice(1) === cleanSku);
-      });
-
-      if (!product) {
-        alert(`Código SKU "${cleanSku}" não cadastrado na Base de Dados de Referências.`);
-        return false;
-      }
-    }
+` +
+      "Esta ação considera a posição fisicamente vazia. Ela registrará as saídas dos saldos cadastrados, " +
+      "manterá a linha-base com saldo zero, excluirá as linhas auxiliares e encerrará todas as divergências " +
+      "ainda abertas desta posição. O histórico existente e as divergências já corrigidas serão preservados.\n\n" +
+      "Confirma que a posição foi conferida fisicamente e está vazia?"
+    );
+    if (!confirmed) return false;
 
     const normalizeStock = (value: string): string =>
       String(value ?? "").trim().toUpperCase().replace(/^E/i, "");
@@ -2560,575 +2539,155 @@ const deleteProduct = async (
       const raw = String(value ?? "").trim().toUpperCase().replace(/^[RM]/i, "");
       return /^\d+$/.test(raw) ? String(Number(raw)) : raw;
     };
+    const normalizePosition = (value: string): string => String(value ?? "").trim().toUpperCase();
     const normalizedEstoque = normalizeStock(currentDiv.estoque);
     const normalizedModulo = normalizeModule(currentDiv.modulo);
-    const normalizedPosicao = String(currentDiv.posicao || "").trim().toUpperCase();
-    const samePhysicalAddress = (slot: WarehouseSlot): boolean =>
-      normalizeStock(slot.estoque) === normalizedEstoque &&
-      normalizeModule(slot.modulo) === normalizedModulo &&
-      String(slot.posicao || "").trim().toUpperCase() === normalizedPosicao;
+    const normalizedPosicao = normalizePosition(currentDiv.posicao);
+    if (normalizedEstoque !== "2" && normalizedEstoque !== "3") {
+      alert("O comando Zerar endereço desta correção é exclusivo para posições físicas E2/E3. O endereço E1 não foi alterado.");
+      return false;
+    }
+    const addressId = `${normalizedEstoque}-${normalizedModulo}-${normalizedPosicao}`;
+    const sameAddress = (row: { estoque: string; modulo: string; posicao: string }): boolean =>
+      normalizeStock(row.estoque) === normalizedEstoque &&
+      normalizeModule(row.modulo) === normalizedModulo &&
+      normalizePosition(row.posicao) === normalizedPosicao;
 
-    const expectedReference = String(currentDiv.refAtual || "").trim().toUpperCase();
-    const expectedEmpty = expectedReference === "" || expectedReference === "VAZIO";
-    const expectedRestriction = normalizeHistoricalRestriction(currentDiv.restricao);
-    const correctedRestriction: Restricao = galpaoValue === "12"
-      ? "autorizacao"
-      : normalizeHistoricalRestriction(restricaoValue || currentDiv.restricao) as Restricao;
-    const canonicalAddressId = `${normalizedEstoque}-${normalizedModulo}-${normalizedPosicao}`;
-
-    const slotMatchesExpectedState = (slot: WarehouseSlot): boolean => {
-      if (!samePhysicalAddress(slot) || getSlotIdentityMismatch(slot) !== null) return false;
-      const currentReference = String(slot.referencia || "").trim().toUpperCase();
-      const currentBalance = Number(slot.saldo || 0);
-      const currentRestriction = normalizeHistoricalRestriction(slot.restricao);
-
-      if (!expectedEmpty) {
-        return currentReference === expectedReference && currentRestriction === expectedRestriction;
-      }
-
-      if (currentReference !== "" || currentBalance !== 0) return false;
-      if (action === "descartar") {
-        // Descatar uma divergência vazia só pode tocar no ID originalmente
-        // associado ou na linha física base; nunca em um auxiliar aleatório.
-        return slot.id === currentDiv.slotId || slot.id === canonicalAddressId;
-      }
-
-      if (normalizedEstoque === "1") {
-        // No E1 o ID identifica a Rua + SKU, portanto não reutilizamos a linha
-        // vazia de outro SKU como se fosse o item solicitado.
-        return slot.id === `1-${normalizedModulo}-${cleanSku}`;
-      }
-
-      if (slot.id.includes("::ITEM::")) {
-        const identity = getAuxiliarySlotIdentity(slot.id);
-        return Boolean(identity && identity.addressId === canonicalAddressId &&
-          identity.referencia === cleanSku && identity.restricao === correctedRestriction);
-      }
-
-      return slot.id === canonicalAddressId && isBasePhysicalSlotAtOwnAddress(slot);
-    };
-
-    const addressCandidates = updatedSlots
-      .map((slot, index) => ({ slot, index }))
-      .filter(({ slot }) => slotMatchesExpectedState(slot));
-
-    if (!expectedEmpty && addressCandidates.length > 1) {
-      alert(
-        `A divergência ${currentDiv.id} tem mais de um registro que corresponde à SKU/restrição informada no endereço. ` +
-        "A correção foi interrompida para não escolher um slot_id arbitrariamente. Confira os registros do endereço."
-      );
+    const slotsInAddress = slotsRef.current.filter(sameAddress);
+    const openDivergences = liveDivergencias.filter(item =>
+      item.status === "Aberta" && sameAddress(item)
+    );
+    if (!openDivergences.some(item => item.id === currentDiv.id)) {
+      alert("A divergência selecionada não faz mais parte do conjunto aberto desta posição. Atualize a tela.");
       return false;
     }
 
-    // Uma divergência antiga pode dizer que o endereço estava vazio mesmo quando
-    // outra divergência aberta já registrou o SKU que ocupa a linha física hoje.
-    // Só usamos esse fallback se houver uma única confirmação e a identidade do ID
-    // puder ser reutilizada sem mudar um ID E1/auxiliar para outra SKU.
-    const corroboratedTarget = action === "sobrescrever"
-      ? findCorroboratedDivergenceSlot({
-          currentDivergence: currentDiv,
-          divergences: liveDivergencias,
-          slots: updatedSlots,
-          targetSku: cleanSku,
-          targetRestriction: correctedRestriction,
-        })
-      : { kind: "none" as const };
-
-    if (corroboratedTarget.kind === "ambiguous") {
-      alert(
-        `A posição ${canonicalAddressId} tem mais de um slot ocupado confirmado por divergências abertas ` +
-        `(${corroboratedTarget.slotIds.join(", ")}). A correção foi bloqueada para não escolher um SKU arbitrariamente.`
-      );
+    const targetDate = getTodayIsoDate();
+    const currentHour = new Date().toLocaleTimeString("pt-BR", {
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+    const correctedBy = currentUser.name || operator;
+    const correctionId = globalThis.crypto?.randomUUID?.();
+    if (!correctionId) {
+      alert("Este navegador não disponibilizou um identificador seguro para a correção. Nenhum dado foi alterado.");
       return false;
     }
 
-    if (corroboratedTarget.kind === "unsafe-identity") {
-      alert(
-        `A posição ${canonicalAddressId} foi confirmada pelo registro ${corroboratedTarget.slotId}, ` +
-        `mas a identidade do ID não pode ser reutilizada com segurança. ${corroboratedTarget.reason} ` +
-        "Nenhum dado foi alterado. Confira a identidade física antes de continuar."
-      );
-      return false;
-    }
-
-    const slotByIdIndex = currentDiv.slotId
-      ? addressCandidates.find(({ slot }) => slot.id === currentDiv.slotId)?.index ?? -1
-      : -1;
-
-    let targetSlotIdx = slotByIdIndex;
-    if (corroboratedTarget.kind === "selected") {
-      const confirmedIndex = updatedSlots.findIndex(slot => slot.id === corroboratedTarget.slotId);
-      if (confirmedIndex < 0) {
-        alert("O slot confirmado por outra divergência não está mais carregado. Atualize os dados e tente novamente.");
-        return false;
-      }
-      const conflictingExpectedSlot = addressCandidates.find(({ slot }) =>
-        slot.id !== corroboratedTarget.slotId &&
-        (Boolean(String(slot.referencia || "").trim()) || Number(slot.saldo || 0) > 0)
-      );
-      if (conflictingExpectedSlot) {
-        alert(
-          `A divergência selecionada corresponde ao ID '${conflictingExpectedSlot.slot.id}', ` +
-          `mas outra divergência confirma o ID '${corroboratedTarget.slotId}'. ` +
-          "Os estados não são compatíveis; atualize os dados e revise as divergências antes de corrigir."
-        );
-        return false;
-      }
-      targetSlotIdx = confirmedIndex;
-    } else if (targetSlotIdx < 0 && expectedEmpty && action === "sobrescrever") {
-      // Primeiro o ID base vazio; depois, somente um auxiliar que já codifica
-      // exatamente o SKU/restrição de destino. Nunca se reaproveita um auxiliar
-      // vazio pertencente a outro SKU.
-      targetSlotIdx = addressCandidates.find(({ slot }) => slot.id === canonicalAddressId)?.index ??
-        addressCandidates[0]?.index ?? -1;
-    } else if (targetSlotIdx < 0 && expectedEmpty && action === "descartar") {
-      targetSlotIdx = addressCandidates.find(({ slot }) => slot.id === canonicalAddressId)?.index ?? -1;
-    } else if (targetSlotIdx < 0 && !expectedEmpty && addressCandidates.length === 1) {
-      targetSlotIdx = addressCandidates[0].index;
-    }
-
-    // When an existing slot is selected (including the corroborated fallback),
-    // enforce the same normal/restricted co-location rules as the creation path.
-    // This prevents a correction from silently creating an incompatible mix.
-    if (action === "sobrescrever" && normalizedEstoque !== "1" && targetSlotIdx >= 0) {
-      const selectedSlot = updatedSlots[targetSlotIdx];
-      const occupiedPeers = updatedSlots.filter(slot =>
-        slot.id !== selectedSlot.id &&
-        samePhysicalAddress(slot) &&
-        Number(slot.saldo || 0) > 0 &&
-        Boolean(String(slot.referencia || "").trim())
-      );
-      const duplicateTarget = occupiedPeers.find(slot =>
-        String(slot.referencia || "").trim().toUpperCase() === cleanSku &&
-        normalizeHistoricalRestriction(slot.restricao) === correctedRestriction
-      );
-      if (duplicateTarget) {
-        alert(
-          `O item ${cleanSku} / ${correctedRestriction} já possui saldo no ID '${duplicateTarget.id}'. ` +
-          "A correção foi interrompida para não criar duas identidades para o mesmo item no endereço."
-        );
-        return false;
-      }
-
-      const incompatiblePeer = occupiedPeers.find(slot => {
-        const peerRestriction = normalizeHistoricalRestriction(slot.restricao);
-        const peerSku = String(slot.referencia || "").trim().toUpperCase();
-        return correctedRestriction === "nenhuma"
-          ? peerRestriction !== "nenhuma" || peerSku !== cleanSku
-          : peerRestriction === "nenhuma";
+    let plan;
+    try {
+      plan = buildZeroPhysicalAddressPlan({
+        address: {
+          estoque: normalizedEstoque,
+          modulo: normalizedModulo,
+          posicao: normalizedPosicao,
+        },
+        // O PostgreSQL confere a fotografia completa e a quantidade exata de linhas
+        // dentro da transação. Se os dados vierem de cache ou estiverem desatualizados,
+        // a RPC aborta sem gravar nada.
+        slotsSnapshotComplete: true,
+        divergencesSnapshotComplete: true,
+        slots: slotsInAddress,
+        openDivergences,
+        correctionId,
+        operator: correctedBy,
+        date: targetDate,
+        time: currentHour,
+        observation: observacaoValue.trim(),
       });
-      if (incompatiblePeer) {
-        alert(
-          `A posição ${canonicalAddressId} contém outro item (${incompatiblePeer.referencia} / ` +
-          `${normalizeHistoricalRestriction(incompatiblePeer.restricao)}). ` +
-          "A correção criaria uma combinação de estoque/restrição incompatível. Nenhum dado foi alterado."
-        );
-        return false;
-      }
-    }
-
-    let effectiveSlotId: string | undefined =
-      targetSlotIdx >= 0 ? updatedSlots[targetSlotIdx].id : undefined;
-    const correctionExtraMovements: HistoricoMov[] = [];
-
-    if (action === "descartar" && targetSlotIdx < 0) {
-      alert(
-        `Não foi possível localizar com segurança o endereço da divergência ${currentDiv.id}. ` +
-        "A divergência não foi marcada como corrigida. Atualize os dados e tente novamente."
-      );
+    } catch (error) {
+      const reason = error instanceof ZeroPhysicalAddressPlanError
+        ? error.message
+        : "A fotografia local da posição não passou pelas validações de segurança.";
+      alert(`${reason} Nenhum dado foi alterado.`);
       return false;
     }
 
-    if (action === "sobrescrever" && targetSlotIdx === -1) {
-      // Não crie uma segunda linha para um item que já existe no endereço, nem
-      // transforme silenciosamente um ID antigo em uma nova identidade.
-      const occupiedAtAddress = updatedSlots.filter(slot =>
-        samePhysicalAddress(slot) && Number(slot.saldo || 0) > 0 && Boolean(String(slot.referencia || "").trim())
-      );
-      const duplicateTarget = occupiedAtAddress.find(slot =>
-        String(slot.referencia || "").trim().toUpperCase() === cleanSku &&
-        normalizeHistoricalRestriction(slot.restricao) === correctedRestriction
-      );
-      if (duplicateTarget) {
-        alert(
-          `O item ${cleanSku} / ${correctedRestriction} já existe no endereço pelo ID '${duplicateTarget.id}'. ` +
-          "A divergência não será aplicada a uma segunda linha. Confira o saldo físico e o ID atual."
-        );
-        return false;
-      }
+    const expectedDivergencesPayload = mapDivergenciasForSupabase(
+      plan.expectedOpenDivergences as unknown as Divergencia[]
+    );
+    const finalDivergencesPayload = mapDivergenciasForSupabase(
+      plan.correctedDivergences as unknown as Divergencia[]
+    );
+    const historyPayload = plan.history.map(({ slotId, ...movement }) => ({
+      ...movement,
+      slot_id: slotId,
+    }));
 
-      const hasNormal = occupiedAtAddress.some(slot => normalizeHistoricalRestriction(slot.restricao) === "nenhuma");
-      const hasRestricted = occupiedAtAddress.some(slot => normalizeHistoricalRestriction(slot.restricao) !== "nenhuma");
-      if (
-        (correctedRestriction === "nenhuma" && occupiedAtAddress.some(slot => slot.referencia.trim().toUpperCase() !== cleanSku)) ||
-        (correctedRestriction === "nenhuma" && hasRestricted) ||
-        (correctedRestriction !== "nenhuma" && hasNormal)
-      ) {
-        alert(
-          "A correção criaria uma combinação de restrições incompatível com os itens já presentes na posição. " +
-          "Confira o cadastro físico e a restrição antes de corrigir a divergência."
-        );
-        return false;
-      }
-
-      if (normalizedEstoque === "1") {
-        const e1Id = `1-${normalizedModulo}-${cleanSku}`;
-        const existingE1 = updatedSlots.findIndex(slot => slot.id === e1Id);
-        if (existingE1 >= 0) {
-          const row = updatedSlots[existingE1];
-          if (row.referencia.trim() || Number(row.saldo || 0) > 0) {
-            alert(`O ID E1 '${e1Id}' já tem saldo. A correção foi interrompida para não sobrescrever outra identidade.`);
-            return false;
-          }
-          targetSlotIdx = existingE1;
-        } else {
-          updatedSlots.push({
-            id: e1Id,
-            estoque: normalizedEstoque,
-            modulo: normalizedModulo,
-            posicao: "",
-            referencia: "",
-            descricao: "",
-            saldo: 0,
-            dataChacote: "",
-            ultimaData: "",
-            ultimaHora: "",
-            ultimoResponsavel: "",
-            galpao: galpaoValue,
-            restricao: correctedRestriction,
-            observacao: "",
-          });
-          targetSlotIdx = updatedSlots.length - 1;
-        }
-      } else {
-        const baseRowIndex = updatedSlots.findIndex(slot =>
-          slot.id === canonicalAddressId && samePhysicalAddress(slot) &&
-          slot.referencia.trim() === "" && Number(slot.saldo || 0) === 0 &&
-          isBasePhysicalSlotAtOwnAddress(slot)
-        );
-        const targetItemId = `${canonicalAddressId}::ITEM::${cleanSku}::${correctedRestriction}`;
-        const exactItemIndex = updatedSlots.findIndex(slot => slot.id === targetItemId);
-        if (exactItemIndex >= 0) {
-          const row = updatedSlots[exactItemIndex];
-          if (getSlotIdentityMismatch(row) !== null || row.referencia.trim() || Number(row.saldo || 0) > 0) {
-            alert(`O ID '${targetItemId}' já existe com outro estado. A correção foi interrompida para não duplicar ou sobrescrever estoque.`);
-            return false;
-          }
-          targetSlotIdx = exactItemIndex;
-        } else if (baseRowIndex >= 0) {
-          targetSlotIdx = baseRowIndex;
-        } else {
-          const configured = warehousePositions.some(position =>
-            position.ativo && normalizeStock(position.estoque) === normalizedEstoque &&
-            normalizeModule(position.modulo) === normalizedModulo &&
-            String(position.posicao || "").trim().toUpperCase() === normalizedPosicao
-          );
-          if (!configured) {
-            alert(`A posição ${canonicalAddressId} não está cadastrada como física/ativa. Não será criado um ID novo fora do layout.`);
-            return false;
-          }
-          updatedSlots.push({
-            id: targetItemId,
-            estoque: normalizedEstoque,
-            modulo: normalizedModulo,
-            posicao: normalizedPosicao,
-            referencia: "",
-            descricao: "",
-            saldo: 0,
-            dataChacote: "",
-            ultimaData: "",
-            ultimaHora: "",
-            ultimoResponsavel: "",
-            galpao: galpaoValue,
-            restricao: correctedRestriction,
-            observacao: "",
-          });
-          targetSlotIdx = updatedSlots.length - 1;
-        }
-      }
-      effectiveSlotId = updatedSlots[targetSlotIdx]?.id;
-    }
-
-    if (action === "sobrescrever" && targetSlotIdx >= 0) {
-      const selected = updatedSlots[targetSlotIdx];
-      const selectedReference = String(selected.referencia || "").trim().toUpperCase();
-      const selectedRestriction = normalizeHistoricalRestriction(selected.restricao);
-      const identityWillChange = Boolean(selectedReference) &&
-        (selectedReference !== cleanSku || selectedRestriction !== correctedRestriction);
-
-      // An auxiliary ID encodes SKU + restriction; an E1 ID encodes SKU.
-      // Changing those identities in-place would create the historical mismatch
-      // reported in production, so refuse it instead of silently keeping the old ID.
-      if (identityWillChange && (
-        selected.id.includes("::ITEM::") || normalizedEstoque === "1"
-      )) {
-        alert(
-          `O ID '${selected.id}' codifica a identidade atual do item (${selectedReference} / ${selectedRestriction}) ` +
-          `e não pode ser reutilizado como ${cleanSku} / ${correctedRestriction}. ` +
-          "A correção foi interrompida para evitar um slot_id incorreto. Faça a reconciliação física da identidade antes de concluir esta divergência."
-        );
-        return false;
-      }
-
-      const duplicateTarget = updatedSlots.find(slot =>
-        slot.id !== selected.id && samePhysicalAddress(slot) &&
-        Number(slot.saldo || 0) > 0 &&
-        String(slot.referencia || "").trim().toUpperCase() === cleanSku &&
-        normalizeHistoricalRestriction(slot.restricao) === correctedRestriction
-      );
-      if (duplicateTarget && identityWillChange) {
-        alert(
-          `O item ${cleanSku} / ${correctedRestriction} já tem saldo no ID '${duplicateTarget.id}'. ` +
-          "A correção não pode sobrescrever o ID base e criar um segundo registro para a mesma identidade."
-        );
-        return false;
-      }
-
-      if (identityWillChange && Number(selected.saldo || 0) > 0) {
-        correctionExtraMovements.push({
-          id: `CORR-${generateId()}`,
-          dataLancamento: targetDate,
-          quemLancou: correctedBy,
-          data: targetDate,
-          estoque: selected.estoque,
-          modulo: selected.modulo,
-          posicao: selected.posicao,
-          referencia: selected.referencia,
-          quantidade: Number(selected.saldo),
-          tipo: "Saída",
-          dataChacote: selected.dataChacote || "",
-          hora: currentHour,
-          responsavel: correctedBy,
-          observacao: `Retirada da identidade anterior durante correção física da divergência ${currentDiv.id}`,
-          slotId: selected.id,
-          restricao: selectedRestriction as Restricao,
-        });
-      }
-    }
-
-    const resolvedSlotIdx = effectiveSlotId
-      ? updatedSlots.findIndex(slot => slot.id === effectiveSlotId)
-      : -1;
-
-    // The existing divergence-resolution RPC cannot delete an emptied logical
-    // E1/auxiliary row in the same transaction. Do not commit a discard that
-    // would leave a blank SKU-specific ID behind; the operator can retry after
-    // the dedicated atomic delete-capable resolution RPC is deployed.
-    if (
-      action === "descartar" &&
-      resolvedSlotIdx >= 0 &&
-      (updatedSlots[resolvedSlotIdx].id.includes("::ITEM::") || normalizedEstoque === "1") &&
-      (Number(updatedSlots[resolvedSlotIdx].saldo || 0) > 0 || Boolean(String(updatedSlots[resolvedSlotIdx].referencia || "").trim()))
-    ) {
-      alert(
-        "Esta divergência está vinculada a um ID lógico de SKU (E1/auxiliar). " +
-        "A rotina transacional atual não consegue excluir esse ID vazio junto com a correção. " +
-        "A operação foi bloqueada para não deixar uma linha vazia/fantasma nem separar o histórico da correção. " +
-        "Nenhum dado foi alterado."
-      );
-      return false;
-    }
-
-    if (action === "sobrescrever" && resolvedSlotIdx < 0) {
-      alert(
-        `Não foi possível localizar ou criar o item da posição ${currentDiv.estoque}-${currentDiv.modulo}-${currentDiv.posicao || "Rua"}.`
-      );
-      return false;
-    }
-
-    const correctionTargetBefore = resolvedSlotIdx >= 0
-      ? { ...updatedSlots[resolvedSlotIdx] }
-      : undefined;
-    const oldTargetReference = String(correctionTargetBefore?.referencia || "").trim().toUpperCase();
-    const oldTargetRestriction = normalizeHistoricalRestriction(correctionTargetBefore?.restricao);
-    const oldTargetBalance = Number(correctionTargetBefore?.saldo || 0);
-
-    const addCorrectionExit = (slot: WarehouseSlot, description: string) => {
-      const balance = Number(slot.saldo || 0);
-      const reference = String(slot.referencia || "").trim().toUpperCase();
-      if (balance <= 0 || !reference) return;
-      correctionExtraMovements.push({
-        id: `CORR-${generateId()}`,
-        dataLancamento: targetDate,
-        quemLancou: correctedBy,
-        data: targetDate,
-        estoque: slot.estoque,
-        modulo: slot.modulo,
-        posicao: slot.posicao,
-        referencia: slot.referencia,
-        quantidade: balance,
-        tipo: "Saída",
-        dataChacote: slot.dataChacote || "",
-        hora: currentHour,
-        responsavel: correctedBy,
-        observacao: description,
-        slotId: slot.id,
-        restricao: normalizeHistoricalRestriction(slot.restricao) as Restricao,
-      });
-    };
-
-    if (resolvedSlotIdx >= 0) {
-      const selected = updatedSlots[resolvedSlotIdx];
-      if (action === "descartar") {
-        addCorrectionExit(selected, `Baixa da identidade descartada durante correção da divergência ${currentDiv.id}`);
-        updatedSlots[resolvedSlotIdx] = {
-          ...selected,
-          referencia: "",
-          descricao: "",
-          saldo: 0,
-          dataChacote: "",
-          galpao: "3",
-          restricao: selected.id.includes("::ITEM::")
-            ? (getAuxiliarySlotIdentity(selected.id)?.restricao || normalizeHistoricalRestriction(selected.restricao) as Restricao)
-            : "nenhuma",
-          observacao: "",
-          ultimaData: targetDate,
-          ultimaHora: currentHour,
-          ultimoResponsavel: correctedBy,
-        };
-      } else if (quantity === 0) {
-        if (!correctionExtraMovements.some(movement => movement.slotId === selected.id && movement.tipo === "Saída")) {
-          addCorrectionExit(selected, `Baixa física confirmada durante correção da divergência ${currentDiv.id}`);
-        }
-        updatedSlots[resolvedSlotIdx] = {
-          ...selected,
-          referencia: "",
-          descricao: "",
-          saldo: 0,
-          dataChacote: "",
-          galpao: "3",
-          restricao: selected.id.includes("::ITEM::")
-            ? (getAuxiliarySlotIdentity(selected.id)?.restricao || normalizeHistoricalRestriction(selected.restricao) as Restricao)
-            : "nenhuma",
-          observacao: "",
-          ultimaData: targetDate,
-          ultimaHora: currentHour,
-          ultimoResponsavel: correctedBy,
-        };
-      } else {
-        // IDs auxiliares e IDs E1 não podem ser reatribuídos a outra identidade.
-        // Para a base física E2/E3 o ID representa o endereço, então a SKU pode
-        // ser corrigida desde que não exista outra linha ocupada com a mesma identidade.
-        updatedSlots[resolvedSlotIdx] = {
-          ...selected,
-          referencia: product!.referencia,
-          descricao: product!.descricao,
-          saldo: quantity,
-          dataChacote: dataChacoteValue.trim(),
-          galpao: galpaoValue,
-          restricao: correctedRestriction,
-          ultimaData: targetDate,
-          ultimaHora: currentHour,
-          ultimoResponsavel: correctedBy,
-        };
-      }
-    }
-
-    const newLogTemplate: HistoricoMov = {
-      id: `CORR-${generateId()}`,
-      dataLancamento: targetDate,
-      quemLancou: correctedBy,
-      data: targetDate,
-      estoque: currentDiv.estoque,
-      modulo: currentDiv.modulo,
-      posicao: currentDiv.posicao,
-      referencia: action === "descartar" ? "" : (product?.referencia || cleanSku),
-      quantidade: action === "descartar" ? 0 : quantity,
-      tipo: action === "descartar" ? "Saída" : "Entrada",
-      dataChacote: action === "descartar" ? "" : (dataChacoteValue.trim() || "Reconciliação"),
-      hora: currentHour,
-      responsavel: correctedBy,
-      observacao: `Correção de divergência: ${currentDiv.id}`,
-      slotId: effectiveSlotId,
-      restricao: action === "descartar" ? expectedRestriction as Restricao : correctedRestriction,
-    };
-
-    // History expresses the adjustment, not the final count as a new addition:
-    // same identity => signed delta; identity change => salida del SKU anterior
-    // (if any) plus entrada del SKU confirmado. The RPC commits this log,
-    // slot snapshot and divergence status as one transaction.
-    const movementsToPersist: HistoricoMov[] = [...correctionExtraMovements];
-    if (action === "descartar") {
-      if (movementsToPersist.length === 0) movementsToPersist.push(newLogTemplate);
-    } else if (quantity === 0) {
-      if (movementsToPersist.length === 0) {
-        movementsToPersist.push({
-          ...newLogTemplate,
-          tipo: "Saída",
-          quantidade: 0,
-          observacao: `Conferência física em zero para a divergência ${currentDiv.id}`,
-        });
-      }
-    } else {
-      const sameIdentityBeforeCorrection = Boolean(
-        correctionTargetBefore &&
-        oldTargetReference === cleanSku &&
-        oldTargetRestriction === correctedRestriction
-      );
-      if (sameIdentityBeforeCorrection && correctionTargetBefore) {
-        const delta = quantity - oldTargetBalance;
-        if (delta > 0) {
-          movementsToPersist.push({ ...newLogTemplate, tipo: "Entrada", quantidade: delta });
-        } else if (delta < 0) {
-          movementsToPersist.push({ ...newLogTemplate, tipo: "Saída", quantidade: Math.abs(delta) });
-        } else {
-          movementsToPersist.push({
-            ...newLogTemplate,
-            tipo: "Entrada",
-            quantidade: 0,
-            observacao: `Saldo físico confirmado sem ajuste para a divergência ${currentDiv.id}`,
-          });
-        }
-      } else {
-        movementsToPersist.push({ ...newLogTemplate, tipo: "Entrada", quantidade: quantity });
-      }
-    }
-
-    const updatedDivergencias = divergenciasRef.current.map(item => {
-      const sameOpenAddress =
-        item.status === "Aberta" &&
-        normalizeStock(item.estoque) === normalizedEstoque &&
-        normalizeModule(item.modulo) === normalizedModulo &&
-        String(item.posicao || "").trim().toUpperCase() === normalizedPosicao;
-
-      if (!sameOpenAddress) return item;
-
-      const correctionNote = [
-        String(item.observacao || "").trim(),
-        `Correção física da posição ${canonicalAddressId}; Galpão ${galpaoValue}; Restrição ${action === "descartar" ? expectedRestriction : correctedRestriction}.`,
-        observacaoValue.trim(),
-      ].filter(Boolean).join(" ");
-
-      return {
-        ...item,
-        refNova: action === "sobrescrever" && product ? product.referencia : "",
-        saldoFinal: action === "sobrescrever" ? quantity : 0,
-        status: "Corrigida" as const,
-        dataCorrecao: targetDate,
-        corrigidoPor: correctedBy,
-        slotId: effectiveSlotId,
-        observacao: correctionNote,
-        restricao: action === "descartar"
-          ? expectedRestriction as Restricao
-          : correctedRestriction,
-      };
+    // RPC específica porque a rotina genérica recusa duplicidades preexistentes.
+    // Não há retry automático: em caso de resposta perdida, o operador deve atualizar
+    // a tela e conferir o estado antes de qualquer nova tentativa.
+    const { data, error } = await supabase.rpc("zero_physical_divergence_address_atomic", {
+      p_physical_zero_confirmed: true,
+      p_correction_id: plan.correctionId,
+      p_address: { estoque: normalizedEstoque, modulo: normalizedModulo, posicao: normalizedPosicao },
+      p_expected_slots: plan.expectedSlots,
+      p_slots: plan.finalSlots,
+      p_expected_divergencias: expectedDivergencesPayload,
+      p_divergencias: finalDivergencesPayload,
+      p_history: historyPayload,
+      p_delete_slot_ids: plan.deleteSlotIds,
     });
 
-    const saved = await persistDivergenceResolutionAtomically(
-      updatedSlots,
-      movementsToPersist,
-      updatedDivergencias
-    );
-    if (!saved) {
+    if (error || data?.success !== true) {
+      console.error("Zeramento transacional não confirmado:", {
+        rpc: "zero_physical_divergence_address_atomic",
+        code: data?.code ?? error?.code,
+        message: data?.message ?? error?.message ?? "Resposta inválida do Supabase.",
+      });
       alert(
-        "A correção não foi concluída. Não foi possível confirmar o resultado. " +
-        "Atualize os dados e confira o status antes de tentar novamente, para evitar " +
-        "repetir uma correção cuja resposta de rede possa ter sido perdida."
+        `O zeramento não foi confirmado pelo Supabase (${data?.code || error?.code || "SEM_CONFIRMACAO"}). ` +
+        `${data?.message || error?.message || "Nenhum dado foi alterado."} ` +
+        "Atualize os dados e confira a posição antes de tentar novamente."
       );
       return false;
     }
 
-    alert(`Divergência ${currentDiv.id} corrigida com sucesso.`);
+    const addressParts = plan.addressId.split("-");
+    const deletedIds = new Set(plan.deleteSlotIds);
+    const isSameAddress = (slot: WarehouseSlot): boolean =>
+      normalizeStock(slot.estoque) === addressParts[0] &&
+      normalizeModule(slot.modulo) === addressParts[1] &&
+      normalizePosition(slot.posicao) === addressParts.slice(2).join("-");
+    const nextSlots = updateSlotsState(current => [
+      ...current.filter(slot => !isSameAddress(slot) && !deletedIds.has(slot.id)),
+      ...plan.finalSlots as WarehouseSlot[],
+    ]);
+    await saveOfflineSnapshot("slots", nextSlots);
+
+    const updatedDivergenceIds = new Set(plan.correctedDivergences.map(item => item.id));
+    const mergedDivergencias = updateDivergenciasState(current => {
+      const byId = new globalThis.Map(current.map(item => [item.id, item]));
+      plan.correctedDivergences.forEach(item => {
+        if (updatedDivergenceIds.has(item.id)) byId.set(item.id, item as unknown as Divergencia);
+      });
+      return Array.from(byId.values());
+    });
+    await saveOfflineSnapshot("divergencias", mergedDivergencias);
+
+    if (plan.history.length > 0) {
+      const newMovements = plan.history as unknown as HistoricoMov[];
+      const movementIds = new Set(newMovements.map(movement => movement.id));
+      const nextHistory = [
+        ...newMovements,
+        ...history.filter(movement => !movementIds.has(movement.id)),
+      ];
+      setHistory(nextHistory);
+      await saveOfflineSnapshot("history", nextHistory);
+      setHistoryQueryRows(previous => {
+        if (!previous) return previous;
+        const inSelectedPeriod = newMovements.filter(
+          movement => movement.data >= histDateStart && movement.data <= histDateEnd
+        );
+        const selectedIds = new Set(inSelectedPeriod.map(movement => movement.id));
+        return [
+          ...inSelectedPeriod,
+          ...previous.filter(movement => !selectedIds.has(movement.id)),
+        ];
+      });
+    }
+
+    alert(`Posição ${addressId} zerada com sucesso. Faça agora a entrada correta do item.`);
     return true;
   };
 
@@ -4536,121 +4095,7 @@ if (refRaw) {
     }
   };
 
-  // --- DIVERGÊNCIAS CORRECTION ---
-  const [selectedDivergênciaId, setSelectedDivergênciaId] = useState<string | null>(null);
-  const [resolveAction, setResolveAction] = useState<string>("sobrescrever");
-  const [resolveQty, setResolveQty] = useState<number>(0);
-  const [resolveAlternativeSlot, setResolveAlternativeSlot] = useState<string>("");
-
-  const openCorrectionDialog = (div: Divergencia) => {
-    setSelectedDivergênciaId(div.id);
-    setResolveQty(Math.abs(div.movimentacao));
-    // Focus recommended vacant slots
-    const firstFree = slots.find(s => s.estoque === div.estoque && s.saldo === 0);
-    if (firstFree) {
-      setResolveAlternativeSlot(`${firstFree.modulo} - ${firstFree.posicao}`);
-    } else {
-      setResolveAlternativeSlot("");
-    }
-  };
-
-  // Action manual corrector tool
-  const handleResolveDivergência = () => {
-    if (!selectedDivergênciaId) return;
-
-    const div = divergencias.find(d => d.id === selectedDivergênciaId);
-    if (!div) return;
-
-    const updatedSlots = [...slots];
-    const updatedDivs = divergencias.map(d => {
-      if (d.id === selectedDivergênciaId) {
-        return {
-          ...d,
-          status: "Corrigida" as const,
-          dataCorrecao: new Date().toLocaleDateString("pt-BR"),
-          corrigidoPor: operator,
-          observacao: `Ajuste efetuado por correção manual pelo operador ${operator}. Ação: ${resolveAction.toUpperCase()}`
-        };
-      }
-      return d;
-    });
-
-    const targetPos = div.estoque === "E1" ? "" : div.posicao;
-
-    if (resolveAction === "sobrescrever") {
-      const target = updatedSlots.find(s => 
-        s.estoque === div.estoque && 
-        s.modulo === div.modulo && 
-        s.posicao === targetPos
-      );
-      if (target) {
-        const prod = productsList.find(p => p.referencia.toUpperCase() === div.refNova.toUpperCase());
-        target.referencia = div.refNova;
-        target.descricao = prod ? prod.descricao : "Sku Reajustado";
-        target.saldo = resolveQty;
-        target.ultimaData = new Date().toLocaleDateString("pt-BR");
-        target.ultimoResponsavel = operator;
-      }
-    } else if (resolveAction === "realocar") {
-      const parts = resolveAlternativeSlot.split(" - ");
-      const mod = parts[0]?.trim();
-      const pos = div.estoque === "E1" ? "" : parts[1]?.trim();
-
-      const target = updatedSlots.find(s => 
-        s.estoque === div.estoque && 
-        s.modulo === mod && 
-        s.posicao === pos
-      );
-      if (target) {
-        const prod = productsList.find(p => p.referencia.toUpperCase() === div.refNova.toUpperCase());
-        target.referencia = div.refNova;
-        target.descricao = prod ? prod.descricao : "Sku Realocado";
-        target.saldo = resolveQty;
-        target.ultimaData = new Date().toLocaleDateString("pt-BR");
-        target.ultimoResponsavel = operator;
-      }
-    } else if (resolveAction === "descartar") {
-      const target = updatedSlots.find(s => 
-        s.estoque === div.estoque && 
-        s.modulo === div.modulo && 
-        s.posicao === targetPos
-      );
-      if (target) {
-        target.referencia = "";
-        target.descricao = "";
-        target.saldo = 0;
-        target.dataChacote = "";
-      }
-    }
-
-    const changedSlots = updatedSlots.filter(slot => {
-      const previous = slots.find(item => item.id === slot.id);
-      return !previous || JSON.stringify(previous) !== JSON.stringify(slot);
-    });
-    mergeSlotsState(changedSlots);
-    updateDivergenciasState(() => updatedDivs);
-
-    // Save adjustment record in history logs
-    const compensationHistory: HistoricoMov = {
-      id: `MOV-${generateId()}`,
-      dataLancamento: new Date().toLocaleDateString("pt-BR"),
-      quemLancou: operator,
-      data: new Date().toLocaleDateString("pt-BR"),
-      estoque: div.estoque,
-      modulo: div.modulo,
-      posicao: targetPos,
-      referencia: div.refNova,
-      quantidade: resolveQty,
-      tipo: "Entrada",
-      dataChacote: "",
-      hora: new Date().toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" }),
-      responsavel: operator
-    };
-    setHistory([compensationHistory, ...history]);
-
-    setSelectedDivergênciaId(null);
-    alert("Divergência resolvida com êxito! O saldo físico lógico de armazenagem foi corrigido.");
-  };
+  // A correção de divergências é centralizada em DivergenciasPanel e no fluxo transacional acima.
 
   const handleExportCSV = () => {
     const headers = "Data Divergência;Tipo Divergência;Estoque;Módulo;Posição;Ref Atual;Ref Nova;Saldo Lógico;Movimentação Intentada;Saldo Final;Responsável;Status\n";

@@ -1,10 +1,9 @@
 import React, { useRef, useState } from "react";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
-import { Divergencia, WarehouseSlot, Galpao, Restricao } from "../types";
+import { Divergencia, WarehouseSlot } from "../types";
 import { AlertOctagon, Printer, FileSpreadsheet, Lock, Sparkles, Check, Trash2 } from "lucide-react";
 import { canExecuteOperations, isReadOnlyRole } from "../constants/permissions";
-import { findCorroboratedDivergenceSlot } from "../lib/divergenceResolution";
 
 interface DivergenciasPanelProps {
   divergencias: Divergencia[];
@@ -14,12 +13,7 @@ interface DivergenciasPanelProps {
   launchDate: string;
   onResolveDivergencia: (
     divergence: Divergencia,
-    action: "sobrescrever" | "descartar",
-    sku: string,
-    quantity: number,
-    dataChacote: string,
-    galpao: Galpao,
-    restricao: Restricao,
+    action: "zerar",
     observacao: string
   ) => Promise<boolean>;
   hasAccess: (level: "administrador" | "operador" | "consulta") => boolean;
@@ -38,12 +32,6 @@ export const DivergenciasPanel: React.FC<DivergenciasPanelProps> = ({
   const canResolveDivergencia = canExecuteOperations(currentUser?.role);
   
   const [selectedDivergenciaId, setSelectedDivergenciaId] = useState<string | null>(null);
-  const [resolveAction, setResolveAction] = useState<"sobrescrever" | "descartar">("sobrescrever");
-  const [resolveQty, setResolveQty] = useState<number>(0);
-  const [resolveSkuVal, setResolveSkuVal] = useState<string>("");
-  const [resolveDataChacoteVal, setResolveDataChacoteVal] = useState<string>("");
-  const [resolveGalpao, setResolveGalpao] = useState<"3" | "12">("3");
-  const [resolveRestricao, setResolveRestricao] = useState<"nenhuma" | "teste" | "autorizacao" | "outra">("nenhuma");
   const [resolveObservacao, setResolveObservacao] = useState<string>("");
   const [resolvingCorrection, setResolvingCorrection] = useState(false);
   const resolutionInFlightRef = useRef(false);
@@ -98,52 +86,7 @@ export const DivergenciasPanel: React.FC<DivergenciasPanelProps> = ({
   
   const openCorrectionDialog = (d: Divergencia) => {
     setSelectedDivergenciaId(d.id);
-    setResolveAction("sobrescrever");
-    setResolveQty(Math.abs(d.movimentacao));
-    setResolveSkuVal(d.refNova || d.refAtual || "");
-    setResolveDataChacoteVal(d.dataChacote || "");
-    const normalizeStock = (value: string): string =>
-      String(value ?? "").trim().toUpperCase().replace(/^E/i, "");
-    const normalizeModule = (value: string): string => {
-      const raw = String(value ?? "").trim().toUpperCase().replace(/^[RM]/i, "");
-      return /^\d+$/.test(raw) ? String(Number(raw)) : raw;
-    };
-    const samePhysicalAddress = (slot: (typeof slots)[number]): boolean =>
-      normalizeStock(slot.estoque) === normalizeStock(d.estoque) &&
-      normalizeModule(slot.modulo) === normalizeModule(d.modulo) &&
-      String(slot.posicao || "").trim().toUpperCase() === String(d.posicao || "").trim().toUpperCase();
-    const expectedReference = String(d.refAtual || "").trim().toUpperCase();
-    const expectedEmpty = expectedReference === "" || expectedReference === "VAZIO";
-    const expectedRestriction = String(d.restricao || "").trim().toLowerCase();
-    const matchesReferenceAndRestriction = (slot: (typeof slots)[number]): boolean => {
-      const ref = String(slot.referencia || "").trim().toUpperCase();
-      const restriction = String(slot.restricao || "nenhuma").trim().toLowerCase();
-      return (expectedEmpty ? ref === "" && Number(slot.saldo || 0) === 0 : ref === expectedReference) &&
-        (!expectedRestriction || restriction === expectedRestriction);
-    };
-    const targetSlot = (d.slotId
-      ? slots.find(slot => slot.id === d.slotId && samePhysicalAddress(slot) && matchesReferenceAndRestriction(slot))
-      : undefined) ?? slots.find(slot => samePhysicalAddress(slot) && matchesReferenceAndRestriction(slot));
-    const corroborated = !targetSlot
-      ? findCorroboratedDivergenceSlot({
-          currentDivergence: d,
-          divergences: divergencias,
-          slots,
-          targetSku: d.refNova || d.refAtual || "",
-          targetRestriction: d.restricao || "nenhuma",
-        })
-      : { kind: "none" as const };
-    const effectiveTargetSlot = targetSlot ?? (corroborated.kind === "selected"
-      ? slots.find(slot => slot.id === corroborated.slotId)
-      : undefined);
-    const initialGalpao = (effectiveTargetSlot?.galpao || (d.restricao === "autorizacao" ? "12" : "3")) as "3" | "12";
-    setResolveGalpao(initialGalpao);
-    setResolveRestricao(
-      initialGalpao === "12"
-        ? "autorizacao"
-        : (effectiveTargetSlot?.restricao || d.restricao || "nenhuma")
-    );
-    setResolveObservacao(effectiveTargetSlot?.observacao || "");
+    setResolveObservacao("");
   };
 
   const handleResolveDivergencia = async () => {
@@ -160,33 +103,12 @@ export const DivergenciasPanel: React.FC<DivergenciasPanelProps> = ({
       return;
     }
 
-    const cleanSku = resolveSkuVal.trim().toUpperCase().replace(/^S/, "");
-    if (resolveAction === "sobrescrever") {
-      if (!cleanSku) {
-        alert("Falta SKU corrigido. Este campo é obrigatório na resolução manual.");
-        return;
-      }
-      if (!Number.isFinite(resolveQty) || resolveQty < 0) {
-        alert("Saldo validado fisicamente é obrigatório e não pode ser negativo.");
-        return;
-      }
-    }
-
     resolutionInFlightRef.current = true;
     setResolvingCorrection(true);
     try {
       // Desktop and mobile must share the same physical reconciliation algorithm,
       // movement-history semantics, and atomic transaction.
-      const saved = await onResolveDivergencia(
-        div,
-        resolveAction,
-        cleanSku,
-        resolveQty,
-        resolveDataChacoteVal,
-        resolveGalpao,
-        resolveGalpao === "12" ? "autorizacao" : resolveRestricao,
-        resolveObservacao.trim(),
-      );
+      const saved = await onResolveDivergencia(div, "zerar", resolveObservacao.trim());
 
       if (saved) setSelectedDivergenciaId(null);
     } finally {
@@ -615,129 +537,25 @@ const tempoMedio =
 
               <div className="space-y-3 font-sans">
                 
-                {/* AÇÃO REPARADORA RADIOS */}
-                <div className="space-y-2 pb-2 border-b border-slate-100">
-                  <label className="text-[10px] font-bold text-slate-450 block uppercase">Ação Logística Corretora:</label>
-                  
-                  <div className="space-y-1.5 text-xs">
-                    <label className="flex items-start gap-2 p-2 border border-slate-200 rounded-lg hover:bg-slate-50 cursor-pointer transition">
-                      <input 
-                        type="radio" 
-                        name="resolveAction" 
-                        value="sobrescrever" 
-                        checked={resolveAction === "sobrescrever"}
-                        onChange={() => setResolveAction("sobrescrever")}
-                        className="mt-0.5"
-                      />
-                      <div>
-                        <strong className="text-slate-800 block text-[11px] font-bold">Sobrescrever Endereçamento Original</strong>
-                        <span className="text-slate-400 text-[10px] block font-medium leading-normal mt-0.5">
-                          Preenchimento automatico no endereçamento com Sku novo / Saldo Novo / Data do Chacote Novo
-                        </span>
-                      </div>
-                    </label>
-
-                    <label className="flex items-start gap-2 p-2 border border-slate-200 rounded-lg hover:bg-slate-50 cursor-pointer transition">
-                      <input 
-                        type="radio" 
-                        name="resolveAction" 
-                        value="descartar" 
-                        checked={resolveAction === "descartar"}
-                        onChange={() => setResolveAction("descartar")}
-                        className="mt-0.5"
-                      />
-                      <div>
-                        <strong className="text-slate-800 block text-[11px] font-bold">Zerar Endereço (Vaga Limpa)</strong>
-                        <span className="text-slate-400 text-[10px] block font-medium leading-none mt-0.5">
-                          Limpa o palete da coordenada conflitante, forçando saldo zero (vaga livre).
-                        </span>
-                      </div>
-                    </label>
-                  </div>
+                <div className="rounded-lg border border-amber-200 bg-amber-50 p-3">
+                  <strong className="block text-[11px] font-black uppercase text-amber-900">Zerar endereço (vaga limpa)</strong>
+                  <p className="mt-1 text-[10px] font-medium leading-relaxed text-amber-800">
+                    Confirme somente depois de verificar fisicamente que a posição está vazia. A operação registra as saídas dos saldos cadastrados,
+                    mantém a linha-base com saldo zero, remove auxiliares da posição e encerra as divergências ainda abertas desse endereço.
+                    Depois, faça a entrada correta do item pelo fluxo normal.
+                  </p>
                 </div>
 
-                {resolveAction === "sobrescrever" && (
-                  <div className="space-y-3 pt-1">
-                    {/* 1. SKU NOVO (Obrigatório) */}
-                    <div>
-                      <label className="text-[10px] font-black text-slate-500 uppercase block mb-1">SKU NOVO (REFERÊNCIA CORRIGIDA FISICAMENTE) *</label>
-                      <input
-                        type="text"
-                        value={resolveSkuVal}
-                        onChange={(e) => setResolveSkuVal(e.target.value)}
-                        placeholder="Ex: 092"
-                        className="w-full bg-slate-50 border border-slate-300 rounded p-2 text-xs font-black uppercase text-slate-800 focus:ring-1 focus:ring-blue-500"
-                      />
-                      <p className="text-[9px] text-slate-400 mt-0.5">Informe o código que de fato está no local (apenas números, o prefixo 'S' é auto-removido).</p>
-                    </div>
-
-                    {/* 2. SALDO NOVO (Obrigatório) */}
-                    <div>
-                      <label className="text-[10px] font-black text-slate-500 uppercase block mb-1">SALDO NOVO DISPONÍVEL (VALIDADO FISICAMENTE) *</label>
-                      <input
-                        type="number"
-                        value={resolveQty}
-                        onChange={(e) => setResolveQty(Math.max(0, parseInt(e.target.value) || 0))}
-                        placeholder="Ex: 1200"
-                        className="w-full bg-slate-50 border border-slate-300 rounded p-2 text-xs font-black text-slate-800 focus:ring-1 focus:ring-blue-500"
-                      />
-                    </div>
-
-                    {/* 3. DATA DO CHACOTE (Opcional) */}
-                    <div>
-                      <label className="text-[10px] font-black text-slate-500 uppercase block mb-1">DATA DO CHACOTE (OPCIONAL)</label>
-                      <input
-                        type="text"
-                        value={resolveDataChacoteVal}
-                        onChange={(e) => setResolveDataChacoteVal(e.target.value)}
-                        placeholder="Ex: 09/06/2026"
-                        className="w-full bg-slate-50 border border-slate-300 rounded p-2 text-xs font-bold text-slate-800 focus:ring-1 focus:ring-blue-500"
-                      />
-                    </div>
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                      <div>
-                        <label className="text-[10px] font-black text-slate-500 uppercase block mb-1">GALPÃO</label>
-                        <select
-                          value={resolveGalpao}
-                          onChange={(e) => {
-                            const value = e.target.value as "3" | "12";
-                            setResolveGalpao(value);
-                            if (value === "12") setResolveRestricao("autorizacao");
-                          }}
-                          className="w-full bg-slate-50 border border-slate-300 rounded p-2 text-xs font-bold text-slate-800"
-                        >
-                          <option value="3">Galpão 3</option>
-                          <option value="12">Galpão 12</option>
-                        </select>
-                      </div>
-                      <div>
-                        <label className="text-[10px] font-black text-slate-500 uppercase block mb-1">RESTRIÇÃO</label>
-                        <select
-                          value={resolveGalpao === "12" ? "autorizacao" : resolveRestricao}
-                          onChange={(e) => setResolveRestricao(e.target.value as typeof resolveRestricao)}
-                          disabled={resolveGalpao === "12"}
-                          className="w-full bg-slate-50 border border-slate-300 rounded p-2 text-xs font-bold text-slate-800 disabled:bg-slate-100"
-                        >
-                          <option value="nenhuma">Nenhuma</option>
-                          <option value="teste">Teste — não separar</option>
-                          <option value="autorizacao">Solicitar autorização</option>
-                          <option value="outra">Outra restrição</option>
-                        </select>
-                      </div>
-                    </div>
-
-                    <div>
-                      <label className="text-[10px] font-black text-slate-500 uppercase block mb-1">OBSERVAÇÃO</label>
-                      <textarea
-                        value={resolveObservacao}
-                        onChange={(e) => setResolveObservacao(e.target.value)}
-                        rows={2}
-                        placeholder="Observação da correção física"
-                        className="w-full resize-none bg-slate-50 border border-slate-300 rounded p-2 text-xs font-semibold text-slate-800"
-                      />
-                    </div>
-                  </div>
-                )}
+                <div>
+                  <label className="text-[10px] font-black text-slate-500 uppercase block mb-1">OBSERVAÇÃO (OPCIONAL)</label>
+                  <textarea
+                    value={resolveObservacao}
+                    onChange={(e) => setResolveObservacao(e.target.value)}
+                    rows={2}
+                    placeholder="Motivo ou detalhe do zeramento físico"
+                    className="w-full resize-none bg-slate-50 border border-slate-300 rounded p-2 text-xs font-semibold text-slate-800"
+                  />
+                </div>
 
               </div>
 
@@ -748,7 +566,7 @@ const tempoMedio =
                   onClick={() => !isReadOnly && !resolvingCorrection && handleResolveDivergencia()}
                   className="flex-1 bg-red-600 hover:bg-red-700 text-white rounded-lg py-2.5 text-xs font-bold transition shadow cursor-pointer uppercase text-center"
                 >
-                  {resolvingCorrection ? "Salvando..." : "Corrigir Divergência"}
+                  {resolvingCorrection ? "Salvando..." : "Zerar endereço"}
                 </button>
                 <button
                   type="button"
