@@ -8333,7 +8333,7 @@ const pct = total > 0 ? (occupied / total) * 100 : 0;
                                 />
                               </div>
                             </th>
-                            <th className="py-2.5 px-3 w-32">Data do Lançamento</th>
+                            <th className="py-2.5 px-3 w-32">Data da Movimentação</th>
                             <th className="py-2.5 px-3 w-28">Galpão</th>
                             <th className="py-2.5 px-3 w-36">
                                 <div className="flex flex-col gap-1">
