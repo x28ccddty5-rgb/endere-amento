@@ -409,6 +409,38 @@ export const isBasePhysicalSlotAtOwnAddress = (slot: WarehouseSlot): boolean =>
   !isAuxiliarySlotId(slot.id) &&
   getSlotIdentityMismatch(slot) === null;
 
+/**
+ * Permite registrar divergências em um escopo sem passar pelo gravador comum
+ * de estoque somente nos dois casos confirmados pelo banco: módulo inativo ou
+ * identidade física inconsistente. No segundo caso, linhas seguintes podem
+ * gerar "Posição Bloqueada por Divergência" e devem permanecer no mesmo lote.
+ * Qualquer outro tipo, status ou mistura entre causas falha de forma fechada.
+ */
+export const canRecordDivergenceOnlyScope = (divergences: Divergencia[]): boolean => {
+  if (divergences.length === 0 || divergences.some(divergence => divergence.status !== "Aberta")) {
+    return false;
+  }
+
+  const hasInactiveModule = divergences.some(
+    divergence => divergence.tipoDivergencia === "Módulo Inativo"
+  );
+  const hasInconsistentIdentity = divergences.some(
+    divergence => divergence.tipoDivergencia === "ID de Endereço Inconsistente"
+  );
+
+  if (hasInactiveModule && hasInconsistentIdentity) return false;
+  if (hasInactiveModule) {
+    return divergences.every(divergence => divergence.tipoDivergencia === "Módulo Inativo");
+  }
+  if (hasInconsistentIdentity) {
+    return divergences.every(divergence =>
+      divergence.tipoDivergencia === "ID de Endereço Inconsistente" ||
+      divergence.tipoDivergencia === "Posição Bloqueada por Divergência"
+    );
+  }
+  return false;
+};
+
 const buildAddressId = (
   estoque: string,
   modulo: string,
@@ -593,7 +625,7 @@ export function processLancamentosInSequence(
     if (!isConfiguredModuleActive(warehouseLayout, estVal, modVal)) {
       errorCount++;
       newDivergencias.push({
-        id: `DIV-${generateId()}`,
+        id: getStableLaunchRecordId("DIV", row),
         dataDivergencia: batchDate,
         tipoDivergencia: "Módulo Inativo",
         estoque: estVal,
@@ -663,7 +695,7 @@ export function processLancamentosInSequence(
         clearSlotAfterDivergence(targetSlot, row, batchOperator);
       }
 
-      const divId = `DIV-${generateId()}`;
+      const divId = getStableLaunchRecordId("DIV", row);
 
       newDivergencias.push({
         id: divId,
@@ -686,6 +718,11 @@ export function processLancamentosInSequence(
       });
 
       blockedItemKeys.add(itemBlockKey);
+      if (tipoDivergencia === "ID de Endereço Inconsistente") {
+        // Once the physical row identity is proven inconsistent, don't let a
+        // later row for another SKU mutate this same address in the same batch.
+        blockedAddressKeys.add(addressBlockKey);
+      }
       blockedItemSlots.set(itemBlockKey, {
         slotId: targetSlot?.id,
         refAtual: refAtual || "Vazio",

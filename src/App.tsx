@@ -15,12 +15,21 @@ import * as XLSX from "xlsx";
 import { supabase } from './lib/supabase';
 import { guardedSupabaseRequest } from './lib/supabaseRequestGuard';
 import { enqueueLancamentoDraftWrite } from './lib/lancamentoDraftQueue';
+import {
+  buildSharedDraftSyncPlan,
+  isBlankLancamentoDraftRow,
+  normalizeLancamentoDraftRow,
+  parseSharedLancamentoDraftSnapshot,
+  type SharedLancamentoDraftLine,
+  type SharedLancamentoDraftSnapshot,
+} from "./lib/sharedLancamentoDraft";
 import { findCorroboratedDivergenceSlot } from "./lib/divergenceResolution";
 import { buildZeroPhysicalAddressPlan, ZeroPhysicalAddressPlanError } from "./lib/zeroPhysicalAddressPlan";
 import { 
   processLancamentosInSequence,
   processTransferenciaPosicao,
   validateLancamentoRow,
+  canRecordDivergenceOnlyScope,
   getSlotIdentityMismatch,
   getAuxiliarySlotIdentity,
   isBasePhysicalSlotAtOwnAddress,
@@ -112,122 +121,81 @@ const CONSULTOR_QUICK_QUESTIONS = {
 } as const;
 
 const LANCAMENTO_DRAFT_LOCAL_KEY = "eb_lancamento_draft_v1";
-const LANCAMENTO_DRAFT_CLEAR_MARKER_PREFIX = "eb_lancamento_draft_clear_pending_v1:";
-const getLancamentoDraftClearMarkerKey = (userId: string): string =>
-  `${LANCAMENTO_DRAFT_CLEAR_MARKER_PREFIX}${userId}`;
+const LANCAMENTO_DRAFT_LEGACY_QUARANTINE_KEY = "eb_lancamento_draft_legacy_quarantine_v1";
+const LANCAMENTO_BATCH_PENDING_KEY = "eb_lancamento_batch_pending_v1";
 
-interface LancamentoDraftRecord {
-  user_id: string;
-  rows: LancamentoRow[];
-  updated_at: string;
+const hasUnresolvedBatchMarker = (): boolean => {
+  try {
+    return localStorage.getItem(LANCAMENTO_BATCH_PENDING_KEY) !== null;
+  } catch {
+    // Failing to read the idempotency guard is not permission to start a new batch.
+    return true;
+  }
+};
+
+interface SharedDraftMeta {
+  generationId: string | null;
+  revision: number;
 }
 
-const loadLancamentoDraftFromSupabase = async (
-  userId: string
-): Promise<LancamentoRow[] | null> => {
-  const response = await guardedSupabaseRequest(`lancamento-draft.read:${userId}`, () =>
-    supabase
-      .from("lancamento_drafts")
-      .select("rows,updated_at")
-      .eq("user_id", userId)
-      .maybeSingle()
+interface SharedDraftBatchContext {
+  batchId: string;
+  generationId: string;
+  expectedRevision: number;
+  inputRows: SharedLancamentoDraftLine[];
+  resultSummary: Record<string, number | string | boolean>;
+}
+
+interface SharedDraftRpcResult {
+  success?: boolean;
+  code?: string;
+  message?: string;
+  conflict?: boolean;
+  [key: string]: unknown;
+}
+
+const loadSharedLancamentoDraftFromSupabase = async (): Promise<SharedLancamentoDraftSnapshot> => {
+  const { data, error } = await supabase.rpc("get_shared_lancamento_draft" as never, {} as never);
+  if (error) throw new Error(`Não foi possível carregar o rascunho compartilhado: ${error.message}`);
+  return parseSharedLancamentoDraftSnapshot(data);
+};
+
+const invokeSharedDraftRpc = async (
+  functionName: string,
+  args: Record<string, unknown>,
+): Promise<SharedDraftRpcResult> => {
+  const { data, error } = await supabase.rpc(functionName as never, args as never);
+  if (error) throw new Error(`${functionName}: ${error.message}`);
+  const result = data && typeof data === "object" ? data as SharedDraftRpcResult : null;
+  if (!result || result.success !== true) {
+    const code = String(result?.code ?? "SHARED_DRAFT_RPC_FAILED");
+    const message = String(result?.message ?? code);
+    const errorResult = new Error(`${code}: ${message}`) as Error & { code?: string; conflict?: boolean };
+    errorResult.code = code;
+    errorResult.conflict = result?.conflict === true;
+    throw errorResult;
+  }
+  return result;
+};
+
+const isSharedDraftConflict = (error: unknown): boolean => {
+  const item = error as { code?: string; message?: string; conflict?: boolean } | null;
+  return item?.conflict === true || /DRAFT_(?:LINE|GENERATION|REVISION|SNAPSHOT)|BATCH_GENERATION_CONFLICT/i.test(
+    `${item?.code ?? ""} ${item?.message ?? ""}`,
   );
-  const { data, error } = response;
-
-  if (error) {
-    if (!response.blocked) console.error("Erro ao carregar rascunho de lançamento:", error);
-    return null;
-  }
-
-  if (!data) return [];
-  if (!Array.isArray(data.rows)) {
-    console.warn("Rascunho de lançamento ignorado: formato inválido.");
-    return [];
-  }
-
-  return data.rows as LancamentoRow[];
 };
 
-const saveLancamentoDraftToSupabase = async (
-  userId: string,
-  rows: LancamentoRow[]
-): Promise<boolean> => {
-  const draft: LancamentoDraftRecord = {
-    user_id: userId,
-    rows,
-    updated_at: new Date().toISOString(),
-  };
-
-  try {
-    const { error } = await supabase
-      .from("lancamento_drafts")
-      .upsert(draft, { onConflict: "user_id" });
-
-    if (error) {
-      console.error("Erro ao salvar rascunho de lançamento:", error);
-      return false;
-    }
-
-    return true;
-  } catch (error) {
-    console.error("Falha de conexão ao salvar rascunho de lançamento:", error);
-    return false;
-  }
+const newOperationUuid = (): string => {
+  const nativeUuid = globalThis.crypto?.randomUUID?.();
+  if (nativeUuid) return nativeUuid;
+  return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, character => {
+    const random = Math.floor(Math.random() * 16);
+    const value = character === "x" ? random : (random & 0x3) | 0x8;
+    return value.toString(16);
+  });
 };
 
-const deleteLancamentoDraftFromSupabase = async (
-  userId: string
-): Promise<boolean> => {
-  try {
-    const { error } = await supabase
-      .from("lancamento_drafts")
-      .delete()
-      .eq("user_id", userId);
-
-    if (error) {
-      console.error("Erro ao excluir rascunho de lançamento:", error);
-      return false;
-    }
-
-    return true;
-  } catch (error) {
-    console.error("Falha de conexão ao excluir rascunho de lançamento:", error);
-    return false;
-  }
-};
-
-/**
- * Limpa o conteúdo remoto de forma segura e depois tenta remover a linha.
- * O upsert vazio faz com que, se o DELETE falhar, outros dispositivos leiam um
- * rascunho vazio em vez de restaurar as linhas já lançadas. São no máximo duas
- * requisições; não há loop nem retry automático.
- */
-const clearLancamentoDraftFromSupabase = async (
-  userId: string
-): Promise<{ contentCleared: boolean; rowDeleted: boolean }> => {
-  let emptyDraftPersisted = false;
-  try {
-    const { error } = await supabase
-      .from("lancamento_drafts")
-      .upsert(
-        { user_id: userId, rows: [], updated_at: new Date().toISOString() },
-        { onConflict: "user_id" },
-      );
-    if (error) {
-      console.error("Erro ao zerar rascunho remoto antes da exclusão:", error);
-    } else {
-      emptyDraftPersisted = true;
-    }
-  } catch (error) {
-    console.error("Falha de conexão ao zerar rascunho remoto:", error);
-  }
-
-  const rowDeleted = await deleteLancamentoDraftFromSupabase(userId);
-  return {
-    contentCleared: emptyDraftPersisted || rowDeleted,
-    rowDeleted,
-  };
-};
+const newLancamentoDraftLineId = (): string => `ROW-${newOperationUuid()}`;
 
 const getTodayIsoDate = (date = new Date()): string => {
   const year = date.getFullYear();
@@ -760,6 +728,65 @@ const normalizeDivergenciaRow = (row: any): Divergencia | null => {
     ...mapDivergenciaRowFromSupabase(row),
     status,
   } as Divergencia;
+};
+
+/**
+ * Batch launch must calculate from an authoritative, bounded Supabase read.
+ * Unlike dashboard loaders, these functions never fall back to offline snapshots
+ * or a cached in-flight Promise: the batch must not mutate stock from a stale cache.
+ */
+const loadFreshSlotsForBatch = async (): Promise<WarehouseSlot[]> => {
+  const rows: WarehouseSlot[] = [];
+  let from = 0;
+  let complete = false;
+
+  for (let page = 0; page < MAX_READ_PAGES; page += 1) {
+    const { data, error } = await supabase
+      .from("slots")
+      .select("id,estoque,modulo,posicao,referencia,descricao,saldo,dataChacote,ultimaData,ultimaHora,ultimoResponsavel,galpao,restricao,observacao")
+      .order("id", { ascending: true })
+      .range(from, from + HISTORY_PAGE_SIZE - 1);
+    if (error) throw new Error(`Falha ao atualizar o estoque para o lote: ${error.message}`);
+    if (!Array.isArray(data)) throw new Error("O Supabase não confirmou a leitura completa do estoque para o lote.");
+    rows.push(...data as WarehouseSlot[]);
+    if (data.length < HISTORY_PAGE_SIZE) {
+      complete = true;
+      break;
+    }
+    from += HISTORY_PAGE_SIZE;
+  }
+
+  if (!complete) throw new Error(`A leitura do estoque atingiu o limite defensivo de ${MAX_READ_PAGES} páginas; o lote foi cancelado.`);
+  return rows;
+};
+
+const loadFreshDivergenciasForBatch = async (): Promise<Divergencia[]> => {
+  const rawRows: unknown[] = [];
+  let from = 0;
+  let complete = false;
+
+  for (let page = 0; page < MAX_READ_PAGES; page += 1) {
+    const { data, error } = await supabase
+      .from("divergencias")
+      .select("*")
+      .order("id", { ascending: true })
+      .range(from, from + HISTORY_PAGE_SIZE - 1);
+    if (error) throw new Error(`Falha ao atualizar as divergências para o lote: ${error.message}`);
+    if (!Array.isArray(data)) throw new Error("O Supabase não confirmou a leitura completa das divergências para o lote.");
+    rawRows.push(...data);
+    if (data.length < HISTORY_PAGE_SIZE) {
+      complete = true;
+      break;
+    }
+    from += HISTORY_PAGE_SIZE;
+  }
+
+  if (!complete) throw new Error(`A leitura das divergências atingiu o limite defensivo de ${MAX_READ_PAGES} páginas; o lote foi cancelado.`);
+  const normalized = rawRows.map(normalizeDivergenciaRow);
+  if (normalized.some(row => row === null)) {
+    throw new Error("Há divergências com status inválido no banco. O lote foi interrompido para não processar com um snapshot incompleto.");
+  }
+  return normalized as Divergencia[];
 };
 
 const loadDivergenciasFromSupabase = (): Promise<Divergencia[]> => {
@@ -2108,8 +2135,22 @@ const deleteProduct = async (
     newMovements: HistoricoMov[],
     expectedDivergenciasSnapshot: Divergencia[],
     updatedDivergencias: Divergencia[],
-  ): Promise<{ ok: boolean; reason?: string; deletedSlotIds: string[] }> => {
-    const failed = (reason: string) => ({ ok: false, reason, deletedSlotIds: [] as string[] });
+    sharedDraftCommit?: SharedDraftBatchContext,
+  ): Promise<{
+    ok: boolean;
+    reason?: string;
+    code?: string;
+    ambiguous?: boolean;
+    deletedSlotIds: string[];
+    batchResult?: SharedDraftRpcResult;
+  }> => {
+    const failed = (reason: string, code?: string, ambiguous = false) => ({
+      ok: false,
+      reason,
+      code,
+      ambiguous,
+      deletedSlotIds: [] as string[],
+    });
     if (!navigator.onLine) {
       return failed("A operação de estoque exige conexão com o Supabase. Nenhuma gravação foi iniciada.");
     }
@@ -2157,7 +2198,7 @@ const deleteProduct = async (
       }
     }
 
-    if (scopeKeys.size === 0 && newMovements.length === 0) {
+    if (scopeKeys.size === 0 && newMovements.length === 0 && !sharedDraftCommit) {
       return { ok: true, deletedSlotIds: [] };
     }
 
@@ -2178,6 +2219,7 @@ const deleteProduct = async (
       !anySlotStateChanged &&
       newMovements.length === 0 &&
       newDivergencesOnly.length > 0 &&
+      !sharedDraftCommit &&
       !changedExistingDivergence &&
       newDivergencesOnly.every(div => div.status === "Aberta")
     ) {
@@ -2242,9 +2284,44 @@ const deleteProduct = async (
     const finalSlotsInScopes = updatedSlots.filter(slot => scopeKeys.has(scopeKey(slot)));
     const expectedDivergenciasInScopes = expectedDivergenciasSnapshot.filter(div => scopeKeys.has(scopeKey(div)));
 
+    // A few identifiable operational conflicts are already converted by the
+    // batch processor into an explicit divergence. They may be recorded only
+    // when that physical scope has no stock/history mutation; the SQL wrapper
+    // independently checks the underlying condition before bypassing the normal
+    // stock writer for that divergence-only scope.
+    const exceptionDivergenceTypes = new Set([
+      "Módulo Inativo",
+      "ID de Endereço Inconsistente",
+    ]);
+    const exceptionDivergenceScopes = new Set<string>();
+    for (const divergence of newDivergencesOnly) {
+      if (!exceptionDivergenceTypes.has(divergence.tipoDivergencia)) continue;
+      const key = scopeKey(divergence);
+      const hasMovement = newMovements.some(movement => scopeKey(movement) === key);
+      const hasSlotChange = updatedSlots.some(slot => {
+        if (scopeKey(slot) !== key) return false;
+        const expected = expectedSlotsById.get(slot.id);
+        return !expected || JSON.stringify(expected) !== JSON.stringify(slot);
+      }) || expectedSlotsSnapshot.some(slot =>
+        scopeKey(slot) === key && !updatedSlotsById.has(slot.id)
+      );
+      const hasChangedExistingDivergence = updatedDivergencias.some(div => {
+        if (scopeKey(div) !== key) return false;
+        const expected = expectedDivergenciasById.get(div.id);
+        return Boolean(expected && JSON.stringify(expected) !== JSON.stringify(div));
+      });
+      const allNewDivergencesAreExceptions = canRecordDivergenceOnlyScope(
+        newDivergencesOnly.filter(div => scopeKey(div) === key)
+      );
+      if (!hasMovement && !hasSlotChange && !hasChangedExistingDivergence && allNewDivergencesAreExceptions) {
+        exceptionDivergenceScopes.add(key);
+      }
+    }
+
     // Fail closed on malformed IDs/modules in the complete address snapshot,
-    // not just on the row the operator intended to edit.
+    // except for a verified divergence-only scope with no stock mutation.
     for (const slot of [...expectedSlotsInScopes, ...finalSlotsInScopes]) {
+      if (exceptionDivergenceScopes.has(scopeKey(slot))) continue;
       const issue = isCanonicalSlotSnapshot(slot);
       if (issue) return failed(issue);
     }
@@ -2322,10 +2399,12 @@ const deleteProduct = async (
     }
     const validatedMovements = validateHistorySlotLinks(newMovements, allKnownSlotIds);
 
-    const rpcName = deleteSlotIds.length > 0
-      ? "apply_stock_mutation_atomic_with_deletes"
-      : "apply_stock_mutation_atomic";
-    const rpcArgs = deleteSlotIds.length > 0
+    const rpcName = sharedDraftCommit
+      ? "process_shared_lancamento_draft_batch_atomic"
+      : deleteSlotIds.length > 0
+        ? "apply_stock_mutation_atomic_with_deletes"
+        : "apply_stock_mutation_atomic";
+    const stockRpcArgs = deleteSlotIds.length > 0
       ? {
           p_expected_slots: expectedSlotsInScopes,
           p_slots: finalSlotsPayload,
@@ -2341,19 +2420,49 @@ const deleteProduct = async (
           p_divergencias: mapDivergenciasForSupabase(finalDivergenciasInScopes),
           p_history: mapHistoryRowsForSupabase(validatedMovements),
         };
+    const rpcArgs = sharedDraftCommit
+      ? {
+          p_batch_id: sharedDraftCommit.batchId,
+          p_generation_id: sharedDraftCommit.generationId,
+          p_expected_revision: sharedDraftCommit.expectedRevision,
+          p_input_rows: sharedDraftCommit.inputRows,
+          p_result_summary: sharedDraftCommit.resultSummary,
+          ...stockRpcArgs,
+          p_delete_slot_ids: deleteSlotIds,
+        }
+      : stockRpcArgs;
 
-    // This is a write request; deliberately do not auto-retry on a network error.
-    const { data, error } = await supabase.rpc(rpcName, rpcArgs as never);
+    // Never automatically repeat a stock mutation. If the response is lost,
+    // the batch id is queried once; it is safe to resume only with that same id.
+    const response = await supabase.rpc(rpcName as never, rpcArgs as never);
+    let data = response.data as SharedDraftRpcResult | null;
+    let error = response.error;
+    if (sharedDraftCommit && error) {
+      const probe = await supabase.rpc("get_shared_lancamento_batch_result" as never, {
+        p_batch_id: sharedDraftCommit.batchId,
+      } as never);
+      const probeData = probe.data as SharedDraftRpcResult | null;
+      if (!probe.error && probeData?.success === true) {
+        data = probeData;
+        error = null;
+      }
+    }
+
     if (error || data?.success !== true) {
-      const reason = data?.message || data?.code || error?.message || "A transação não foi confirmada pelo Supabase.";
+      const code = String(data?.code ?? error?.code ?? "SEM_CONFIRMACAO");
+      const reason = String(data?.message ?? data?.code ?? error?.message ?? "A transação não foi confirmada pelo Supabase.");
       console.error("Transação de estoque revertida/sem confirmação:", {
         rpc: rpcName,
-        code: data?.code ?? error?.code,
+        code,
         message: reason,
       });
       return failed(
-        `O Supabase não confirmou a transação atômica (${data?.code || error?.code || "SEM_CONFIRMACAO"}). ` +
-        `${reason} Não repita automaticamente: atualize o endereço e confira o histórico antes de tentar novamente.`
+        `O Supabase não confirmou a transação atômica (${code}). ${reason} ` +
+        (sharedDraftCommit && error
+          ? "O resultado ainda é incerto. O identificador do lote foi preservado para consulta; não inicie outro lote."
+          : "Não repita automaticamente: atualize os dados antes de tentar novamente."),
+        code,
+        Boolean(sharedDraftCommit && error),
       );
     }
 
@@ -2388,7 +2497,7 @@ const deleteProduct = async (
       return [...inSelectedPeriod, ...previous.filter(movement => !selectedIds.has(movement.id))];
     });
 
-    return { ok: true, deletedSlotIds: deleteSlotIds };
+    return { ok: true, deletedSlotIds: deleteSlotIds, batchResult: sharedDraftCommit ? data : undefined };
   };
 
   /**
@@ -2838,211 +2947,372 @@ const deleteProduct = async (
     (p) => p.referencia.toUpperCase() === unitSku.trim().toUpperCase()
   );
 
-  // --- LANÇAMENTO (TABULAR BATCH LEDGER) ---
-  // Bloqueio síncrono evita duplo clique antes do próximo render do React.
+  // --- LANÇAMENTO EM LOTE: RASCUNHO COMPARTILHADO NO SUPABASE ---
   const batchLaunchInFlightRef = useRef(false);
+  const batchLaunchRequestedRef = useRef(false);
   const [batchLaunchLoading, setBatchLaunchLoading] = useState(false);
-  // Invalida timers antigos quando o rascunho é limpo. Assim, um timer que já
-  // estava agendado não pode gravar novamente os dados recém-lançados.
-  const lancamentoDraftRevisionRef = useRef(0);
+  const [batchPendingRecovery, setBatchPendingRecovery] = useState(false);
+  const [lancamentoRows, setLancamentoRowsState] = useState<LancamentoRow[]>([]);
+  const lancamentoRowsRef = useRef<LancamentoRow[]>([]);
+  const setLancamentoRows = (action: Parameters<typeof setLancamentoRowsState>[0]) => {
+    const nextRows = typeof action === "function"
+      ? action(lancamentoRowsRef.current)
+      : action;
+    lancamentoRowsRef.current = nextRows;
+    setLancamentoRowsState(nextRows);
+  };
 
-  const [lancamentoRows, setLancamentoRows] = useState<LancamentoRow[]>(() => {
-    try {
-      const saved = localStorage.getItem(LANCAMENTO_DRAFT_LOCAL_KEY);
-      if (!saved) return [];
-      const parsed = JSON.parse(saved);
-      return Array.isArray(parsed) ? parsed : [];
-    } catch (error) {
-      console.error("Erro ao recuperar rascunho de lançamento:", error);
-      return [];
-    }
-  });
   const [lancamentoDraftReady, setLancamentoDraftReady] = useState(false);
-
-  // Rascunho local: protege o preenchimento contra F5/atualização da página.
+  const [sharedDraftSyncStatus, setSharedDraftSyncStatus] = useState<
+    "loading" | "synced" | "saving" | "conflict" | "error"
+  >("loading");
+  const [sharedDraftSyncMessage, setSharedDraftSyncMessage] = useState("");
+  const [legacyDraftQuarantineCount, setLegacyDraftQuarantineCount] = useState(0);
   useEffect(() => {
-    const revision = lancamentoDraftRevisionRef.current;
-    const rowsSnapshot = lancamentoRows;
-    const timeout = window.setTimeout(() => {
-      // Um timer da versão anterior não pode regravar dados depois de limpar.
-      if (revision !== lancamentoDraftRevisionRef.current) return;
-      try {
-        if (rowsSnapshot.length > 0) {
-          localStorage.setItem(LANCAMENTO_DRAFT_LOCAL_KEY, JSON.stringify(rowsSnapshot));
-        } else {
-          localStorage.removeItem(LANCAMENTO_DRAFT_LOCAL_KEY);
+    setBatchPendingRecovery(hasUnresolvedBatchMarker());
+  }, []);
+  const sharedDraftMetaRef = useRef<SharedDraftMeta>({ generationId: null, revision: 0 });
+  const baselineDraftLinesRef = useRef<SharedLancamentoDraftLine[]>([]);
+  const draftSyncBlockedRef = useRef<string | null>(null);
+  const activeAuthUserIdRef = useRef<string | null>(authUserId);
+  activeAuthUserIdRef.current = authUserId;
+  const draftAutosaveTimerRef = useRef<number | null>(null);
+
+  const applySharedDraftSnapshot = (snapshot: SharedLancamentoDraftSnapshot) => {
+    baselineDraftLinesRef.current = snapshot.lines;
+    sharedDraftMetaRef.current = {
+      generationId: snapshot.generation_id,
+      revision: snapshot.revision,
+    };
+    draftSyncBlockedRef.current = null;
+    setLancamentoRows(snapshot.lines.map(line => line.row_data));
+    setLancamentoDraftReady(true);
+    setSharedDraftSyncStatus("synced");
+    setSharedDraftSyncMessage(`${snapshot.lines.length} linha(s) no rascunho compartilhado.`);
+  };
+
+  const markDraftSyncBlocked = (error: unknown) => {
+    const message = error instanceof Error ? error.message : String(error);
+    draftSyncBlockedRef.current = message;
+    setSharedDraftSyncStatus(isSharedDraftConflict(error) ? "conflict" : "error");
+    setSharedDraftSyncMessage(
+      isSharedDraftConflict(error)
+        ? "Conflito de edição detectado. Sincronize antes de continuar."
+        : "Falha de sincronização. Os dados locais foram preservados; sincronize antes de continuar."
+    );
+  };
+
+  const syncSharedDraftChanges = async (): Promise<boolean> => {
+    if (!activeAuthUserIdRef.current || !lancamentoDraftReady) return false;
+    if (batchLaunchInFlightRef.current) return false;
+    if (draftSyncBlockedRef.current) return false;
+
+    const generationId = sharedDraftMetaRef.current.generationId;
+    if (!generationId) {
+      markDraftSyncBlocked(new Error("O rascunho compartilhado ainda não tem uma geração confirmada."));
+      return false;
+    }
+
+    let plan;
+    try {
+      plan = buildSharedDraftSyncPlan(
+        lancamentoRowsRef.current,
+        baselineDraftLinesRef.current,
+      );
+    } catch (error) {
+      markDraftSyncBlocked(error);
+      return false;
+    }
+
+    if (plan.upserts.length === 0 && plan.deletes.length === 0) return true;
+    setSharedDraftSyncStatus("saving");
+    setSharedDraftSyncMessage("Salvando alterações no rascunho compartilhado…");
+
+    try {
+      if (plan.upserts.length > 0) {
+        const result = await invokeSharedDraftRpc("upsert_shared_lancamento_draft_lines", {
+          p_generation_id: generationId,
+          p_lines: plan.upserts,
+        });
+        const savedGenerationId = String(result.generation_id ?? generationId);
+        if (savedGenerationId !== generationId) {
+          // A new line was saved just after another computer completed the
+          // previous batch. The RPC moved only brand-new rows into the next
+          // generation; refresh the whole snapshot so processed rows do not
+          // reappear locally and don't apply deletes based on the old generation.
+          const latestSnapshot = await loadSharedLancamentoDraftFromSupabase();
+          applySharedDraftSnapshot(latestSnapshot);
+          return true;
         }
-      } catch (error) {
-        console.error("Erro ao salvar rascunho local de lançamento:", error);
+        const returnedLines = Array.isArray(result.line_revisions)
+          ? result.line_revisions as Array<Record<string, unknown>>
+          : [];
+        const returnedById = new Map<string, SharedLancamentoDraftLine>();
+        for (const item of returnedLines) {
+          const lineId = String(item.line_id ?? "");
+          const lineRevision = Number(item.line_revision);
+          const sequence = Number(item.sequence);
+          if (!lineId || !Number.isSafeInteger(lineRevision) || lineRevision < 1 ||
+              !Number.isSafeInteger(sequence) || sequence < 1) {
+            throw new Error("A confirmação do Supabase não trouxe a versão de todas as linhas salvas.");
+          }
+          returnedById.set(lineId, {
+            line_id: lineId,
+            row_data: normalizeLancamentoDraftRow(item.row_data),
+            line_revision: lineRevision,
+            sequence,
+          });
+        }
+        if (plan.upserts.some(item => !returnedById.has(item.line_id))) {
+          throw new Error("A confirmação do Supabase ficou incompleta; o rascunho precisa ser sincronizado novamente.");
+        }
+
+        const baselineById = new Map<string, SharedLancamentoDraftLine>(baselineDraftLinesRef.current.map(line => [line.line_id, line]));
+        returnedById.forEach((line, lineId) => baselineById.set(lineId, line));
+        baselineDraftLinesRef.current = Array.from(baselineById.values()).sort((a, b) => a.sequence - b.sequence);
+        sharedDraftMetaRef.current.revision = Number(result.revision);
       }
-    }, 150);
 
-    return () => window.clearTimeout(timeout);
-  }, [lancamentoRows]);
+      for (const item of plan.deletes) {
+        let result: SharedDraftRpcResult;
+        try {
+          result = await invokeSharedDraftRpc("delete_shared_lancamento_draft_line", {
+            p_generation_id: generationId,
+            p_line_id: item.line_id,
+            p_expected_line_revision: item.expected_line_revision,
+          });
+        } catch (error) {
+          if (/DRAFT_GENERATION_CONFLICT/i.test(String((error as { code?: string; message?: string } | null)?.code ?? (error as Error)?.message ?? ""))) {
+            // The old generation was already processed/cleared elsewhere. Its
+            // rows are no longer pending, so synchronize instead of trying to
+            // delete historical lines or accidentally restoring old data.
+            const latestSnapshot = await loadSharedLancamentoDraftFromSupabase();
+            applySharedDraftSnapshot(latestSnapshot);
+            return true;
+          }
+          throw error;
+        }
+        baselineDraftLinesRef.current = baselineDraftLinesRef.current.filter(line => line.line_id !== item.line_id);
+        sharedDraftMetaRef.current.revision = Number(result.revision);
+      }
 
-  // O Supabase mantém o rascunho compartilhado por usuário. Um marcador local
-  // pendente impede restaurar um rascunho antigo se a exclusão remota falhou.
+      setSharedDraftSyncStatus("synced");
+      setSharedDraftSyncMessage("Alterações desta tela confirmadas. Use Sincronizar para buscar novas linhas de outros computadores.");
+      return true;
+    } catch (error) {
+      const errorCode = String((error as { code?: string; message?: string } | null)?.code ?? (error as Error)?.message ?? "");
+      const staleLineConflict = /DRAFT_(?:GENERATION|LINE)_CONFLICT|DRAFT_LINE_MISSING/i.test(errorCode);
+      const hasOldLineChanges = plan.upserts.some(item => item.expected_line_revision !== null) || plan.deletes.length > 0;
+      if (staleLineConflict && hasOldLineChanges) {
+        // A batch/clear or another operator changed a line before this write.
+        // Never resurrect or silently discard that old-line edit. Preserve the
+        // local screen for recovery, save only genuinely new lines into the
+        // current generation, and require a deliberate second click to process.
+        if (!preserveLocalDraftForRecovery()) {
+          markDraftSyncBlocked(new Error("Houve um conflito de edição e não foi possível preservar a cópia local. Nenhum novo dado foi aplicado."));
+          return false;
+        }
+        try {
+          const latest = await loadSharedLancamentoDraftFromSupabase();
+          const newlyAddedLines = plan.upserts.filter(item => item.expected_line_revision === null);
+          if (newlyAddedLines.length > 0) {
+            await invokeSharedDraftRpc("upsert_shared_lancamento_draft_lines", {
+              p_generation_id: latest.generation_id,
+              p_lines: newlyAddedLines,
+            });
+          }
+          const refreshed = await loadSharedLancamentoDraftFromSupabase();
+          applySharedDraftSnapshot(refreshed);
+          setSharedDraftSyncStatus("conflict");
+          setSharedDraftSyncMessage(
+            newlyAddedLines.length > 0
+              ? "Outro computador alterou ou encerrou linhas durante a edição. As novas linhas foram salvas no rascunho compartilhado; alterações/exclusões das linhas antigas estão preservadas numa cópia de recuperação neste computador. Confira antes de lançar novamente."
+              : "Outro computador alterou ou encerrou linhas durante a edição. As alterações locais estão preservadas numa cópia de recuperação; o rascunho compartilhado foi atualizado sem restaurar linhas antigas. Confira antes de continuar."
+          );
+        } catch (recoveryError) {
+          markDraftSyncBlocked(recoveryError);
+        }
+        return false;
+      }
+      markDraftSyncBlocked(error);
+      console.error("Falha ao sincronizar linhas do rascunho compartilhado:", error);
+      return false;
+    }
+  };
+
+  const flushSharedDraftChanges = async (): Promise<boolean> => {
+    if (draftAutosaveTimerRef.current !== null) {
+      window.clearTimeout(draftAutosaveTimerRef.current);
+      draftAutosaveTimerRef.current = null;
+    }
+    if (draftSyncBlockedRef.current) return false;
+    return enqueueLancamentoDraftWrite(() => syncSharedDraftChanges());
+  };
+
+  // The former global localStorage cache is quarantined, never imported into the shared draft.
+  // This preserves an old local-only copy for manual recovery without allowing resurrection.
+  useEffect(() => {
+    try {
+      const legacy = localStorage.getItem(LANCAMENTO_DRAFT_LOCAL_KEY);
+      if (!legacy) return;
+      let rowsCount = 0;
+      try {
+        const parsed = JSON.parse(legacy);
+        rowsCount = Array.isArray(parsed) ? parsed.length : 0;
+      } catch {
+        rowsCount = 1;
+      }
+      if (rowsCount > 0) {
+        const quarantineKey = localStorage.getItem(LANCAMENTO_DRAFT_LEGACY_QUARANTINE_KEY)
+          ? `${LANCAMENTO_DRAFT_LEGACY_QUARANTINE_KEY}:${Date.now()}`
+          : LANCAMENTO_DRAFT_LEGACY_QUARANTINE_KEY;
+        localStorage.setItem(quarantineKey, legacy);
+        setLegacyDraftQuarantineCount(rowsCount);
+      }
+      localStorage.removeItem(LANCAMENTO_DRAFT_LOCAL_KEY);
+    } catch (error) {
+      console.warn("Não foi possível colocar o cache legado de rascunho em quarentena local:", error);
+    }
+  }, []);
+
   useEffect(() => {
     let cancelled = false;
-    const revisionAtHydrationStart = lancamentoDraftRevisionRef.current;
-
     if (!authUserId) {
       setLancamentoDraftReady(false);
-      return () => {
-        cancelled = true;
-      };
+      setSharedDraftSyncStatus("loading");
+      setSharedDraftSyncMessage("Entre no sistema para carregar o rascunho compartilhado.");
+      baselineDraftLinesRef.current = [];
+      sharedDraftMetaRef.current = { generationId: null, revision: 0 };
+      draftSyncBlockedRef.current = null;
+      setLancamentoRows([]);
+      return () => { cancelled = true; };
     }
 
     setLancamentoDraftReady(false);
+    setSharedDraftSyncStatus("loading");
+    setSharedDraftSyncMessage("Carregando rascunho compartilhado do Supabase…");
+    setLancamentoRows([]);
+    baselineDraftLinesRef.current = [];
+    sharedDraftMetaRef.current = { generationId: null, revision: 0 };
+    draftSyncBlockedRef.current = null;
 
-    const hydrateDraft = async () => {
-      const markerKey = getLancamentoDraftClearMarkerKey(authUserId);
-      let pendingClearMarker: string | null = null;
-      try {
-        pendingClearMarker = localStorage.getItem(markerKey);
-      } catch (error) {
-        console.warn("Não foi possível consultar o marcador de limpeza do rascunho:", error);
-      }
-
-      if (pendingClearMarker !== null) {
-        // A exclusão anterior não foi confirmada. Invalide qualquer timer local
-        // pendente, nunca restaure as linhas antigas e tente excluir uma vez.
-        lancamentoDraftRevisionRef.current += 1;
-        try {
-          localStorage.removeItem(LANCAMENTO_DRAFT_LOCAL_KEY);
-        } catch (error) {
-          console.warn("Não foi possível limpar o rascunho local antigo:", error);
-        }
-        setLancamentoRows([]);
-        const clearResult = await enqueueLancamentoDraftWrite(() =>
-          clearLancamentoDraftFromSupabase(authUserId)
-        );
-        if (clearResult.rowDeleted) {
-          try {
-            if (localStorage.getItem(markerKey) === pendingClearMarker) {
-              localStorage.removeItem(markerKey);
-            }
-          } catch (error) {
-            console.warn("Não foi possível remover o marcador de limpeza:", error);
-          }
-        }
-        if (!cancelled) {
-          setLancamentoRows([]);
-          setLancamentoDraftReady(true);
-        }
-        return;
-      }
-
-      const remoteRows = await loadLancamentoDraftFromSupabase(authUserId);
+    void loadSharedLancamentoDraftFromSupabase().then(snapshot => {
       if (cancelled) return;
-      if (revisionAtHydrationStart !== lancamentoDraftRevisionRef.current) {
-        setLancamentoDraftReady(true);
-        return;
-      }
+      applySharedDraftSnapshot(snapshot);
+    }).catch(error => {
+      if (cancelled) return;
+      setLancamentoDraftReady(false);
+      setSharedDraftSyncStatus("error");
+      setSharedDraftSyncMessage("Não foi possível carregar o rascunho do banco. Não foi usado cache local antigo.");
+      console.error("Falha ao hidratar rascunho compartilhado:", error);
+    });
 
-      if (remoteRows === null) {
-        // Falha de leitura não apaga o rascunho local existente.
-        setLancamentoDraftReady(true);
-        return;
-      }
-
-      if (remoteRows.length > 0) {
-        setLancamentoRows(remoteRows);
-      } else if (lancamentoRows.length === 0) {
-        setLancamentoRows([]);
-        try {
-          localStorage.removeItem(LANCAMENTO_DRAFT_LOCAL_KEY);
-        } catch (error) {
-          console.warn("Não foi possível limpar o rascunho local vazio:", error);
-        }
-      }
-      // Se houver apenas rascunho local, o efeito de sincronização abaixo o
-      // migra após a hidratação estar marcada como pronta.
-      if (!cancelled) setLancamentoDraftReady(true);
-    };
-
-    void hydrateDraft();
-
-    return () => {
-      cancelled = true;
-    };
+    return () => { cancelled = true; };
   }, [authUserId]);
 
   useEffect(() => {
-    if (!authUserId || !lancamentoDraftReady || lancamentoRows.length === 0) return;
-
-    const revision = lancamentoDraftRevisionRef.current;
-    const rowsSnapshot = lancamentoRows;
-    const markerKey = getLancamentoDraftClearMarkerKey(authUserId);
-    const timeout = window.setTimeout(() => {
-      if (revision !== lancamentoDraftRevisionRef.current) return;
-      void enqueueLancamentoDraftWrite(async () => {
-        // A operação também revalida após esperar na fila: uma exclusão que
-        // entrou na fila primeiro invalida qualquer upsert antigo pendente.
-        if (revision !== lancamentoDraftRevisionRef.current) return true;
-        const saved = await saveLancamentoDraftToSupabase(authUserId, rowsSnapshot);
-        if (saved && revision === lancamentoDraftRevisionRef.current) {
-          try {
-            localStorage.removeItem(markerKey);
-          } catch (error) {
-            console.warn("Não foi possível remover o marcador do rascunho:", error);
-          }
-        }
-        return saved;
-      });
-    }, 500);
-
-    return () => window.clearTimeout(timeout);
-  }, [authUserId, lancamentoDraftReady, lancamentoRows]);
-
-  const clearLancamentoDraftAndPersist = async (
-    userId: string | null
-  ): Promise<{ contentCleared: boolean; rowDeleted: boolean }> => {
-    const revision = ++lancamentoDraftRevisionRef.current;
-    const markerKey = userId ? getLancamentoDraftClearMarkerKey(userId) : null;
-    const markerToken = `${Date.now()}-${revision}`;
-
-    // Limpa a tela e o cache local imediatamente, sem aguardar o debounce.
-    try {
-      localStorage.removeItem(LANCAMENTO_DRAFT_LOCAL_KEY);
-      if (markerKey) localStorage.setItem(markerKey, markerToken);
-    } catch (error) {
-      console.error("Não foi possível registrar a limpeza local do rascunho:", error);
+    if (!authUserId || !lancamentoDraftReady || batchLaunchLoading || batchLaunchInFlightRef.current ||
+        hasUnresolvedBatchMarker() || draftSyncBlockedRef.current || !sharedDraftMetaRef.current.generationId) {
+      return;
     }
-    setLancamentoRows([]);
-    setLancamentoDraftReady(true);
+    if (draftAutosaveTimerRef.current !== null) window.clearTimeout(draftAutosaveTimerRef.current);
+    draftAutosaveTimerRef.current = window.setTimeout(() => {
+      draftAutosaveTimerRef.current = null;
+      void enqueueLancamentoDraftWrite(() => syncSharedDraftChanges());
+    }, 450);
 
-    if (!userId || !markerKey) {
-      return { contentCleared: true, rowDeleted: true };
-    }
-
-    // A limpeza entra na mesma fila que os upserts: qualquer salvamento antigo
-    // termina antes; o upsert vazio protege o conteúdo remoto se o DELETE falhar.
-    const clearResult = await enqueueLancamentoDraftWrite(() =>
-      clearLancamentoDraftFromSupabase(userId)
-    );
-    if (clearResult.rowDeleted) {
-      try {
-        if (localStorage.getItem(markerKey) === markerToken) {
-          localStorage.removeItem(markerKey);
-        }
-      } catch (error) {
-        console.warn("Não foi possível remover o marcador de limpeza do rascunho:", error);
+    return () => {
+      if (draftAutosaveTimerRef.current !== null) {
+        window.clearTimeout(draftAutosaveTimerRef.current);
+        draftAutosaveTimerRef.current = null;
       }
+    };
+  }, [authUserId, lancamentoDraftReady, lancamentoRows, batchLaunchLoading, batchPendingRecovery]);
+
+  const preserveLocalDraftForRecovery = (): boolean => {
+    try {
+      const key = `eb_lancamento_draft_conflict_quarantine_v1:${Date.now()}`;
+      localStorage.setItem(key, JSON.stringify(lancamentoRowsRef.current));
+      return true;
+    } catch (error) {
+      console.error("Não foi possível preservar o rascunho local em quarentena:", error);
+      return false;
     }
-    return clearResult;
+  };
+
+  const preserveBeforeReplacingLocalDraft = async (): Promise<boolean> => {
+    if (!draftSyncBlockedRef.current) {
+      const flushed = await flushSharedDraftChanges();
+      if (flushed) return true;
+    }
+    return preserveLocalDraftForRecovery();
+  };
+
+  const handleSynchronizeSharedDraft = async () => {
+    if (!authUserId || batchLaunchRequestedRef.current || batchLaunchInFlightRef.current || hasUnresolvedBatchMarker()) return;
+    if (draftSyncBlockedRef.current) {
+      const confirmed = confirm(
+        "Existe uma alteração local que não foi confirmada pelo banco. Antes de atualizar a tela, o conteúdo local será preservado em uma cópia de recuperação neste computador. Deseja carregar a versão compartilhada do Supabase?"
+      );
+      if (!confirmed) return;
+      if (!preserveLocalDraftForRecovery()) {
+        alert("Não foi possível preservar a cópia local. A sincronização foi cancelada para evitar perda de dados.");
+        return;
+      }
+    } else if (lancamentoDraftReady) {
+      const flushed = await flushSharedDraftChanges();
+      if (!flushed) {
+        alert("Há alterações que ainda não foram confirmadas. Os dados locais foram preservados; resolva o conflito ou sincronize antes de continuar.");
+        return;
+      }
+    } else if (lancamentoRowsRef.current.length > 0) {
+      const confirmed = confirm("A versão compartilhada ainda não foi confirmada. Antes de recarregar, salvar uma cópia local de recuperação?");
+      if (!confirmed || !preserveLocalDraftForRecovery()) return;
+    }
+
+    try {
+      setSharedDraftSyncStatus("loading");
+      const snapshot = await loadSharedLancamentoDraftFromSupabase();
+      applySharedDraftSnapshot(snapshot);
+    } catch (error) {
+      setSharedDraftSyncStatus("error");
+      setSharedDraftSyncMessage("Não foi possível atualizar o rascunho compartilhado.");
+      alert(error instanceof Error ? error.message : "Falha ao sincronizar o rascunho compartilhado.");
+    }
   };
 
   const clearLancamentoDraft = async () => {
-    if (lancamentoRows.length === 0) return;
-    if (!confirm("Limpar o rascunho atual do lançamento? Os dados ainda não lançados serão perdidos.")) {
+    if (!lancamentoDraftReady || !authUserId || batchLaunchRequestedRef.current || batchLaunchInFlightRef.current || hasUnresolvedBatchMarker()) return;
+    const confirmed = confirm(
+      "Limpar o rascunho compartilhado de lançamento? Isso descartará TODAS as linhas pendentes de todos os computadores, não apenas as linhas abertas nesta tela. Os registros já processados serão preservados no histórico."
+    );
+    if (!confirmed) return;
+
+    const flushed = await flushSharedDraftChanges();
+    if (!flushed) {
+      alert("Não foi possível confirmar todas as alterações antes da limpeza. Sincronize o rascunho e tente novamente.");
       return;
     }
-    const clearResult = await clearLancamentoDraftAndPersist(authUserId);
-    if (!clearResult.rowDeleted) {
-      alert(clearResult.contentCleared
-        ? "O conteúdo do rascunho foi zerado no Supabase, então as linhas antigas não serão restauradas. A exclusão física ficou pendente e será tentada novamente no próximo login neste navegador."
-        : "O rascunho foi limpo desta tela, mas o Supabase não confirmou nem a limpeza remota nem a exclusão. Neste navegador, a restauração será bloqueada e a limpeza tentada novamente no próximo login. Se acessar por outro dispositivo, confira o rascunho antes de usar.");
+    const meta = sharedDraftMetaRef.current;
+    if (!meta.generationId) return;
+
+    try {
+      const result = await invokeSharedDraftRpc("clear_shared_lancamento_draft", {
+        p_generation_id: meta.generationId,
+        p_expected_revision: meta.revision,
+      });
+      // Load the next snapshot, not a hard-coded empty array: another operator
+      // may already have started entering the next generation after the clear.
+      const snapshot = await loadSharedLancamentoDraftFromSupabase();
+      applySharedDraftSnapshot(snapshot);
+      setSharedDraftSyncMessage(`Rascunho limpo. ${Number(result.archived_count ?? 0)} linha(s) preservadas no arquivo de descarte.`);
+    } catch (error) {
+      markDraftSyncBlocked(error);
+      alert(
+        isSharedDraftConflict(error)
+          ? "O rascunho foi alterado em outro computador durante a limpeza. Nada foi descartado; sincronize e confirme a limpeza novamente."
+          : (error instanceof Error ? error.message : "Não foi possível limpar o rascunho compartilhado.")
+      );
     }
   };
 
@@ -3067,7 +3337,8 @@ const lancamentoInputRefs = useRef<Record<string, HTMLInputElement | null>>({});
   const responsavelInputRefs = useRef<Record<string, HTMLInputElement | null>>({});
 
   const addLancamentoRow = () => {
-    const rowId = `ROW-${generateId()}`;
+    if (batchLaunchRequestedRef.current || hasUnresolvedBatchMarker()) return "";
+    const rowId = newLancamentoDraftLineId();
     const defaultRow: LancamentoRow = {
       id: rowId,
       data: "",
@@ -3144,14 +3415,14 @@ const lancamentoInputRefs = useRef<Record<string, HTMLInputElement | null>>({});
   };
   
   const removeLancamentoRow = (id: string) => {
-    if (lancamentoRows.length === 1) {
-      void clearLancamentoDraftAndPersist(authUserId);
-      return;
-    }
-    setLancamentoRows(lancamentoRows.filter(r => r.id !== id));
+    if (batchLaunchRequestedRef.current || hasUnresolvedBatchMarker()) return;
+    // Remove only this line. Deleting the last visible line must never clear
+    // the shared draft or remove rows that another computer has added.
+    setLancamentoRows(lancamentoRowsRef.current.filter(row => row.id !== id));
   };
 
   const updateRowField = (id: string, field: keyof LancamentoRow, value: any) => {
+    if (batchLaunchRequestedRef.current || hasUnresolvedBatchMarker()) return;
     setLancamentoRows(prev => prev.map(row => {
       if (row.id !== id) return row;
 
@@ -3341,121 +3612,413 @@ if (
     }
   };
 
-  // Executing batch launches with Travas (blocking validators)
+  // Process all lines from the current shared draft. The draft snapshot is loaded
+  // again before processing, and the database closes it atomically with stock writes.
   const handleLancarLote = async () => {
-    if (!lancamentoDraftReady) {
-      alert("Aguarde a recuperação do rascunho antes de lançar o lote.");
+    if (!authUserId || !lancamentoDraftReady) {
+      alert("O rascunho compartilhado ainda não foi carregado. Sincronize antes de lançar.");
       return;
     }
-    // Perform validators for each active field. Operational conflicts such as
-    // occupied positions and restriction mismatches are handled by the
-    // sequential processor as divergences, so they must not abort the batch.
-    const activeData = lancamentoRows.filter(r => r.referencia.trim() !== "");
-    if (activeData.length === 0) {
-      alert("Por favor, preencha pelo menos um lançamento contendo código SKU válido.");
-      return;
-    }
-    if (batchLaunchInFlightRef.current) return;
-    batchLaunchInFlightRef.current = true;
+    if (batchLaunchRequestedRef.current || batchLaunchInFlightRef.current) return;
+
+    batchLaunchRequestedRef.current = true;
     setBatchLaunchLoading(true);
+    let keepPendingBatchMarker = false;
 
     try {
-      // Capture only structural/input errors here. Physical conflicts are
-      // business events and are intentionally delegated to
-      // processLancamentosInSequence().
-      let allErrors: string[] = [];
-      activeData.forEach((row, index) => {
-        const rowErrors = validateLancamentoRow(
-          row,
-          index + 1,
+      let pendingBatch: { batchId: string; generationId: string; revision: number } | null = null;
+      try {
+        const pendingRaw = localStorage.getItem(LANCAMENTO_BATCH_PENDING_KEY);
+        if (pendingRaw) {
+          const parsed = JSON.parse(pendingRaw) as Record<string, unknown>;
+          if (
+            typeof parsed.batchId === "string" &&
+            typeof parsed.generationId === "string" &&
+            Number.isSafeInteger(Number(parsed.revision))
+          ) {
+            pendingBatch = {
+              batchId: parsed.batchId,
+              generationId: parsed.generationId,
+              revision: Number(parsed.revision),
+            };
+          } else {
+            alert("Foi encontrado um marcador de lote incompleto neste navegador. Não iniciarei outro lote automaticamente; sincronize o rascunho e confira o histórico.");
+            return;
+          }
+        }
+      } catch (error) {
+        console.error("Não foi possível consultar o marcador de lote pendente:", error);
+        alert("Não foi possível verificar o identificador do lote anterior. Nenhum novo lote foi iniciado.");
+        return;
+      }
+
+      // A previous request may have committed while its network response was lost.
+      // The status RPC serializes with in-flight batches on the database control row.
+      let draftSnapshotForPending: SharedLancamentoDraftSnapshot | null = null;
+      if (pendingBatch) {
+        const probe = await supabase.rpc("get_shared_lancamento_batch_result" as never, {
+          p_batch_id: pendingBatch.batchId,
+        } as never);
+        const probeData = probe.data as SharedDraftRpcResult | null;
+        if (probe.error) {
+          alert("Não foi possível confirmar se o lote anterior foi processado. Não repita o lançamento. Tente sincronizar e consultar novamente.");
+          keepPendingBatchMarker = true;
+          return;
+        }
+        if (probeData?.success === true) {
+          // The old batch is confirmed. Preserve or synchronize any edits made
+          // after the ambiguous response before replacing this screen with the
+          // newly active generation.
+          const preservedOrSynced = await preserveBeforeReplacingLocalDraft();
+          if (!preservedOrSynced) {
+            alert("O lote anterior já foi confirmado, mas não foi possível sincronizar nem preservar as alterações locais. A tela não será sobrescrita.");
+            keepPendingBatchMarker = true;
+            return;
+          }
+          localStorage.removeItem(LANCAMENTO_BATCH_PENDING_KEY);
+          setBatchPendingRecovery(false);
+          const snapshot = await loadSharedLancamentoDraftFromSupabase();
+          applySharedDraftSnapshot(snapshot);
+          alert("O lote anterior já foi confirmado pelo banco. Nenhuma movimentação foi repetida. O rascunho compartilhado atual foi sincronizado.");
+          return;
+        }
+        if (probeData?.code !== "BATCH_NOT_FOUND") {
+          alert("O banco não conseguiu confirmar o estado do lote anterior. Não iniciarei um novo processamento.");
+          keepPendingBatchMarker = true;
+          return;
+        }
+
+        // The status RPC waited for the prior transaction and confirmed there is
+        // no committed batch record with this ID. Read the generation, but do not
+        // apply it yet: the current screen may contain new unsaved local edits.
+        draftSnapshotForPending = await loadSharedLancamentoDraftFromSupabase();
+        if (draftSnapshotForPending.generation_id !== pendingBatch.generationId) {
+          const preservedOrSynced = await preserveBeforeReplacingLocalDraft();
+          if (!preservedOrSynced) {
+            alert("O rascunho mudou em outro computador e não foi possível salvar uma cópia das alterações locais. A tela não será sobrescrita.");
+            keepPendingBatchMarker = true;
+            return;
+          }
+          const latest = await loadSharedLancamentoDraftFromSupabase();
+          applySharedDraftSnapshot(latest);
+          localStorage.removeItem(LANCAMENTO_BATCH_PENDING_KEY);
+          keepPendingBatchMarker = false;
+          alert("Outra operação encerrou o rascunho anterior. Sincronizei a geração atual sem repetir o lote antigo. Confira a cópia local de recuperação caso houvesse edições pendentes.");
+          return;
+        }
+      }
+
+      if (draftSyncBlockedRef.current && pendingBatch) {
+        // The previous network response was ambiguous but the database confirms
+        // that this batch ID was not committed. Preserve any local edits, reset
+        // the screen to the authoritative shared draft and require a deliberate
+        // second click; do not leave the operator stuck behind a stale CAS error.
+        if (!preserveLocalDraftForRecovery()) {
+          alert("Não foi possível preservar as alterações locais. O rascunho não foi alterado; mantenha esta tela aberta e não inicie outro lote.");
+          keepPendingBatchMarker = true;
+          return;
+        }
+        try {
+          const latest = await loadSharedLancamentoDraftFromSupabase();
+          applySharedDraftSnapshot(latest);
+          setSharedDraftSyncStatus("conflict");
+          setSharedDraftSyncMessage("O lote anterior não foi confirmado. As alterações locais foram preservadas numa cópia de recuperação; revise o rascunho compartilhado e clique novamente para processar usando o mesmo identificador.");
+        } catch (recoveryError) {
+          markDraftSyncBlocked(recoveryError);
+        }
+        keepPendingBatchMarker = true;
+        alert("O banco confirmou que o lote anterior não foi processado. Preservei a cópia local e atualizei o rascunho compartilhado. Revise os dados antes de clicar em Lançar Lote novamente.");
+        return;
+      }
+      if (draftSyncBlockedRef.current) {
+        alert("Há alterações locais que ainda não foram confirmadas. Sincronize o rascunho antes de lançar o lote.");
+        return;
+      }
+      // This also runs for a known-not-processed pending batch. Since its ID is
+      // stable, reusing it after a confirmed rollback is idempotent; edits made
+      // after the previous attempt are persisted before loading the next snapshot.
+      const flushed = await flushSharedDraftChanges();
+      if (!flushed) {
+        alert("Não foi possível confirmar as alterações locais no rascunho compartilhado. Nenhum lote foi iniciado.");
+        return;
+      }
+
+      let draftSnapshot = await loadSharedLancamentoDraftFromSupabase();
+      if (pendingBatch && draftSnapshot.generation_id !== pendingBatch.generationId) {
+        const preservedOrSynced = await preserveBeforeReplacingLocalDraft();
+        if (!preservedOrSynced) {
+          alert("A geração mudou e não foi possível preservar as alterações locais. A tela não será sobrescrita.");
+          keepPendingBatchMarker = true;
+          return;
+        }
+        const latest = await loadSharedLancamentoDraftFromSupabase();
+        applySharedDraftSnapshot(latest);
+        localStorage.removeItem(LANCAMENTO_BATCH_PENDING_KEY);
+        keepPendingBatchMarker = false;
+        alert("A geração do rascunho mudou. Sincronizei os dados atuais e não repeti o lote anterior.");
+        return;
+      }
+      applySharedDraftSnapshot(draftSnapshot);
+
+      const batchId = pendingBatch?.batchId ?? newOperationUuid();
+      batchLaunchInFlightRef.current = true;
+      const retryableStockCodes = new Set([
+        "SLOT_SET_CONFLICT",
+        "SLOT_CONFLICT",
+        "DIVERGENCIA_SET_CONFLICT",
+        "DIVERGENCIA_CONFLICT",
+      ]);
+      const retryableDraftCodes = new Set([
+        "DRAFT_REVISION_CONFLICT",
+        "DRAFT_SNAPSHOT_MISMATCH",
+      ]);
+      let completedSummary: Record<string, unknown> | null = null;
+      let finalError: { code?: string; reason?: string; ambiguous?: boolean } | null = null;
+
+      for (let attempt = 1; attempt <= 3; attempt += 1) {
+        // A retry after a concurrent draft edit must include the complete latest
+        // line set, not just the rows visible in the first snapshot.
+        const nonBlankWithoutSku = draftSnapshot.lines
+          .map(line => line.row_data)
+          .filter(row => !isBlankLancamentoDraftRow(row) && !row.referencia.trim());
+        if (nonBlankWithoutSku.length > 0) {
+          alert(
+            `Existem ${nonBlankWithoutSku.length} linha(s) parcialmente preenchida(s) sem SKU. ` +
+            "Complete ou remova somente essas linhas antes de lançar. Elas não serão descartadas automaticamente."
+          );
+          return;
+        }
+        const activeData = draftSnapshot.lines
+          .map(line => line.row_data)
+          .filter(row => !isBlankLancamentoDraftRow(row) && row.referencia.trim() !== "");
+        if (activeData.length === 0) {
+          alert("O rascunho compartilhado não contém movimentações completas para processar.");
+          return;
+        }
+
+        // All reads are bounded and authoritative. No offline cache is accepted for a write.
+        const [freshSlots, freshDivergencias, freshLayoutResult, freshPositionsResult] = await Promise.all([
+          loadFreshSlotsForBatch(),
+          loadFreshDivergenciasForBatch(),
+          loadWarehouseLayout(),
+          loadWarehousePositions(),
+        ]);
+        if (freshLayoutResult.error) {
+          throw new Error(`Não foi possível confirmar a configuração física antes do lote: ${freshLayoutResult.error}`);
+        }
+        if (freshPositionsResult.error) {
+          throw new Error(`Não foi possível confirmar as posições físicas antes do lote: ${freshPositionsResult.error}`);
+        }
+        const batchWarehouseLayout = freshLayoutResult.data;
+        const batchWarehousePositions = freshPositionsResult.data;
+        setWarehouseLayout(batchWarehouseLayout);
+        setWarehouseLayoutError(null);
+        setWarehousePositions(batchWarehousePositions);
+        setWarehousePositionsError(null);
+
+        let allErrors: string[] = [];
+        activeData.forEach((row, index) => {
+          const rowErrors = validateLancamentoRow(
+            row,
+            index + 1,
+            productsList,
+            true,
+            freshSlots,
+            getE1CapacityMap(batchWarehouseLayout),
+            batchWarehouseLayout,
+            batchWarehousePositions,
+          );
+          // These two conditions are handled by processLancamentosInSequence
+          // as explicit operational divergences. Do not abort the whole lot
+          // before its existing business rule can record them.
+          const structuralErrors = rowErrors.filter(message =>
+            !/módulo \d+ está inativo na configuração física do Estoque \d+/i.test(message) &&
+            !/^Endereço .* contém o item auxiliar .* cujo SKU\/restrição no registro não corresponde ao ID\./i.test(message)
+          );
+          allErrors = [...allErrors, ...structuralErrors];
+          if (!/^(?:[01]\d|2[0-3]):[0-5]\d$/.test(row.hora.trim())) {
+            allErrors.push(`Linha ${index + 1}: a hora deve estar no formato HH:mm (ex.: 08:30).`);
+          }
+          if ((row.galpao || "3") === "12" && row.restricao !== "autorizacao") {
+            allErrors.push(`Linha ${index + 1}: Galpão 12 exige Restrição = Solicitar autorização.`);
+          }
+        });
+
+        if (allErrors.length > 0) {
+          alert(`O lote contém inconsistências de preenchimento e não pôde ser lançado:\n\n${allErrors.slice(0, 10).join("\n")}${allErrors.length > 10 ? `\n...e mais ${allErrors.length - 10} inconsistências.` : ""}`);
+          return;
+        }
+
+        // Recompute from the newest DB snapshot after a conflict, not from the stale UI state.
+        const {
+          updatedSlots,
+          newHistory,
+          newDivergencias,
+          processedCount,
+          errorCount,
+        } = processLancamentosInSequence(
+          activeData,
+          freshSlots,
+          operator,
+          launchDate,
+          freshDivergencias,
           productsList,
           true,
-          slots,
-          getE1CapacityMap(warehouseLayout),
-          warehouseLayout,
-          warehousePositions
+          getE1CapacityMap(batchWarehouseLayout),
+          batchWarehouseLayout,
         );
-        allErrors = [...allErrors, ...rowErrors];
+        const updatedDivergencias = [...newDivergencias, ...freshDivergencias];
 
-        // A hora pertence à movimentação registrada na folha.
-        // Ela pode ficar vazia durante o preenchimento, mas deve estar
-        // completa e válida no momento do lançamento do lote.
-        if (!/^(?:[01]\d|2[0-3]):[0-5]\d$/.test(row.hora.trim())) {
-          allErrors.push(
-            `Linha ${index + 1}: a hora da movimentação deve estar no formato HH:mm (ex.: 08:30).`
-          );
+        // Persist the idempotency marker before the network mutation. It remains
+        // if the response is ambiguous and is checked before a future retry.
+        const marker = {
+          batchId,
+          generationId: draftSnapshot.generation_id,
+          revision: draftSnapshot.revision,
+        };
+        try {
+          localStorage.setItem(LANCAMENTO_BATCH_PENDING_KEY, JSON.stringify(marker));
+          setBatchPendingRecovery(true);
+        } catch (error) {
+          throw new Error("Não foi possível salvar o identificador idempotente do lote neste navegador. O lançamento foi cancelado antes da gravação.");
+        }
+        keepPendingBatchMarker = true;
+
+        const transaction = await persistStockMutationAtomically(
+          freshSlots,
+          updatedSlots,
+          newHistory,
+          freshDivergencias,
+          updatedDivergencias,
+          {
+            batchId,
+            generationId: draftSnapshot.generation_id,
+            expectedRevision: draftSnapshot.revision,
+            inputRows: draftSnapshot.lines,
+            resultSummary: {
+              processed_count: processedCount,
+              divergence_count: errorCount,
+              source: "shared_lancamento_draft",
+            },
+          },
+        );
+
+        if (transaction.ok) {
+          completedSummary = transaction.batchResult?.result_summary as Record<string, unknown> | undefined ?? {
+            processed_count: processedCount,
+            divergence_count: errorCount,
+          };
+          localStorage.removeItem(LANCAMENTO_BATCH_PENDING_KEY);
+          setBatchPendingRecovery(false);
+          keepPendingBatchMarker = false;
+          break;
         }
 
-        const rowGalpao = row.galpao || "3";
-
-        // Galpão 12 continua sendo uma trava estrutural da entrada:
-        // ele exige explicitamente a restrição "autorizacao".
-        if (rowGalpao === "12" && row.restricao !== "autorizacao") {
-          allErrors.push(
-            `Linha ${index + 1}: Galpão 12 exige Restrição = Solicitar autorização.`
+        finalError = {
+          code: transaction.code,
+          reason: transaction.reason,
+          ambiguous: transaction.ambiguous,
+        };
+        if (transaction.ambiguous) {
+          keepPendingBatchMarker = true;
+          setSharedDraftSyncStatus("error");
+          setSharedDraftSyncMessage("O resultado do lote está incerto. Consulte o identificador antes de repetir.");
+          alert(
+            `${transaction.reason || "A resposta do Supabase não confirmou o lote."}\n\n` +
+            "O rascunho foi preservado. Não clique novamente para criar outro lote; a próxima tentativa consultará o mesmo identificador."
           );
+          return;
         }
-      });
 
-      if (allErrors.length > 0) {
-        alert(`O lote contém inconsistências de validação e não pôde ser lançado:\n\n${allErrors.slice(0, 10).join("\n")}${allErrors.length > 10 ? `\n...e mais ${allErrors.length - 10} travas violadas.` : ""}`);
-        return;
+        if (transaction.code === "DRAFT_GENERATION_CONFLICT") {
+          // Another client closed or cleared the generation first. The current
+          // batch has not written anything; fetch the actual next generation
+          // rather than leaving old rows on screen or implying they are pending.
+          try {
+            const latest = await loadSharedLancamentoDraftFromSupabase();
+            applySharedDraftSnapshot(latest);
+            localStorage.removeItem(LANCAMENTO_BATCH_PENDING_KEY);
+            setBatchPendingRecovery(false);
+            keepPendingBatchMarker = false;
+            alert("Outro computador encerrou ou limpou esse rascunho antes deste processamento. Sincronizei a geração atual e não repeti nenhuma movimentação.");
+          } catch (syncError) {
+            markDraftSyncBlocked(syncError);
+            keepPendingBatchMarker = false;
+            localStorage.removeItem(LANCAMENTO_BATCH_PENDING_KEY);
+            setBatchPendingRecovery(false);
+            alert("O rascunho mudou em outro computador, mas não consegui carregar a nova geração. Nenhuma movimentação deste lote foi aplicada; use Sincronizar rascunho.");
+          }
+          return;
+        }
+
+        const isRetryable = retryableStockCodes.has(transaction.code ?? "") || retryableDraftCodes.has(transaction.code ?? "");
+        if (!isRetryable || attempt === 3) break;
+
+        // Reload the shared rows before a retry. Never retry an old generation:
+        // another operator may have completed or cleared that batch already.
+        const nextDraftSnapshot = await loadSharedLancamentoDraftFromSupabase();
+        if (nextDraftSnapshot.generation_id !== draftSnapshot.generation_id) {
+          applySharedDraftSnapshot(nextDraftSnapshot);
+          localStorage.removeItem(LANCAMENTO_BATCH_PENDING_KEY);
+          setBatchPendingRecovery(false);
+          keepPendingBatchMarker = false;
+          alert("O rascunho foi encerrado ou substituído por outra operação enquanto o lote era processado. Sincronizei os dados e não repeti o lançamento.");
+          return;
+        }
+        draftSnapshot = nextDraftSnapshot;
+        applySharedDraftSnapshot(draftSnapshot);
+        // The shared revision may have advanced because another PC saved lines.
+        // The next iteration uses the refreshed complete generation and same batch ID.
       }
 
-      const {
-        updatedSlots,
-        newHistory,
-        newDivergencias,
-        processedCount,
-        errorCount
-      } = processLancamentosInSequence(
-        activeData,
-        slots,
-        operator,
-        launchDate,
-        divergencias,
-        productsList,
-        true,
-        getE1CapacityMap(warehouseLayout),
-        warehouseLayout
-      );
-
-      const updatedDivergencias = [...newDivergencias, ...divergencias];
-      const transaction = await persistStockMutationAtomically(
-        slots,
-        updatedSlots,
-        newHistory,
-        divergencias,
-        updatedDivergencias,
-      );
-      if (!transaction.ok) {
+      if (!completedSummary) {
+        if (!finalError?.ambiguous) {
+          localStorage.removeItem(LANCAMENTO_BATCH_PENDING_KEY);
+          setBatchPendingRecovery(false);
+          keepPendingBatchMarker = false;
+        }
+        const reason = finalError?.reason || "O lote não pôde ser confirmado pelo banco.";
+        setSharedDraftSyncStatus(finalError?.ambiguous ? "error" : "conflict");
+        setSharedDraftSyncMessage("O rascunho foi preservado; sincronize antes de tentar novamente.");
         alert(
-          "O lote foi interrompido e não foi confirmado pelo Supabase.\n\n" +
-          `${transaction.reason || "Atualize os dados e confira o estoque antes de tentar novamente."}`
+          `${reason}\n\nO sistema não limpou o rascunho e não iniciou outra movimentação. ` +
+          "Sincronize os dados e consulte o histórico antes de uma nova tentativa."
         );
         return;
       }
 
-      // O estoque já foi confirmado atomicamente. Limpe a tela/cache agora e
-      // aguarde a exclusão remota para não permitir que o lote antigo reapareça
-      // ao reautenticar. A exclusão falhar não transforma o estoque confirmado
-      // em falha nem deve incentivar o operador a relançar.
-      const draftClearResult = await clearLancamentoDraftAndPersist(authUserId);
-      const completedMessage =
-        `Lote processado!\n✔️ ${processedCount} movimentações consolidadas de modo sequencial.\n⚠️ ${errorCount} divergências identificadas e enviadas para revisão.`;
-      alert(draftClearResult.rowDeleted
-        ? `${completedMessage}\n✓ Rascunho removido do dispositivo e do Supabase.`
-        : draftClearResult.contentCleared
-          ? `${completedMessage}\n✓ O conteúdo remoto do rascunho foi zerado. A exclusão física ficou pendente e será tentada novamente no próximo login; as linhas antigas não serão restauradas.`
-          : `${completedMessage}\n\nATENÇÃO: o estoque foi confirmado, mas o Supabase não confirmou a limpeza do rascunho. Neste navegador, a restauração será bloqueada e a limpeza tentada novamente no próximo login. Se acessar por outro dispositivo, confira o rascunho antes de usar. NÃO lance o lote novamente; confira o histórico se houver qualquer dúvida.`);
-    } catch (error) {
-      console.error("Erro inesperado ao processar lote:", error);
+      // The database has already closed/archived the processed generation in the
+      // same transaction as stock + history + divergence writes. Read the current
+      // generation rather than forcing [] so rows added moments later by another
+      // computer are retained on this screen.
+      try {
+        const currentDraft = await loadSharedLancamentoDraftFromSupabase();
+        applySharedDraftSnapshot(currentDraft);
+      } catch (error) {
+        setLancamentoRows([]);
+        baselineDraftLinesRef.current = [];
+        const nextGenerationId = String(completedSummary.next_generation_id ?? "");
+        sharedDraftMetaRef.current = {
+          generationId: nextGenerationId || null,
+          revision: 0,
+        };
+        setLancamentoDraftReady(Boolean(nextGenerationId));
+        setSharedDraftSyncStatus("error");
+        setSharedDraftSyncMessage("O lote foi confirmado, mas não foi possível atualizar a tela. Sincronize antes do próximo lote.");
+        console.error("Lote confirmado; falha ao ler o rascunho seguinte:", error);
+      }
+      const processedCount = Number(completedSummary.processed_count ?? completedSummary.history_count ?? 0);
+      const divergenceCount = Number(completedSummary.divergence_count ?? completedSummary.new_divergence_count ?? 0);
       alert(
-        "O lote não foi concluído por causa de um erro inesperado. " +
-        "Os dados preenchidos foram preservados no rascunho para nova tentativa."
+        `Lote confirmado pelo banco.\n✔️ ${processedCount} movimentação(ões) processada(s).\n⚠️ ${divergenceCount} divergência(s) registrada(s).\n\n` +
+        "O rascunho processado foi encerrado atomicamente. Nenhuma linha deste lote será reaplicada."
       );
+    } catch (error) {
+      console.error("Erro inesperado ao processar o lote compartilhado:", error);
+      alert(error instanceof Error ? error.message : "Não foi possível concluir o lote. O rascunho foi preservado.");
     } finally {
       batchLaunchInFlightRef.current = false;
+      batchLaunchRequestedRef.current = false;
       setBatchLaunchLoading(false);
     }
   };
@@ -3707,6 +4270,7 @@ if (
 
   // Manual Excel paste parser updated to handle E1, E2, E3
   const handleImportExcelData = () => {
+    if (batchLaunchRequestedRef.current || hasUnresolvedBatchMarker()) return;
     if (!bulkText.trim()) {
       setBulkFeedback("Espaço por colar em branco.");
       return;
@@ -3788,7 +4352,7 @@ const observacao = cols[14]?.trim() || "";
 
 if (refRaw) {
   newRows.push({
-    id: `ROW-${generateId()}`,
+    id: newLancamentoDraftLineId(),
     data: dataLancamento,
     estoque: estVal,
     modulo: modVal,
@@ -3813,8 +4377,10 @@ if (refRaw) {
     });
 
     if (newRows.length > 0) {
-      setLancamentoRows(newRows);
-      setBulkFeedback(`Sucesso! ${newRows.length} lançamentos importados com êxito para a planilha de lote.`);
+      // Excel import contributes rows to the shared draft; it never replaces
+      // rows already saved by this or another computer.
+      setLancamentoRows(prev => [...prev, ...newRows]);
+      setBulkFeedback(`Sucesso! ${newRows.length} lançamentos adicionados ao rascunho compartilhado.`);
       setBulkText("");
       setTimeout(() => {
         setShowBulkImport(false);
@@ -8250,6 +8816,13 @@ const pct = total > 0 ? (occupied / total) * 100 : 0;
 
                   <div className="flex flex-wrap gap-2">
                     <button
+                      onClick={() => void handleSynchronizeSharedDraft()}
+                      disabled={!authUserId || batchLaunchLoading || batchPendingRecovery}
+                      className="bg-white hover:bg-slate-50 text-slate-700 border border-slate-300 disabled:opacity-60 disabled:cursor-not-allowed rounded-lg px-3.5 py-2 text-xs font-bold transition cursor-pointer"
+                    >
+                      Sincronizar rascunho
+                    </button>
+                    <button
                       onClick={handleExportarLayout}
                       className="bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 rounded-lg px-3.5 py-2 text-xs font-bold transition flex items-center gap-1.5 cursor-pointer"
                     >
@@ -8265,7 +8838,7 @@ const pct = total > 0 ? (occupied / total) * 100 : 0;
                     </button>
                     <button
                       onClick={() => canExecuteBatchLaunch && void handleLancarLote()}
-                      disabled={!canExecuteBatchLaunch || batchLaunchLoading}
+                      disabled={!canExecuteBatchLaunch || batchLaunchLoading || !lancamentoDraftReady}
                       aria-busy={batchLaunchLoading}
                       className="bg-indigo-600 hover:bg-indigo-750 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-60 disabled:cursor-not-allowed text-white rounded-lg px-5 py-2 text-xs font-bold transition shadow-sm uppercase tracking-wider cursor-pointer"
                     >
@@ -8274,13 +8847,30 @@ const pct = total > 0 ? (occupied / total) * 100 : 0;
                     {lancamentoRows.length > 0 && (
                       <button
                         onClick={clearLancamentoDraft}
-                        className="bg-white hover:bg-red-50 text-red-600 border border-red-200 rounded-lg px-3.5 py-2 text-xs font-bold transition flex items-center gap-1.5 cursor-pointer"
+                        disabled={batchLaunchLoading || !lancamentoDraftReady || batchPendingRecovery}
+                        className="bg-white hover:bg-red-50 text-red-600 border border-red-200 disabled:opacity-60 disabled:cursor-not-allowed rounded-lg px-3.5 py-2 text-xs font-bold transition flex items-center gap-1.5 cursor-pointer"
                       >
                         <Trash2 className="w-3.5 h-3.5" />
                         Limpar rascunho
                       </button>
                     )}
                   </div>
+                </div>
+
+                <div className="mb-4 flex flex-col gap-1" role="status" aria-live="polite">
+                  <p className={`text-xs ${sharedDraftSyncStatus === "synced" ? "text-emerald-700" : sharedDraftSyncStatus === "saving" ? "text-indigo-700" : sharedDraftSyncStatus === "conflict" || sharedDraftSyncStatus === "error" ? "text-amber-700" : "text-slate-500"}`}>
+                    {sharedDraftSyncMessage || "Aguardando sincronização do rascunho compartilhado."}
+                  </p>
+                  {batchPendingRecovery && (
+                    <p className="text-xs font-semibold text-amber-800">
+                      Há um lote anterior aguardando confirmação. A edição está bloqueada para evitar perder dados ou duplicar movimentações. Clique em Lançar Lote para consultar o mesmo identificador idempotente.
+                    </p>
+                  )}
+                  {legacyDraftQuarantineCount > 0 && (
+                    <p className="text-xs text-amber-800">
+                      Foi preservada uma cópia local antiga com {legacyDraftQuarantineCount} linha(s). Ela não foi importada nem será restaurada automaticamente. Confirme a cópia de recuperação antes de descartá-la.
+                    </p>
+                  )}
                 </div>
 
                 {/* BULK IMPORT TEXTAREA */}
@@ -8295,6 +8885,7 @@ const pct = total > 0 ? (occupied / total) * 100 : 0;
                     </p>
 
                     <textarea
+                      disabled={batchLaunchLoading}
                       value={bulkText}
                       onChange={(e) => setBulkText(e.target.value)}
                       placeholder="Cole colunas do Excel aqui..."
@@ -8304,8 +8895,8 @@ const pct = total > 0 ? (occupied / total) * 100 : 0;
                     <div className="flex items-center gap-3">
                       <button
                         onClick={() => canExecuteBatchLaunch && handleImportExcelData()}
-                        disabled={!canExecuteBatchLaunch}
-                        className="bg-indigo-650 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg px-4 py-2 text-xs font-bold transition shadow-sm"
+                        disabled={!canExecuteBatchLaunch || batchLaunchLoading || !lancamentoDraftReady}
+                        className="bg-indigo-650 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-60 disabled:cursor-not-allowed text-white rounded-lg px-4 py-2 text-xs font-bold transition shadow-sm"
                       >
                         Carregar Lançamentos
                       </button>
@@ -8315,7 +8906,7 @@ const pct = total > 0 ? (occupied / total) * 100 : 0;
                 )}
 
                 {/* TABULAR ENTRY SYSTEM WITH ADVANCED DYNAMIC LAYOUT FIELD CORRECTIONS */}
-                <div className="pt-2">
+                <div className={`pt-2 ${batchLaunchLoading || batchPendingRecovery ? "pointer-events-none opacity-60" : ""}`} aria-busy={batchLaunchLoading || batchPendingRecovery}>
                   <div className="max-h-[calc(100vh-24rem)] min-h-[18rem] overflow-auto border border-slate-350 rounded-xl bg-slate-50 shadow-inner">
                     <div className="min-w-[1550px]">
                     <table className="w-full text-xs text-left border-collapse">
