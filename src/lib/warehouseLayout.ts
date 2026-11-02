@@ -45,6 +45,7 @@ const mapRow = (row: any): WarehouseLayoutEntry => ({
   capacidade: Number(row.capacidade),
   ativo: Boolean(row.ativo),
   updatedAt: row.updated_at || undefined,
+  updatedBy: row.updated_by ?? null,
 });
 
 
@@ -81,6 +82,7 @@ export const normalizeWarehouseLayoutEntries = (
           : Math.max(Number(current.capacidade || 0), Number(entry.capacidade || 0)),
       ativo: Boolean(current.ativo || entry.ativo),
       updatedAt: current.updatedAt || entry.updatedAt,
+      updatedBy: current.updatedBy ?? entry.updatedBy ?? null,
     });
   }
 
@@ -98,7 +100,7 @@ export async function loadWarehouseLayout(): Promise<{
   const response = await guardedSupabaseRequest("warehouse-layout.read", () =>
     supabase
       .from("warehouse_layout")
-      .select("id,estoque,modulo,capacidade,ativo,updated_at")
+      .select("id,estoque,modulo,capacidade,ativo,updated_at,updated_by")
       .in("estoque", ["1", "2", "3"])
       .order("estoque", { ascending: true })
       .order("modulo", { ascending: true })
@@ -129,35 +131,79 @@ export async function loadWarehouseLayout(): Promise<{
 
 export async function saveWarehouseLayout(
   entries: WarehouseLayoutEntry[],
-  userId: string
+  expectedEntries: WarehouseLayoutEntry[],
 ): Promise<{ data: WarehouseLayoutEntry[] | null; error: string | null }> {
-  const now = new Date().toISOString();
+  const expectedById = new Map(
+    expectedEntries
+      .filter(entry => Boolean(entry.updatedAt))
+      .map(entry => [entry.id, entry])
+  );
+  const changedEntries = entries.filter(entry => {
+    const previous = expectedById.get(entry.id);
+    if (!previous) return true;
+    return previous.estoque !== entry.estoque ||
+      previous.modulo !== entry.modulo ||
+      Number(previous.capacidade) !== Number(entry.capacidade) ||
+      Boolean(previous.ativo) !== Boolean(entry.ativo);
+  });
 
-  const payload = entries.map(entry => ({
-    id: entry.id,
+  if (changedEntries.length === 0) {
+    return { data: normalizeWarehouseLayoutEntries(entries), error: null };
+  }
+
+  const payload = changedEntries.map(entry => ({
+    id: String(entry.id),
     estoque: String(entry.estoque).replace(/^E/i, ""),
     modulo: String(Number(entry.modulo)),
     capacidade: Number(entry.capacidade),
     ativo: Boolean(entry.ativo),
-    updated_at: now,
-    updated_by: userId,
   }));
 
-  const { data, error } = await supabase
-    .from("warehouse_layout")
-    .upsert(payload, { onConflict: "id" })
-    .select("id,estoque,modulo,capacidade,ativo,updated_at");
+  const expectedPayload = changedEntries.flatMap(entry => {
+    const previous = expectedById.get(entry.id);
+    if (!previous) return [];
+    return [{
+      id: previous.id,
+      estoque: String(previous.estoque).replace(/^E/i, ""),
+      modulo: String(Number(previous.modulo)),
+      capacidade: Number(previous.capacidade),
+      ativo: Boolean(previous.ativo),
+      updated_at: previous.updatedAt,
+      updated_by: previous.updatedBy ?? null,
+    }];
+  });
+
+  const { data, error } = await supabase.rpc("save_warehouse_layout_atomic" as never, {
+    p_expected_layout: expectedPayload,
+    p_layout: payload,
+  } as never);
 
   if (error) {
-    console.error("Erro ao salvar configuração física dos estoques:", error);
+    console.error("Erro ao salvar configuração física dos estoques pela RPC atômica:", error);
     return {
       data: null,
       error: error.message || "Não foi possível salvar a configuração física.",
     };
   }
 
+  const result = data as { success?: boolean; rows?: any[] } | null;
+  if (result?.success !== true || !Array.isArray(result.rows)) {
+    return {
+      data: null,
+      error: "O banco não confirmou a gravação da configuração física.",
+    };
+  }
+
+  const savedById = new Map<string, WarehouseLayoutEntry>(
+    result.rows.map(row => {
+      const saved = mapRow(row);
+      return [saved.id, saved];
+    })
+  );
   return {
-    data: normalizeWarehouseLayoutEntries((data || []).map(mapRow)),
+    data: normalizeWarehouseLayoutEntries(
+      entries.map(entry => savedById.get(entry.id) ?? entry)
+    ),
     error: null,
   };
 }
@@ -167,7 +213,9 @@ export const loadE1Layout = loadWarehouseLayout;
 
 export async function saveE1Layout(
   entries: WarehouseLayoutEntry[],
-  userId: string
+  _userId: string
 ): Promise<{ data: WarehouseLayoutEntry[] | null; error: string | null }> {
-  return saveWarehouseLayout(entries, userId);
+  const current = await loadWarehouseLayout();
+  if (current.error) return { data: null, error: current.error };
+  return saveWarehouseLayout(entries, current.data);
 }

@@ -111,6 +111,12 @@ test('bloqueia linha extra com ID não canônico, mesmo se estiver vazia', () =>
   })));
 });
 
+test('bloqueia o sentinela VAZIO no SKU codificado do ID auxiliar', () => {
+  expectCode('NON_CANONICAL_AUXILIARY_ID', () => buildZeroPhysicalAddressPlan(input({
+    slots: [slot(baseId, '', 0), slot('2-33-A1::ITEM::VAZIO::nenhuma', '', 0)],
+  })));
+});
+
 test('bloqueia auxiliar cuja SKU/restrição não corresponde ao ID', () => {
   expectCode('AUXILIARY_IDENTITY_MISMATCH', () => buildZeroPhysicalAddressPlan(input({
     slots: [slot(baseId, '71401G', 1584), slot(aux('71401G'), '71401G', 25, 'teste')],

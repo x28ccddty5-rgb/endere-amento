@@ -6,3 +6,16 @@ coverage/
 *.log
 .env*
 !.env.example
+# Local Supabase CLI state (project references and connection metadata)
+**/.temp/
+**/.branches/
+
+# Local editor, backup and recovery artifacts (preserve externally; do not version)
+*.swp
+*.bak
+*.bak_*
+*.backup-*
+# One-off package handoff files are preserved under docs/seguranca/evidence/
+/APLICAR-AUDITORIA03-PONTO03.txt
+/ARQUIVOS-E-SHA256.txt
+/LEIA-ME.txt

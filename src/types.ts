@@ -9,6 +9,7 @@ export interface WarehouseLayoutEntry {
   capacidade: number;
   ativo: boolean;
   updatedAt?: string;
+  updatedBy?: string | null;
 }
 
 export interface WarehousePositionConfig {
@@ -18,6 +19,7 @@ export interface WarehousePositionConfig {
   posicao: string;
   ativo: boolean;
   updatedAt?: string;
+  updatedBy?: string | null;
 }
 
 export interface Product {

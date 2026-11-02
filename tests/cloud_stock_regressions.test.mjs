@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { processLancamentosInSequence, processTransferenciaPosicao } from '../src/data/mockStorage.ts';
 import { enqueueLancamentoDraftWrite } from '../src/lib/lancamentoDraftQueue.ts';
 import { findCorroboratedDivergenceSlot } from '../src/lib/divergenceResolution.ts';
+import { buildMapQuickCorrectionPlan, isMapQuickCorrectionSnapshotCurrent } from '../src/lib/mapQuickCorrection.ts';
 
 const products = [
   { referencia: 'AAA', descricao: 'Produto AAA' },
@@ -362,4 +363,236 @@ test('reconciliação: não aplica fallback de posição em E1, cujos IDs são p
     targetRestriction: 'nenhuma',
   });
   assert.equal(result.kind, 'none');
+});
+
+
+const runMapCorrection = (slots, requestedSlot, options = {}) => {
+  let nextId = 0;
+  return buildMapQuickCorrectionPlan({
+    slots,
+    requestedSlot,
+    productsList: products,
+    operator: 'Teste',
+    date: '2026-10-28',
+    time: '09:15',
+    createHistoryId: () => `MOV-MAP-${++nextId}`,
+    createCorrectionId: () => '11111111-1111-4111-8111-111111111111',
+    ...options,
+  });
+};
+
+test('correção do mapa E1: reduz saldo registrando somente a diferença e os saldos auditáveis', () => {
+  const current = {
+    id: '1-3-AAA', estoque: '1', modulo: '3', posicao: '', referencia: 'AAA',
+    descricao: 'Produto AAA', saldo: 10, dataChacote: 'lote-a', ultimaData: '',
+    ultimaHora: '', ultimoResponsavel: '', galpao: '3', restricao: 'nenhuma', observacao: '',
+  };
+  const result = runMapCorrection([current], { ...current, saldo: 7, ultimaData: '28/10/2026', ultimaHora: '09:15', ultimoResponsavel: 'Teste' });
+  assert.equal(result.ok, true);
+  assert.equal(result.updatedSlots.find(slot => slot.id === current.id).saldo, 7);
+  assert.equal(result.history.length, 1);
+  assert.equal(result.history[0].tipo, 'Saída');
+  assert.equal(result.history[0].quantidade, 3);
+  assert.equal(result.history[0].naturezaTransacao, 'correcao_fisica');
+  assert.equal(result.history[0].saldoAnterior, 10);
+  assert.equal(result.history[0].saldoFinal, 7);
+});
+
+test('correção do mapa E2/E3: redução em item auxiliar registra saída da diferença', () => {
+  const id = '2-3-A1::ITEM::AAA::nenhuma';
+  const current = blankPhysicalSlot({
+    id, referencia: 'AAA', descricao: 'Produto AAA', saldo: 20, dataChacote: 'lote-a',
+  });
+  const result = runMapCorrection([blankPhysicalSlot(), current], {
+    ...current, saldo: 13, ultimaData: '28/10/2026', ultimaHora: '09:15', ultimoResponsavel: 'Teste',
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.updatedSlots.find(slot => slot.id === id).saldo, 13);
+  assert.equal(result.history.length, 1);
+  assert.equal(result.history[0].tipo, 'Saída');
+  assert.equal(result.history[0].quantidade, 7);
+  assert.equal(result.history[0].slotId, id);
+});
+
+test('correção do mapa: troca de SKU em item auxiliar separa saída antiga e entrada nova sem reutilizar o ID', () => {
+  const sourceId = '2-3-A1::ITEM::AAA::nenhuma';
+  const source = blankPhysicalSlot({
+    id: sourceId, referencia: 'AAA', descricao: 'Produto AAA', saldo: 8, dataChacote: 'lote-a',
+  });
+  const physicalBase = blankPhysicalSlot();
+  const result = runMapCorrection([physicalBase, source], {
+    ...source, referencia: 'BBB', descricao: 'Produto BBB', saldo: 6,
+    ultimaData: '28/10/2026', ultimaHora: '09:15', ultimoResponsavel: 'Teste',
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.updatedSlots.find(slot => slot.id === sourceId).saldo, 0);
+  const target = result.updatedSlots.find(slot => slot.id === '2-3-A1::ITEM::BBB::nenhuma');
+  assert.equal(target.saldo, 6);
+  assert.deepEqual(result.history.map(item => [item.referencia, item.tipo, item.quantidade, item.slotId]), [
+    ['AAA', 'Saída', 8, sourceId],
+    ['BBB', 'Entrada', 6, '2-3-A1::ITEM::BBB::nenhuma'],
+  ]);
+});
+
+test('correção do mapa E1: troca de SKU cria ID por SKU e mantém a saída/entrada auditáveis', () => {
+  const source = {
+    id: '1-3-AAA', estoque: '1', modulo: '3', posicao: '', referencia: 'AAA',
+    descricao: 'Produto AAA', saldo: 8, dataChacote: 'lote-a', ultimaData: '',
+    ultimaHora: '', ultimoResponsavel: '', galpao: '3', restricao: 'nenhuma', observacao: '',
+  };
+  const result = runMapCorrection([source], {
+    ...source, referencia: 'BBB', descricao: 'Produto BBB', saldo: 6,
+    ultimaData: '28/10/2026', ultimaHora: '09:15', ultimoResponsavel: 'Teste',
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.updatedSlots.find(slot => slot.id === source.id).saldo, 0);
+  assert.equal(result.updatedSlots.find(slot => slot.id === '1-3-BBB').saldo, 6);
+  assert.deepEqual(result.history.map(item => [item.referencia, item.tipo, item.quantidade]), [
+    ['AAA', 'Saída', 8], ['BBB', 'Entrada', 6],
+  ]);
+});
+
+test('correção do mapa: saldo zero limpa item ocupado e registra saída do saldo anterior', () => {
+  const id = '2-3-A1::ITEM::AAA::nenhuma';
+  const current = blankPhysicalSlot({
+    id, referencia: 'AAA', descricao: 'Produto AAA', saldo: 12, dataChacote: 'lote-a',
+  });
+  const result = runMapCorrection([blankPhysicalSlot(), current], {
+    ...current, referencia: '', descricao: '', saldo: 0, dataChacote: '',
+    ultimaData: '28/10/2026', ultimaHora: '09:15', ultimoResponsavel: 'Teste',
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.updatedSlots.find(slot => slot.id === id).saldo, 0);
+  assert.equal(result.updatedSlots.find(slot => slot.id === id).referencia, '');
+  assert.deepEqual(result.history.map(item => [item.tipo, item.quantidade, item.referencia]), [['Saída', 12, 'AAA']]);
+});
+
+test('correção do mapa: bloqueia SKU não cadastrado antes de iniciar gravação', () => {
+  const current = blankPhysicalSlot();
+  const result = runMapCorrection([current], {
+    ...current, referencia: 'UNKNOWN', descricao: 'Sku Reajustado', saldo: 5,
+  });
+  assert.equal(result.ok, false);
+  assert.match(result.reason, /não está cadastrado/i);
+});
+
+test('correção do mapa: bloqueia reatribuição para identidade que já possui saldo', () => {
+  const physicalBase = blankPhysicalSlot();
+  const source = blankPhysicalSlot({
+    id: '2-3-A1::ITEM::AAA::teste', referencia: 'AAA', descricao: 'Produto AAA',
+    saldo: 5, restricao: 'teste',
+  });
+  const occupiedTarget = blankPhysicalSlot({
+    id: '2-3-A1::ITEM::BBB::teste', referencia: 'BBB', descricao: 'Produto BBB',
+    saldo: 9, restricao: 'teste',
+  });
+  const result = runMapCorrection([physicalBase, source, occupiedTarget], {
+    ...source, referencia: 'BBB', descricao: 'Produto BBB', saldo: 4,
+  });
+  assert.equal(result.ok, false);
+  assert.match(result.reason, /saldo positivo/i);
+});
+
+test('correção do mapa: metadados sem mudança de saldo não inventam movimentação', () => {
+  const current = {
+    id: '1-3-AAA', estoque: '1', modulo: '3', posicao: '', referencia: 'AAA',
+    descricao: 'Produto AAA', saldo: 10, dataChacote: 'lote-a', ultimaData: '',
+    ultimaHora: '', ultimoResponsavel: '', galpao: '3', restricao: 'nenhuma', observacao: '',
+  };
+  const result = runMapCorrection([current], { ...current, dataChacote: 'lote-b', ultimaData: '28/10/2026', ultimaHora: '09:15', ultimoResponsavel: 'Teste' });
+  assert.equal(result.ok, true);
+  assert.equal(result.history.length, 0);
+  assert.equal(result.updatedSlots[0].dataChacote, 'lote-b');
+});
+
+test('correção do mapa: rejeita saldo fracionário', () => {
+  const current = blankPhysicalSlot();
+  const result = runMapCorrection([current], { ...current, referencia: 'AAA', saldo: 3.5 });
+  assert.equal(result.ok, false);
+  assert.match(result.reason, /inteiro/i);
+});
+
+
+test('correção do mapa: rejeita snapshot da posição alterado por atualização concorrente', () => {
+  const original = blankPhysicalSlot({ saldo: 10, referencia: 'AAA', descricao: 'Produto AAA' });
+  const updated = { ...original, saldo: 12 };
+  assert.equal(isMapQuickCorrectionSnapshotCurrent([updated], original), false);
+  assert.equal(isMapQuickCorrectionSnapshotCurrent([original], original), true);
+  assert.equal(isMapQuickCorrectionSnapshotCurrent([original, original], original), false);
+});
+
+test('correção do mapa: saldo zero remove SKU já zerado com histórico físico sem inventar entrada/saída', () => {
+  const current = {
+    id: '1-3-AAA', estoque: '1', modulo: '3', posicao: '', referencia: 'AAA',
+    descricao: 'Produto AAA', saldo: 0, dataChacote: 'lote-a', ultimaData: '',
+    ultimaHora: '', ultimoResponsavel: '', galpao: '3', restricao: 'nenhuma', observacao: '',
+  };
+  const result = runMapCorrection([current], { ...current, referencia: '', descricao: '', saldo: 0, dataChacote: '' });
+  assert.equal(result.ok, true);
+  assert.equal(result.updatedSlots[0].referencia, '');
+  assert.equal(result.history.length, 1);
+  assert.equal(result.history[0].referencia, 'AAA');
+  assert.equal(result.history[0].tipo, '');
+  assert.equal(result.history[0].quantidade, 0);
+  assert.equal(result.history[0].naturezaTransacao, 'correcao_fisica');
+  assert.equal(result.history[0].saldoAnterior, 0);
+  assert.equal(result.history[0].saldoFinal, 0);
+  assert.ok(result.history[0].correcaoId);
+});
+
+
+test('correção do mapa E2/E3: limpar identidade auxiliar já zerada mantém auditoria do SKU anterior', () => {
+  const id = '2-3-A1::ITEM::AAA::nenhuma';
+  const current = blankPhysicalSlot({ id, referencia: 'AAA', descricao: 'Produto AAA', saldo: 0, dataChacote: 'lote-a' });
+  const result = runMapCorrection([blankPhysicalSlot(), current], { ...current, referencia: '', descricao: '', saldo: 0, dataChacote: '' });
+  assert.equal(result.ok, true);
+  assert.equal(result.updatedSlots.find(slot => slot.id === id).referencia, '');
+  assert.equal(result.history.length, 1);
+  assert.equal(result.history[0].referencia, 'AAA');
+  assert.equal(result.history[0].quantidade, 0);
+  assert.equal(result.history[0].tipo, '');
+});
+
+
+test('correção do mapa: bloqueia SKU já ocupado na mesma identidade em outra linha da posição', () => {
+  const base = blankPhysicalSlot({ referencia: 'AAA', descricao: 'Produto AAA', saldo: 8 });
+  const duplicate = blankPhysicalSlot({
+    id: '2-3-A1::ITEM::BBB::teste', referencia: 'BBB', descricao: 'Produto BBB', saldo: 5, restricao: 'teste',
+  });
+  const source = { ...base, restricao: 'teste' };
+  const result = runMapCorrection([source, duplicate], { ...source, referencia: 'BBB', descricao: 'Produto BBB', saldo: 7 });
+  assert.equal(result.ok, false);
+  assert.match(result.reason, /duplicidade/i);
+});
+
+test('correção do mapa: bloqueia quantidade acima do limite inteiro do banco', () => {
+  const current = blankPhysicalSlot();
+  const result = runMapCorrection([current], { ...current, referencia: 'AAA', saldo: 2_147_483_648 });
+  assert.equal(result.ok, false);
+  assert.match(result.reason, /limite aceito pelo banco/i);
+});
+
+
+test('correção do mapa E2/E3: ajuste no registro físico base usa diferença e mantém o ID do endereço', () => {
+  const current = blankPhysicalSlot({ referencia: 'AAA', descricao: 'Produto AAA', saldo: 20, dataChacote: 'lote-a' });
+  const result = runMapCorrection([current], { ...current, saldo: 13, ultimaData: '28/10/2026', ultimaHora: '09:15', ultimoResponsavel: 'Teste' });
+  assert.equal(result.ok, true);
+  assert.equal(result.updatedSlots[0].id, current.id);
+  assert.equal(result.updatedSlots[0].saldo, 13);
+  assert.deepEqual(result.history.map(item => [item.slotId, item.referencia, item.tipo, item.quantidade]), [
+    [current.id, 'AAA', 'Saída', 7],
+  ]);
+});
+
+test('correção do mapa E2/E3: troca de SKU no ID físico base mantém a vaga e audita as duas identidades', () => {
+  const current = blankPhysicalSlot({ referencia: 'AAA', descricao: 'Produto AAA', saldo: 8, dataChacote: 'lote-a' });
+  const result = runMapCorrection([current], { ...current, referencia: 'BBB', descricao: 'Produto BBB', saldo: 6 });
+  assert.equal(result.ok, true);
+  assert.equal(result.updatedSlots.length, 1);
+  assert.equal(result.updatedSlots[0].id, current.id);
+  assert.equal(result.updatedSlots[0].referencia, 'BBB');
+  assert.deepEqual(result.history.map(item => [item.slotId, item.referencia, item.tipo, item.quantidade]), [
+    [current.id, 'AAA', 'Saída', 8],
+    [current.id, 'BBB', 'Entrada', 6],
+  ]);
 });

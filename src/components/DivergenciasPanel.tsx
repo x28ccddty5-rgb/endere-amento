@@ -17,6 +17,9 @@ interface DivergenciasPanelProps {
     observacao: string
   ) => Promise<boolean>;
   hasAccess: (level: "administrador" | "operador" | "consulta") => boolean;
+  canResolveDivergences?: boolean;
+  canExportReports?: boolean;
+  requestReportExportPermission?: () => Promise<boolean>;
 }
 
 export const DivergenciasPanel: React.FC<DivergenciasPanelProps> = ({
@@ -27,9 +30,12 @@ export const DivergenciasPanel: React.FC<DivergenciasPanelProps> = ({
   launchDate,
   onResolveDivergencia,
   hasAccess,
+  canResolveDivergences,
+  canExportReports = true,
+  requestReportExportPermission,
 }) => {
   const isReadOnly = isReadOnlyRole(currentUser?.role);
-  const canResolveDivergencia = canExecuteOperations(currentUser?.role);
+  const canResolveDivergencia = canResolveDivergences ?? canExecuteOperations(currentUser?.role);
   
   const [selectedDivergenciaId, setSelectedDivergenciaId] = useState<string | null>(null);
   const [resolveObservacao, setResolveObservacao] = useState<string>("");
@@ -117,7 +123,9 @@ export const DivergenciasPanel: React.FC<DivergenciasPanelProps> = ({
     }
   };
 
-  const handleExportCSV = () => {
+  const handleExportCSV = async () => {
+    if (!canExportReports) return;
+    if (requestReportExportPermission && !(await requestReportExportPermission())) return;
     let csvContent = "\uFEFF"; // BOM for excel utf8
     csvContent += "ID;Data;Estoque;Modulo/Rua;Posicao;Ref Atual;Ref Nova;Movimentacao;Responsavel;Status\n";
 
@@ -135,80 +143,110 @@ export const DivergenciasPanel: React.FC<DivergenciasPanelProps> = ({
     document.body.removeChild(link);
   };
 
-    const handlePrintPDF = () => {
+  const handlePrintPDF = async () => {
+    if (!canExportReports) return;
+    if (requestReportExportPermission && !(await requestReportExportPermission())) return;
+    const doc = new jsPDF({ orientation: "landscape" });
+    const pageWidth = doc.internal.pageSize.getWidth();
+    const pageHeight = doc.internal.pageSize.getHeight();
+    const generatedAt = new Date().toLocaleString("pt-BR");
+    const openCount = divergencias.filter(item => item.status === "Aberta").length;
+    const resolvedCount = divergencias.filter(item => item.status === "Corrigida").length;
+    const scopeLabel = showOnlyOpen ? "Somente divergências abertas" : "Abertas e corrigidas";
 
-    const doc = new jsPDF({
-      orientation: "landscape"
-    });
-  
-    doc.setFontSize(16);
-    doc.text(
-      "RELATÓRIO DE DIVERGÊNCIAS DE ESTOQUE",
-      14,
-      15
-    );
-  
-    doc.setFontSize(8);
-    doc.text(
-      `Gerado em ${new Date().toLocaleString("pt-BR")}`,
-      14,
-      22
-    );
-  
+    const drawHeader = () => {
+      doc.setFillColor(15, 23, 42);
+      doc.rect(0, 0, pageWidth, 30, "F");
+      doc.setFillColor(220, 38, 38);
+      doc.rect(0, 30, pageWidth, 2, "F");
+      doc.setTextColor(255, 255, 255);
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(8);
+      doc.text("PORTO BRASIL CERÂMICA  |  GESTÃO DE ARMAZENAGEM", 14, 9);
+      doc.setFontSize(17);
+      doc.text("Relatório de Divergências de Estoque", 14, 19);
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(8);
+      doc.text(scopeLabel.toUpperCase(), 14, 25);
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(8);
+      doc.text("CONTROLE OPERACIONAL", pageWidth - 14, 10, { align: "right" });
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(7.5);
+      doc.text(`Emitido em ${generatedAt}`, pageWidth - 14, 17, { align: "right" });
+
+      const cardY = 35;
+      const cardW = (pageWidth - 36) / 3;
+      const cards = [
+        { x: 14, label: "ENDEREÇOS NO RELATÓRIO", value: groupedDivergencias.length.toLocaleString("pt-BR"), color: [37, 99, 235] as [number, number, number] },
+        { x: 18 + cardW, label: "DIVERGÊNCIAS ABERTAS", value: openCount.toLocaleString("pt-BR"), color: [220, 38, 38] as [number, number, number] },
+        { x: 22 + cardW * 2, label: "TRATATIVAS CORRIGIDAS", value: resolvedCount.toLocaleString("pt-BR"), color: [5, 150, 105] as [number, number, number] },
+      ];
+      cards.forEach(card => {
+        doc.setFillColor(248, 250, 252);
+        doc.setDrawColor(226, 232, 240);
+        doc.roundedRect(card.x, cardY, cardW, 13, 1.5, 1.5, "FD");
+        doc.setTextColor(...card.color);
+        doc.setFont("helvetica", "bold");
+        doc.setFontSize(7);
+        doc.text(card.label, card.x + 4, cardY + 4.5);
+        doc.setFontSize(10);
+        doc.text(card.value, card.x + 4, cardY + 10.5);
+      });
+      doc.setTextColor(100, 116, 139);
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(7);
+      doc.text("Registros agrupados por endereço físico para facilitar a tratativa.", 14, 53);
+      doc.setDrawColor(226, 232, 240);
+      doc.line(14, 56, pageWidth - 14, 56);
+    };
+
     autoTable(doc, {
-      startY: 30,
-
+      startY: 60,
+      margin: { top: 60, bottom: 14, left: 14, right: 14 },
+      didDrawPage: () => {
+        drawHeader();
+        doc.setDrawColor(203, 213, 225);
+        doc.line(14, pageHeight - 10, pageWidth - 14, pageHeight - 10);
+        doc.setTextColor(100, 116, 139);
+        doc.setFont("helvetica", "normal");
+        doc.setFontSize(7);
+        doc.text("Documento gerado pelo sistema de endereçamento", 14, pageHeight - 5);
+        doc.text(`Página ${doc.getNumberOfPages()}`, pageWidth - 14, pageHeight - 5, { align: "right" });
+      },
       didParseCell: (data) => {
-
-      if (data.section !== "body") return;
-    
-      const row = groupedDivergencias[data.row.index];
-    
-      if (row.status === "Aberta") {
-        data.cell.styles.fillColor = [254, 242, 242];
-      }
-    
-    },
-      
+        if (data.section !== "body") return;
+        const row = groupedDivergencias[data.row.index];
+        if (row?.status === "Aberta") data.cell.styles.fillColor = [254, 242, 242];
+        if (row?.status === "Corrigida") data.cell.styles.fillColor = [236, 253, 245];
+      },
       head: [[
-        "Protocolo",
-        "Data",
-        "Motivo",
-        "Estoque",
-        "Módulo",
-        "Posição",
-        "Qtd",
-        "SKU Confl.",
-        "SKU Corr.",
-        "Saldo",
-        "Agente",
-        "Status"
+        "Protocolo", "Data", "Motivo", "Estoque", "Módulo", "Posição",
+        "Qtd", "SKU Confl.", "SKU Corr.", "Saldo", "Agente", "Status"
       ]],
-  
       body: groupedDivergencias.map((d: any) => [
-        d.id,
-        d.dataDivergencia,
-        d.tipoDivergencia,
-        d.estoque,
-        d.modulo,
-        d.posicao || "-",
-        d.qtdDivergencias,
-        d.refAtual || "-",
-        d.refNova || "-",
-        d.movimentacao,
-        d.responsavel,
-        d.status
-      ])
+        d.id, d.dataDivergencia, d.tipoDivergencia, d.estoque, d.modulo,
+        d.posicao || "-", d.qtdDivergencias, d.refAtual || "-", d.refNova || "-",
+        Number(d.movimentacao || 0).toLocaleString("pt-BR"), d.responsavel, d.status
+      ]),
+      styles: { font: "helvetica", fontSize: 7, cellPadding: 2, overflow: "linebreak", textColor: [51, 65, 85] },
+      headStyles: { fillColor: [30, 41, 59], textColor: [255, 255, 255], fontStyle: "bold", fontSize: 7 },
+      alternateRowStyles: { fillColor: [248, 250, 252] },
+      columnStyles: {
+        0: { cellWidth: 34 },
+        2: { cellWidth: 38 },
+        7: { cellWidth: 20 },
+        8: { cellWidth: 20 },
+        10: { cellWidth: 28 },
+      },
     });
-  
-    doc.save(
-      `Divergencias_${new Date()
-        .toISOString()
-        .slice(0,10)}.pdf`
-    );
+
+    doc.save(`Divergencias_${new Date().toISOString().slice(0, 10)}.pdf`);
   };
-  
-  const handlePrint = () => {
+
+  const handlePrint = async () => {
+  if (!canExportReports) return;
+  if (requestReportExportPermission && !(await requestReportExportPermission())) return;
 
   const printContent = document.getElementById("divergencias-print");
 
@@ -333,18 +371,22 @@ const tempoMedio =
             >
               {showOnlyOpen ? "Exibindo: Somente Abertas" : "Exibindo: Todas Divergências"}
             </button>
-            <button
-              onClick={handleExportCSV}
-              className="bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 rounded-lg px-3.5 py-2 text-xs font-bold transition flex items-center gap-1.5 cursor-pointer uppercase tracking-wider"
-            >
-              <FileSpreadsheet className="w-4 h-4" /> Exportar Excel
-            </button>
-            <button
-              onClick={handlePrintPDF}
-              className="bg-slate-55 bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-300 rounded-lg px-3.5 py-2 text-xs font-bold transition flex items-center gap-1.5 cursor-pointer uppercase tracking-wider"
-            >
-              <Printer className="w-4 h-4" /> Exportar PDF
-            </button>
+            {canExportReports && (
+              <>
+                <button
+                  onClick={handleExportCSV}
+                  className="bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 rounded-lg px-3.5 py-2 text-xs font-bold transition flex items-center gap-1.5 cursor-pointer uppercase tracking-wider"
+                >
+                  <FileSpreadsheet className="w-4 h-4" /> Exportar Excel
+                </button>
+                <button
+                  onClick={handlePrintPDF}
+                  className="bg-slate-55 bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-300 rounded-lg px-3.5 py-2 text-xs font-bold transition flex items-center gap-1.5 cursor-pointer uppercase tracking-wider"
+                >
+                  <Printer className="w-4 h-4" /> Exportar PDF
+                </button>
+              </>
+            )}
           </div>
         </div>
 

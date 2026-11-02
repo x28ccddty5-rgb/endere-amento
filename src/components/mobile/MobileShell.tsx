@@ -26,7 +26,6 @@ import type { Divergencia, Galpao, HistoricoMov, Product, Restricao, WarehouseSl
 import type { AppUser } from "../AdminUsersManagement";
 import { BaseDeDadosPanel } from "../BaseDeDadosPanel";
 import { WarehouseLayoutPanel } from "../WarehouseLayoutPanel";
-import { isAdmin } from "../../constants/permissions";
 
 type MobileTab = "endereçamento" | "lançamento" | "divergências" | "histórico" | "ai" | "base" | "configuracao";
 
@@ -38,7 +37,19 @@ interface MobileShellProps {
   history: HistoricoMov[];
   divergencias: Divergencia[];
   online: boolean;
-  canExecute: boolean;
+  canLaunch: boolean;
+  canTransfer: boolean;
+  canEditSlotMetadata: boolean;
+  showStockDetailsInSearch: boolean;
+  showSlotMetadataInSearch: boolean;
+  canResolveDivergences: boolean;
+  canViewStock: boolean;
+  canViewLaunch: boolean;
+  canViewDivergences: boolean;
+  canViewHistory: boolean;
+  canUseConsultor: boolean;
+  canViewProducts: boolean;
+  canViewWarehouseLayout: boolean;
   activeTab: string;
   onTabChange: (tab: MobileTab) => void;
   onUpdateSlot: (slot: WarehouseSlot) => Promise<boolean>;
@@ -195,7 +206,19 @@ export function MobileShell({
   history,
   divergencias,
   online,
-  canExecute,
+  canLaunch,
+  canTransfer,
+  canEditSlotMetadata,
+  showStockDetailsInSearch,
+  showSlotMetadataInSearch,
+  canResolveDivergences,
+  canViewStock,
+  canViewLaunch,
+  canViewDivergences,
+  canViewHistory,
+  canUseConsultor,
+  canViewProducts,
+  canViewWarehouseLayout,
   activeTab,
   onTabChange,
   onUpdateSlot,
@@ -540,7 +563,7 @@ export function MobileShell({
   };
 
   const submitDivergenciaCorrection = async () => {
-    if (!selectedDivergencia || !canExecute || resolvingDivergencia) return;
+    if (!selectedDivergencia || !canResolveDivergences || resolvingDivergencia) return;
 
     setResolvingDivergencia(true);
 
@@ -802,7 +825,7 @@ export function MobileShell({
   }, [scannerTarget, slots, scannerZoom]);
 
   const handleLaunch = async () => {
-    if (!canExecute || launching) return;
+    if (!canLaunch || launching) return;
 
     const qty = Number(quantidade);
     if (!Number.isInteger(qty) || qty <= 0) {
@@ -856,7 +879,7 @@ export function MobileShell({
   };
 
   const handleTransfer = async () => {
-    if (!canExecute || launching) return;
+    if (!canTransfer || launching) return;
 
     if (!sourceId || !destinationId) {
       window.alert("Selecione a posição de origem e a posição de destino.");
@@ -878,18 +901,16 @@ export function MobileShell({
   };
 
   const navItems: Array<{ id: MobileTab; label: string; icon: typeof PackageSearch; badge?: number }> = [
-    { id: "endereçamento", label: "Estoque", icon: PackageSearch },
-    { id: "lançamento", label: "Movimentar", icon: PackagePlus },
-    { id: "divergências", label: "Divergências", icon: TriangleAlert, badge: openDivergencias.length },
-    { id: "histórico", label: "Histórico", icon: ClipboardList },
-    { id: "ai", label: "Consultor", icon: BrainCircuit },
-    ...(isAdmin(currentUser?.role)
-      ? [
-          { id: "base" as const, label: "SKUs", icon: Boxes },
-          { id: "configuracao" as const, label: "Estrutura", icon: Warehouse },
-        ]
-      : []),
+    ...(canViewStock ? [{ id: "endereçamento" as const, label: "Estoque", icon: PackageSearch }] : []),
+    ...(canViewLaunch ? [{ id: "lançamento" as const, label: "Movimentar", icon: PackagePlus }] : []),
+    ...(canViewDivergences ? [{ id: "divergências" as const, label: "Divergências", icon: TriangleAlert, badge: openDivergencias.length }] : []),
+    ...(canViewHistory ? [{ id: "histórico" as const, label: "Histórico", icon: ClipboardList }] : []),
+    ...(canUseConsultor ? [{ id: "ai" as const, label: "Consultor", icon: BrainCircuit }] : []),
+    ...(canViewProducts ? [{ id: "base" as const, label: "SKUs", icon: Boxes }] : []),
+    ...(canViewWarehouseLayout ? [{ id: "configuracao" as const, label: "Estrutura", icon: Warehouse }] : []),
   ];
+  const primaryNavItems = navItems.filter(item => item.id !== "base" && item.id !== "configuracao");
+  const hasSecondaryNav = canViewProducts || canViewWarehouseLayout;
 
   return (
     <div className="fixed inset-0 z-[100] flex h-[100dvh] w-full flex-col bg-slate-50 pt-[env(safe-area-inset-top)] text-slate-800">
@@ -929,7 +950,7 @@ export function MobileShell({
 
       <main
         className={`min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 pt-4 ${
-          keyboardOpen ? "pb-6" : (isAdmin(currentUser?.role) ? "pb-32" : "pb-20")
+          keyboardOpen ? "pb-6" : (hasSecondaryNav ? "pb-32" : "pb-20")
         }`}
         style={{
           paddingBottom: keyboardOpen
@@ -937,12 +958,18 @@ export function MobileShell({
             : undefined,
         }}
       >
-        {activeTab === "endereçamento" && (
+        {navItems.length === 0 && (
+          <section role="status" className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+            Seu perfil não possui módulos liberados no momento. Solicite ao Administrador a revisão das permissões.
+          </section>
+        )}
+
+        {activeTab === "endereçamento" && canViewStock && (
           <section className="space-y-4">
             <div>
               <h1 className="text-xl font-black tracking-tight">Pesquisa</h1>
               <p className="mt-1 text-xs font-medium text-slate-500">
-                Encontre rapidamente produto, saldo e posição.
+                Pesquise referências e endereços autorizados.
               </p>
             </div>
 
@@ -983,7 +1010,7 @@ export function MobileShell({
               <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
                 <div className="mb-3 text-[10px] font-black uppercase tracking-wider text-slate-400">Refinar pesquisa</div>
                 <div className="grid grid-cols-2 gap-2">
-                  <label className="text-[10px] font-black uppercase text-slate-400">
+                  {showSlotMetadataInSearch && <label className="text-[10px] font-black uppercase text-slate-400">
                     Galpão
                     <select
                       value={searchGalpao}
@@ -994,8 +1021,8 @@ export function MobileShell({
                       <option value="3">Galpão 3</option>
                       <option value="12">Galpão 12</option>
                     </select>
-                  </label>
-                  <label className="text-[10px] font-black uppercase text-slate-400">
+                  </label>}
+                  {showSlotMetadataInSearch && <label className="text-[10px] font-black uppercase text-slate-400">
                     Restrição
                     <select
                       value={searchRestricao}
@@ -1008,8 +1035,8 @@ export function MobileShell({
                       <option value="autorizacao">Solicitar autorização</option>
                       <option value="outra">Outro motivo</option>
                     </select>
-                  </label>
-                  <label className="text-[10px] font-black uppercase text-slate-400">
+                  </label>}
+                  {showSlotMetadataInSearch && <label className="text-[10px] font-black uppercase text-slate-400">
                     Observação
                     <input
                       type="text"
@@ -1018,7 +1045,7 @@ export function MobileShell({
                       placeholder="Buscar observação"
                       className="mt-1 h-11 w-full rounded-xl border border-slate-200 px-3 text-base font-bold text-slate-700"
                     />
-                  </label>
+                  </label>}
 
                   <label className="text-[10px] font-black uppercase text-slate-400">
                     Endereço
@@ -1043,14 +1070,14 @@ export function MobileShell({
                     </select>
                   </label>
 
-                  <label className="col-span-2 flex min-h-11 items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 text-[10px] font-black uppercase text-indigo-600">
+                  {showStockDetailsInSearch && <label className="col-span-2 flex min-h-11 items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 text-[10px] font-black uppercase text-indigo-600">
                     <input
                       type="checkbox"
                       checked={searchAbovePalletizacao}
                       onChange={event => setSearchAbovePalletizacao(event.target.checked)}
                     />
                     Apenas acima da paletização
-                  </label>
+                  </label>}
                 </div>
 
                 <label className="mt-2 block text-[10px] font-black uppercase text-slate-400">
@@ -1095,7 +1122,9 @@ export function MobileShell({
                   >
                     <button
                       type="button"
+                      disabled={!canViewLaunch}
                       onClick={() => {
+                        if (!canViewLaunch) return;
                         setLaunchType("Entrada");
                         setEstoque(slot.estoque);
                         setModulo(normalizeModule(slot.modulo));
@@ -1108,7 +1137,7 @@ export function MobileShell({
                         setObservacao(slot.observacao || "");
                         onTabChange("lançamento");
                       }}
-                      className="w-full text-left active:scale-[0.99]"
+                      className="w-full text-left active:scale-[0.99] disabled:cursor-default"
                     >
                     <div className="flex items-start justify-between gap-3">
                       <div className="min-w-0">
@@ -1120,7 +1149,7 @@ export function MobileShell({
                         </div>
                       </div>
                        <div className="flex shrink-0 items-start gap-2">
-                         {slot.dataChacote && (
+                         {showSlotMetadataInSearch && slot.dataChacote && (
                            <div className="rounded-lg bg-amber-50 px-2 py-1 text-right">
                              <span className="block text-[8px] font-black uppercase tracking-wide text-amber-600">
                                Chacote
@@ -1141,52 +1170,56 @@ export function MobileShell({
                           {formatAddress(slot)}
                         </span>
                       </div>
-                      <div className="rounded-xl bg-blue-50 p-2.5">
-                        <span className="block text-[9px] font-black uppercase text-blue-400">Saldo</span>
-                        <span className="mt-1 block font-black text-blue-700">
-                          {slot.saldo.toLocaleString("pt-BR")} pçs
+                      {showStockDetailsInSearch && (
+                        <div className="rounded-xl bg-blue-50 p-2.5">
+                          <span className="block text-[9px] font-black uppercase text-blue-400">Saldo</span>
+                          <span className="mt-1 block font-black text-blue-700">
+                            {slot.saldo.toLocaleString("pt-BR")} pçs
+                          </span>
+                        </div>
+                      )}
+                    </div>
+
+                    {showSlotMetadataInSearch && (
+                      <div className="mt-2 flex flex-wrap gap-1.5">
+                        <span className={`rounded-full px-2 py-1 text-[9px] font-black uppercase ${
+                          slot.galpao === "12"
+                            ? "bg-red-50 text-red-700"
+                            : "bg-slate-100 text-slate-600"
+                        }`}>
+                          GALPÃO {slot.galpao || "3"}
                         </span>
+                        {slot.galpao === "12" && (
+                          <span className="rounded-full border border-red-200 bg-red-50 px-2.5 py-1.5 text-[11px] font-black uppercase text-red-700 shadow-sm">
+                            🔴 SOLICITAR AUTORIZAÇÃO
+                          </span>
+                        )}
+                        {slot.galpao !== "12" && slot.restricao === "teste" && (
+                          <span className="rounded-full border border-orange-200 bg-orange-50 px-2.5 py-1.5 text-[11px] font-black uppercase text-orange-700 shadow-sm">
+                            🟠 TESTE — NÃO SEPARAR
+                          </span>
+                        )}
+                        {slot.galpao !== "12" && slot.restricao === "autorizacao" && (
+                          <span className="rounded-full border border-red-200 bg-red-50 px-2.5 py-1.5 text-[11px] font-black uppercase text-red-700 shadow-sm">
+                            🔴 SOLICITAR AUTORIZAÇÃO
+                          </span>
+                        )}
+                        {slot.galpao !== "12" && slot.restricao === "outra" && (
+                          <span className="rounded-full border border-purple-200 bg-purple-50 px-2.5 py-1.5 text-[11px] font-black uppercase text-purple-700 shadow-sm">
+                            🟣 OUTRA RESTRIÇÃO
+                          </span>
+                        )}
                       </div>
-                    </div>
+                    )}
 
-                    <div className="mt-2 flex flex-wrap gap-1.5">
-                      <span className={`rounded-full px-2 py-1 text-[9px] font-black uppercase ${
-                        slot.galpao === "12"
-                          ? "bg-red-50 text-red-700"
-                          : "bg-slate-100 text-slate-600"
-                      }`}>
-                        GALPÃO {slot.galpao || "3"}
-                      </span>
-                      {slot.galpao === "12" && (
-                        <span className="rounded-full border border-red-200 bg-red-50 px-2.5 py-1.5 text-[11px] font-black uppercase text-red-700 shadow-sm">
-                          🔴 SOLICITAR AUTORIZAÇÃO
-                        </span>
-                      )}
-                      {slot.galpao !== "12" && slot.restricao === "teste" && (
-                        <span className="rounded-full border border-orange-200 bg-orange-50 px-2.5 py-1.5 text-[11px] font-black uppercase text-orange-700 shadow-sm">
-                          🟠 TESTE — NÃO SEPARAR
-                        </span>
-                      )}
-                      {slot.galpao !== "12" && slot.restricao === "autorizacao" && (
-                        <span className="rounded-full border border-red-200 bg-red-50 px-2.5 py-1.5 text-[11px] font-black uppercase text-red-700 shadow-sm">
-                          🔴 SOLICITAR AUTORIZAÇÃO
-                        </span>
-                      )}
-                      {slot.galpao !== "12" && slot.restricao === "outra" && (
-                        <span className="rounded-full border border-purple-200 bg-purple-50 px-2.5 py-1.5 text-[11px] font-black uppercase text-purple-700 shadow-sm">
-                          🟣 OUTRA RESTRIÇÃO
-                        </span>
-                      )}
-                    </div>
-
-                    {slot.observacao && (
+                    {showSlotMetadataInSearch && slot.observacao && (
                       <div className="mt-2 text-xs font-semibold leading-relaxed text-slate-600">
                         Obs.: {slot.observacao}
                       </div>
                     )}
                     </button>
 
-                    {canExecute && (
+                    {canEditSlotMetadata && (
                       <div className="mt-3 border-t border-slate-100 pt-3">
                         {editingSlotId === slot.id ? (
                           <div className="space-y-2">
@@ -1312,7 +1345,7 @@ export function MobileShell({
           </section>
         )}
 
-        {activeTab === "lançamento" && (
+        {activeTab === "lançamento" && canViewLaunch && (
           <section className="space-y-4">
             <div>
               <h1 className="text-xl font-black tracking-tight">Lançamento</h1>
@@ -1321,9 +1354,9 @@ export function MobileShell({
               </p>
             </div>
 
-            {!canExecute && (
+            {!canLaunch && (
               <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-xs font-bold text-amber-800">
-                Perfil Visualizador: você pode consultar esta área, mas não pode executar operações.
+                Seu perfil pode consultar esta área, mas não possui autorização para registrar entradas ou saídas.
               </div>
             )}
 
@@ -1581,7 +1614,7 @@ export function MobileShell({
 
                 <button
                   type="button"
-                  disabled={!canExecute || launching || !online}
+                  disabled={!canLaunch || launching || !online}
                   onClick={() => void handleLaunch()}
                   className="flex min-h-14 w-full items-center justify-center gap-2 rounded-2xl bg-blue-600 px-5 text-sm font-black uppercase tracking-wide text-white shadow-lg shadow-blue-600/20 disabled:cursor-not-allowed disabled:opacity-40"
                 >
@@ -1749,7 +1782,7 @@ export function MobileShell({
 
                 <button
                   type="button"
-                  disabled={!canExecute || launching || !online}
+                  disabled={!canTransfer || launching || !online}
                   onClick={() => void handleTransfer()}
                   className="flex min-h-14 w-full items-center justify-center gap-2 rounded-2xl bg-indigo-600 text-sm font-black uppercase tracking-wide text-white shadow-lg shadow-indigo-600/20 disabled:opacity-40"
                 >
@@ -1761,7 +1794,7 @@ export function MobileShell({
           </section>
         )}
 
-        {activeTab === "divergências" && (
+        {activeTab === "divergências" && canViewDivergences && (
           <section className="space-y-4">
             <div className="flex items-end justify-between">
               <div>
@@ -1816,7 +1849,7 @@ export function MobileShell({
                   {div.observacao || "Divergência gerada durante a operação."}
                 </div>
 
-                {canExecute && (
+                {canResolveDivergences && (
                   <button
                     type="button"
                     onClick={() => openDivergenciaCorrection(div)}
@@ -1935,7 +1968,7 @@ export function MobileShell({
           </section>
         )}
 
-        {activeTab === "histórico" && (
+        {activeTab === "histórico" && canViewHistory && (
           <section className="space-y-4">
             <div>
               <h1 className="text-xl font-black tracking-tight">Histórico</h1>
@@ -2069,7 +2102,7 @@ export function MobileShell({
           </section>
         )}
 
-        {activeTab === "ai" && (
+        {activeTab === "ai" && canUseConsultor && (
           <section className="flex min-h-full flex-col">
             <div className="mb-3">
               <h1 className="text-xl font-black tracking-tight">Celso • Consultor de Estoque</h1>
@@ -2166,7 +2199,7 @@ export function MobileShell({
             )}
           </section>
         )}
-        {activeTab === "base" && isAdmin(currentUser?.role) && (
+        {activeTab === "base" && canViewProducts && (
           <section className="space-y-4 [&_input]:text-base [&_textarea]:text-base [&_select]:text-base">
             <div>
               <h1 className="text-xl font-black tracking-tight">Base de Dados</h1>
@@ -2180,7 +2213,7 @@ export function MobileShell({
           </section>
         )}
 
-        {activeTab === "configuracao" && isAdmin(currentUser?.role) && (
+        {activeTab === "configuracao" && canViewWarehouseLayout && (
           <section className="space-y-4 [&_input]:text-base [&_textarea]:text-base [&_select]:text-base">
             <div>
               <h1 className="text-xl font-black tracking-tight">Configuração de Estoque</h1>
@@ -2196,16 +2229,16 @@ export function MobileShell({
 
       </main>
 
+      {navItems.length > 0 && (
       <nav
         className={`fixed inset-x-0 bottom-0 z-20 border-t border-slate-200 bg-white/95 pb-[env(safe-area-inset-bottom)] shadow-[0_-4px_18px_rgba(15,23,42,0.08)] backdrop-blur transition-transform duration-150 ${
           keyboardOpen ? "translate-y-full" : "translate-y-0"
         }`}
         aria-hidden={keyboardOpen}
       >
+        {primaryNavItems.length > 0 && (
         <div className="grid grid-cols-5">
-          {navItems
-            .filter(item => item.id !== "base" && item.id !== "configuracao")
-            .map(item => {
+          {primaryNavItems.map(item => {
               const Icon = item.icon;
               const active = activeTab === item.id;
               return (
@@ -2228,9 +2261,10 @@ export function MobileShell({
               );
             })}
         </div>
+        )}
 
-        {isAdmin(currentUser?.role) && (
-          <div className="grid grid-cols-2 border-t border-slate-100 bg-slate-50">
+        {hasSecondaryNav && (
+          <div className={`grid border-t border-slate-100 bg-slate-50 ${canViewProducts && canViewWarehouseLayout ? "grid-cols-2" : "grid-cols-1"}`}>
             {navItems
               .filter(item => item.id === "base" || item.id === "configuracao")
               .map(item => {
@@ -2253,6 +2287,7 @@ export function MobileShell({
           </div>
         )}
       </nav>
+      )}
 
       {scannerTarget && (
         <div className="fixed inset-0 z-[200] flex h-[100dvh] flex-col bg-slate-950 pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)]">

@@ -1,0 +1,102 @@
+\set ON_ERROR_STOP on
+
+DO $preflight$
+BEGIN
+  IF pg_catalog.to_regprocedure('public.has_app_permissions(text[])') IS NULL THEN
+    RAISE EXCEPTION 'SMOKE_TEST_REQUIRES_PERMISSION_SCOPED_CHECK_MIGRATION';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM auth.users WHERE email = 'admin-permissoes@local.test')
+     OR NOT EXISTS (SELECT 1 FROM auth.users WHERE email = 'rafael-permissoes@local.test')
+     OR NOT EXISTS (SELECT 1 FROM auth.users WHERE email = 'producao-permissoes@local.test')
+     OR NOT EXISTS (SELECT 1 FROM auth.users WHERE email = 'visualizador-permissoes@local.test') THEN
+    RAISE EXCEPTION 'SMOKE_TEST_REQUIRES_ALL_PERMISSION_SANDBOX_USERS';
+  END IF;
+END;
+$preflight$;
+
+BEGIN;
+
+SELECT u.id::text AS admin_id FROM auth.users u WHERE u.email = 'admin-permissoes@local.test' \gset
+SELECT u.id::text AS rafael_id FROM auth.users u WHERE u.email = 'rafael-permissoes@local.test' \gset
+SELECT u.id::text AS production_id FROM auth.users u WHERE u.email = 'producao-permissoes@local.test' \gset
+SELECT u.id::text AS viewer_id FROM auth.users u WHERE u.email = 'visualizador-permissoes@local.test' \gset
+
+SELECT pg_catalog.set_config('request.jwt.claim.sub', :'admin_id', TRUE);
+SELECT pg_catalog.set_config('request.jwt.claims', pg_catalog.jsonb_build_object('sub', :'admin_id', 'role', 'authenticated')::text, TRUE);
+SET LOCAL ROLE authenticated;
+
+DO $test_admin$
+BEGIN
+  IF NOT public.has_app_permissions(ARRAY['reports.export', 'dashboard.view']) THEN
+    RAISE EXCEPTION 'SCOPED_CHECK_ADMIN_POSITIVE_FAILED';
+  END IF;
+  IF public.has_app_permissions(ARRAY['reports.export', 'unknown.permission']) THEN
+    RAISE EXCEPTION 'SCOPED_CHECK_UNKNOWN_KEY_DID_NOT_FAIL_CLOSED';
+  END IF;
+  IF public.has_app_permissions(ARRAY['reports.export', 'reports.export']) THEN
+    RAISE EXCEPTION 'SCOPED_CHECK_DUPLICATE_KEY_DID_NOT_FAIL_CLOSED';
+  END IF;
+  IF public.has_app_permissions(ARRAY[]::text[]) THEN
+    RAISE EXCEPTION 'SCOPED_CHECK_EMPTY_LIST_DID_NOT_FAIL_CLOSED';
+  END IF;
+  RAISE NOTICE 'PASS: Admin positive path, unknown key, duplicates and empty array.';
+END;
+$test_admin$;
+
+SELECT pg_catalog.set_config('request.jwt.claim.sub', :'viewer_id', TRUE);
+SELECT pg_catalog.set_config('request.jwt.claims', pg_catalog.jsonb_build_object('sub', :'viewer_id', 'role', 'authenticated')::text, TRUE);
+DO $test_viewer$
+BEGIN
+  IF NOT public.has_app_permissions(ARRAY['reports.export', 'stock.search']) THEN
+    RAISE EXCEPTION 'SCOPED_CHECK_VIEWER_SEARCH_EXPORT_EXPECTED_TRUE';
+  END IF;
+  IF NOT public.has_app_permissions(ARRAY['reports.export', 'dashboard.view', 'stock.details.view']) THEN
+    RAISE EXCEPTION 'SCOPED_CHECK_VIEWER_DASHBOARD_DETAILS_EXPECTED_TRUE';
+  END IF;
+  IF public.has_app_permissions(ARRAY['reports.export', 'users.view']) THEN
+    RAISE EXCEPTION 'SCOPED_CHECK_VIEWER_USERS_VIEW_EXPECTED_FALSE';
+  END IF;
+  RAISE NOTICE 'PASS: Viewer allowed scopes and denied admin scope.';
+END;
+$test_viewer$;
+
+SELECT pg_catalog.set_config('request.jwt.claim.sub', :'rafael_id', TRUE);
+SELECT pg_catalog.set_config('request.jwt.claims', pg_catalog.jsonb_build_object('sub', :'rafael_id', 'role', 'authenticated')::text, TRUE);
+DO $test_apoio$
+BEGIN
+  IF NOT public.has_app_permissions(ARRAY['stock.search']) THEN
+    RAISE EXCEPTION 'SCOPED_CHECK_APOIO_SEARCH_EXPECTED_TRUE';
+  END IF;
+  IF public.has_app_permissions(ARRAY['reports.export', 'stock.search']) THEN
+    RAISE EXCEPTION 'SCOPED_CHECK_APOIO_EXPORT_EXPECTED_FALSE';
+  END IF;
+  IF public.has_app_permissions(ARRAY['reports.export', 'dashboard.view']) THEN
+    RAISE EXCEPTION 'SCOPED_CHECK_APOIO_DASHBOARD_EXPORT_EXPECTED_FALSE';
+  END IF;
+  RAISE NOTICE 'PASS: Apoio retains search but cannot export or access dashboard scope.';
+END;
+$test_apoio$;
+
+SELECT pg_catalog.set_config('request.jwt.claim.sub', :'production_id', TRUE);
+SELECT pg_catalog.set_config('request.jwt.claims', pg_catalog.jsonb_build_object('sub', :'production_id', 'role', 'authenticated')::text, TRUE);
+DO $test_production$
+BEGIN
+  IF NOT public.has_app_permissions(ARRAY['reports.export', 'stock.search']) THEN
+    RAISE EXCEPTION 'SCOPED_CHECK_PRODUCTION_SEARCH_EXPORT_EXPECTED_TRUE';
+  END IF;
+  IF public.has_app_permissions(ARRAY['reports.export', 'stock.search', 'stock.details.view']) THEN
+    RAISE EXCEPTION 'SCOPED_CHECK_PRODUCTION_DETAILED_STOCK_EXPORT_EXPECTED_FALSE';
+  END IF;
+  IF public.has_app_permissions(ARRAY['reports.export', 'history.view']) THEN
+    RAISE EXCEPTION 'SCOPED_CHECK_PRODUCTION_HISTORY_EXPORT_EXPECTED_FALSE';
+  END IF;
+  IF public.has_app_permissions(ARRAY['reports.export', 'divergences.view']) THEN
+    RAISE EXCEPTION 'SCOPED_CHECK_PRODUCTION_DIVERGENCES_EXPORT_EXPECTED_FALSE';
+  END IF;
+  RAISE NOTICE 'PASS: Produção can export search scope but not history/divergence scopes.';
+END;
+$test_production$;
+
+RESET ROLE;
+ROLLBACK;
+SELECT 'SMOKE_TEST_COMPLETED_ROLLED_BACK' AS result;

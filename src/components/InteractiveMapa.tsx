@@ -10,7 +10,7 @@ import { getE1ActiveLayout, getE1CapacityMap, getE1TotalCapacity } from "../lib/
 
 interface InteractiveMapaProps {
   slots: WarehouseSlot[];
-  onQuickUpdateSlot: (updatedSlot: WarehouseSlot) => void;
+  onQuickUpdateSlot: (updatedSlot: WarehouseSlot, expectedSlot: WarehouseSlot) => Promise<{ ok: boolean; selectedSlotId?: string | null }>;
   productsList: Product[];
   currentUser: any;
   e1Layout: WarehouseLayoutEntry[];
@@ -42,10 +42,12 @@ export const InteractiveMapa: React.FC<InteractiveMapaProps> = ({
 
   // Quick edit status
   const [editingSlotId, setEditingSlotId] = useState<string | null>(null);
+  const [editingSlotSnapshot, setEditingSlotSnapshot] = useState<WarehouseSlot | null>(null);
   const [editRef, setEditRef] = useState("");
   const [editQty, setEditQty] = useState<number>(0);
   const [editChacote, setChacote] = useState("");
   const [editOperator, setEditOperator] = useState("");
+  const [isSavingQuickCorrection, setIsSavingQuickCorrection] = useState(false);
 
   const activeE1Layout = getE1ActiveLayout(e1Layout);
   const e1CapacityMap = getE1CapacityMap(e1Layout);
@@ -403,9 +405,11 @@ if (estoque === "2") {
   const handleSelectSlot = (s: WarehouseSlot) => {
     setSelectedSlotId(s.id);
     setEditingSlotId(null);
+    setEditingSlotSnapshot(null);
   };
 
   const startEditSlot = (s: WarehouseSlot) => {
+    setEditingSlotSnapshot({ ...s });
     setEditingSlotId(s.id);
     setEditRef(s.referencia);
     setEditQty(s.saldo);
@@ -413,8 +417,14 @@ if (estoque === "2") {
     setEditOperator(s.ultimoResponsavel || "Matheus Costa");
   };
 
-  const saveQuickCorrection = () => {
-    if (!selectedSlot) return;
+  const saveQuickCorrection = async () => {
+    if (!selectedSlot || !editingSlotSnapshot || isSavingQuickCorrection) return;
+
+    const quantity = Number(editQty);
+    if (!Number.isSafeInteger(quantity) || quantity < 0) {
+      window.alert("Informe um saldo inteiro, maior ou igual a zero.");
+      return;
+    }
 
     let cleanRef = editRef.trim().toUpperCase();
     if (cleanRef.startsWith("S")) {
@@ -431,7 +441,7 @@ if (estoque === "2") {
       ...selectedSlot,
       referencia: cleanRef,
       descricao: desc,
-      saldo: Number(editQty),
+      saldo: quantity,
       dataChacote: editChacote,
       ultimaData: new Date().toLocaleDateString("pt-BR"),
       ultimaHora: new Date().toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" }),
@@ -444,9 +454,19 @@ if (estoque === "2") {
       updated.dataChacote = "";
     }
 
-    onQuickUpdateSlot(updated);
-    setEditingSlotId(null);
-    setSelectedSlotId(updated.id);
+    setIsSavingQuickCorrection(true);
+    try {
+      const result = await onQuickUpdateSlot(updated, editingSlotSnapshot);
+      if (!result.ok) return;
+      setEditingSlotId(null);
+      setEditingSlotSnapshot(null);
+      setSelectedSlotId(result.selectedSlotId !== undefined ? result.selectedSlotId : updated.id);
+    } catch (error) {
+      console.error("Não foi possível confirmar a correção rápida do mapa.", error);
+      window.alert("A correção não foi confirmada. Não tente repeti-la automaticamente; atualize os dados e confira o endereço e o histórico.");
+    } finally {
+      setIsSavingQuickCorrection(false);
+    }
   };
 
   // Get or dynamically create slot on map interactions so user never faces a broken state
@@ -1130,15 +1150,16 @@ if (estoque === "2") {
 
                   <div className="flex gap-2 pt-2">
                     <button
-                      onClick={() => !isReadOnly && saveQuickCorrection()}
-                      disabled={isReadOnly}
-                      className="flex-1 bg-blue-600 text-white rounded py-1.5 text-xs font-bold hover:bg-blue-700 flex items-center justify-center gap-1 shadow-sm cursor-pointer"
+                      onClick={() => !isReadOnly && void saveQuickCorrection()}
+                      disabled={isReadOnly || isSavingQuickCorrection}
+                      className="flex-1 bg-blue-600 text-white rounded py-1.5 text-xs font-bold hover:bg-blue-700 flex items-center justify-center gap-1 shadow-sm cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed"
                     >
-                      <Check className="w-3.5 h-3.5" /> Confirmar
+                      <Check className="w-3.5 h-3.5" /> {isSavingQuickCorrection ? "Salvando..." : "Confirmar"}
                     </button>
                     <button
-                      onClick={() => setEditingSlotId(null)}
-                      className="flex-1 bg-slate-200 text-slate-700 rounded py-1.5 text-xs font-bold hover:bg-slate-300 cursor-pointer"
+                      onClick={() => { setEditingSlotId(null); setEditingSlotSnapshot(null); }}
+                      disabled={isSavingQuickCorrection}
+                      className="flex-1 bg-slate-200 text-slate-700 rounded py-1.5 text-xs font-bold hover:bg-slate-300 cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed"
                     >
                       Cancelar
                     </button>

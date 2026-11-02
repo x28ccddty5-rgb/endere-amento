@@ -84,6 +84,8 @@ interface DashboardCardsProps {
   warehousePositions: WarehousePositionConfig[];
   appMode?: string;
   canPerformActions?: boolean;
+  canExportReports?: boolean;
+  requestReportExportPermission?: () => Promise<boolean>;
 }
 
 interface OccupancySnapshot {
@@ -104,7 +106,9 @@ export const DashboardCards: React.FC<DashboardCardsProps> = ({
   e1CapacityTotal,
   warehousePositions,
   appMode,
-  canPerformActions = false
+  canPerformActions = false,
+  canExportReports = true,
+  requestReportExportPermission,
 }) => {
 
   const [showOccupancyAnalysis, setShowOccupancyAnalysis] = useState(false);
@@ -113,6 +117,7 @@ export const DashboardCards: React.FC<DashboardCardsProps> = ({
   const [showSkuAnalysis, setShowSkuAnalysis] = useState(false);
   const [showTotalStockAnalysis, setShowTotalStockAnalysis] = useState(false);
   const [occupancyHistory, setOccupancyHistory] = useState<OccupancySnapshot[]>([]);
+  const [occupancyHistoryLoaded, setOccupancyHistoryLoaded] = useState(false);
   const occupancyWriteTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastAutomaticOccupancyAttemptRef = useRef(0);
   
@@ -235,7 +240,10 @@ export const DashboardCards: React.FC<DashboardCardsProps> = ({
       return false;
     }
 
-    if (shouldUpdate()) setOccupancyHistory((response.data || []) as OccupancySnapshot[]);
+    if (shouldUpdate()) {
+      setOccupancyHistory((response.data || []) as OccupancySnapshot[]);
+      setOccupancyHistoryLoaded(true);
+    }
     return true;
   };
 
@@ -278,39 +286,55 @@ export const DashboardCards: React.FC<DashboardCardsProps> = ({
   const totalStoredQuantity = slotSummary.storedQuantity;
 
   useEffect(() => {
-    if (!canPerformActions || totalSlots <= 0) return;
+    // Só avalia gravação automática depois de ler os snapshots atuais. Isso evita
+    // sobrescrever o snapshot do dia logo ao montar o dashboard sem comparar o estado salvo.
+    if (!occupancyHistoryLoaded || !canPerformActions || totalSlots <= 0) return;
 
-    // Um snapshot diário não precisa ser regravado a cada movimentação. Debounce
-    // mudanças rápidas de slots e limite gravações automáticas a no máximo uma
-    // a cada 15 minutos; erro terminal abre o circuito compartilhado.
     if (occupancyWriteTimerRef.current !== null) {
       clearTimeout(occupancyWriteTimerRef.current);
+      occupancyWriteTimerRef.current = null;
     }
 
+    const snapshotNow = new Date();
+    const today = `${snapshotNow.getFullYear()}-${String(snapshotNow.getMonth() + 1).padStart(2, "0")}-${String(snapshotNow.getDate()).padStart(2, "0")}`;
+    const payload: OccupancySnapshot = {
+      snapshot_date: today,
+      occupied_positions: occupiedSlots,
+      free_positions: freeSlots,
+      total_positions: totalSlots,
+      occupancy_percent: Number(occupationRate.toFixed(2)),
+      total_pieces: totalStoredQuantity,
+    };
+    const todaySnapshot = occupancyHistory.find(item => item.snapshot_date === today);
+    const snapshotUnchanged = todaySnapshot &&
+      todaySnapshot.occupied_positions === payload.occupied_positions &&
+      todaySnapshot.free_positions === payload.free_positions &&
+      todaySnapshot.total_positions === payload.total_positions &&
+      Number(todaySnapshot.occupancy_percent) === payload.occupancy_percent &&
+      todaySnapshot.total_pieces === payload.total_pieces;
+
+    // Abrir/fechar o dashboard sem mudança real não deve gerar um upsert de novo.
+    if (snapshotUnchanged) return;
+
+    // Um snapshot do dia pode ser atualizado no máximo uma vez a cada 15 minutos.
     const now = Date.now();
     const remainingCooldown = Math.max(0, 15 * 60 * 1000 - (now - lastAutomaticOccupancyAttemptRef.current));
     const delay = Math.max(750, remainingCooldown);
 
     occupancyWriteTimerRef.current = setTimeout(() => {
       occupancyWriteTimerRef.current = null;
-      const snapshotNow = new Date();
-      const today = `${snapshotNow.getFullYear()}-${String(snapshotNow.getMonth() + 1).padStart(2, "0")}-${String(snapshotNow.getDate()).padStart(2, "0")}`;
-      const payload = {
-        snapshot_date: today,
-        occupied_positions: occupiedSlots,
-        free_positions: freeSlots,
-        total_positions: totalSlots,
-        occupancy_percent: Number(occupationRate.toFixed(2)),
-        total_pieces: totalStoredQuantity,
-      };
-
       lastAutomaticOccupancyAttemptRef.current = Date.now();
       void guardedSupabaseRequest("occupancy-history.write", () =>
         supabase.from("occupancy_history").upsert(payload, { onConflict: "snapshot_date" })
       ).then(({ error, blocked }) => {
-        if (error && !blocked) {
-          console.error("Erro ao registrar snapshot automático de ocupação:", error);
+        if (error) {
+          if (!blocked) console.error("Erro ao registrar snapshot automático de ocupação:", error);
+          return;
         }
+        setOccupancyHistory(current => [
+          ...current.filter(item => item.snapshot_date !== today),
+          payload,
+        ].sort((a, b) => a.snapshot_date.localeCompare(b.snapshot_date)));
       });
     }, delay);
 
@@ -322,6 +346,8 @@ export const DashboardCards: React.FC<DashboardCardsProps> = ({
     };
   }, [
     canPerformActions,
+    occupancyHistoryLoaded,
+    occupancyHistory,
     totalSlots,
     occupiedSlots,
     freeSlots,
@@ -511,7 +537,9 @@ const tempoMedio =
       return matchBusca && matchPeriodo;
     });
 
-    const exportarCSV = () => {
+    const exportarCSV = async () => {
+      if (!canExportReports) return;
+      if (requestReportExportPermission && !(await requestReportExportPermission())) return;
 
       const cabecalho = [
         "Referencia",
@@ -1065,9 +1093,10 @@ const tempoMedio =
               
                 <div className="flex items-center gap-2">
               
-                  <button
-                    onClick={exportarCSV}
-                    className="
+                  {canExportReports && (
+                    <button
+                      onClick={exportarCSV}
+                      className="
                       px-3
                       py-2
                       text-sm
@@ -1077,9 +1106,10 @@ const tempoMedio =
                       text-emerald-700
                       hover:bg-emerald-100
                     "
-                  >
-                    Exportar CSV
-                  </button>
+                    >
+                      Exportar CSV
+                    </button>
+                  )}
               
                 </div>
 
@@ -1266,6 +1296,8 @@ const tempoMedio =
             uniqueSKUs={uniqueSKUs}
             slots={slots}
             history={history}
+            canExportReports={canExportReports}
+            requestReportExportPermission={requestReportExportPermission}
           />
             <TotalStockDrawer
             isOpen={showTotalStockAnalysis}

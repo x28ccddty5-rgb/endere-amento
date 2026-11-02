@@ -1,0 +1,22 @@
+[
+    {
+        "version":  "20261012164134",
+        "name":  "return_stale_slot_conflicts_without_database_errors",
+        "file":  "supabase/migrations/20261012164134_return_stale_slot_conflicts_without_database_errors.sql",
+        "sql_chars":  14267,
+        "sql_md5_utf8":  "f64554e2c0bf7e4404392de3f3de7b25",
+        "source":  "supabase_migrations.schema_migrations remoto",
+        "applied_remotely":  true,
+        "sql_executed_by_this_script":  false
+    },
+    {
+        "version":  "20261012221223",
+        "name":  "prevent_postgrest_rpc_retry",
+        "file":  "supabase/migrations/20261012221223_prevent_postgrest_rpc_retry.sql",
+        "sql_chars":  1713,
+        "sql_md5_utf8":  "921148de90a316961346b21145472b7d",
+        "source":  "supabase_migrations.schema_migrations remoto",
+        "applied_remotely":  true,
+        "sql_executed_by_this_script":  false
+    }
+]

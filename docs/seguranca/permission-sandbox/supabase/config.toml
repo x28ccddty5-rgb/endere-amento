@@ -1,0 +1,92 @@
+project_id = "enderecamento-permission-test"
+
+[api]
+enabled = true
+port = 55321
+schemas = ["public", "graphql_public"]
+extra_search_path = ["public", "extensions"]
+max_rows = 1000
+
+[db]
+port = 55433
+shadow_port = 55430
+health_timeout = "2m"
+major_version = 17
+password = "postgres"
+
+[db.pooler]
+enabled = false
+port = 55439
+pool_mode = "transaction"
+default_pool_size = 20
+max_client_conn = 100
+
+[db.migrations]
+enabled = true
+schema_paths = []
+
+[db.seed]
+enabled = false
+sql_paths = []
+
+[realtime]
+enabled = false
+
+[studio]
+enabled = true
+port = 55323
+api_url = "http://127.0.0.1:55321"
+
+[local_smtp]
+enabled = false
+port = 55324
+
+[storage]
+enabled = false
+file_size_limit = "5MiB"
+
+[storage.analytics]
+enabled = false
+max_namespaces = 2
+max_tables = 5
+max_catalogs = 1
+
+[storage.vector]
+enabled = false
+max_buckets = 1
+max_indexes = 1
+
+[auth]
+enabled = true
+site_url = "http://127.0.0.1:3001"
+additional_redirect_urls = ["http://127.0.0.1:3001", "http://localhost:3001"]
+jwt_expiry = 3600
+enable_signup = false
+enable_anonymous_sign_ins = false
+enable_manual_linking = false
+minimum_password_length = 8
+password_requirements = ""
+
+[auth.rate_limit]
+token_refresh = 50
+sign_in_sign_ups = 30
+
+[auth.email]
+enable_signup = true
+enable_confirmations = false
+secure_password_change = false
+max_frequency = "1s"
+otp_length = 6
+otp_expiry = 3600
+
+[auth.sms]
+enable_signup = false
+enable_confirmations = false
+
+[edge_runtime]
+enabled = false
+
+[analytics]
+enabled = false
+port = 55327
+backend = "postgres"

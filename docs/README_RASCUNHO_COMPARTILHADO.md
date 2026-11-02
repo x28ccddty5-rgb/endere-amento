@@ -1,5 +1,7 @@
 # Rascunho compartilhado e lançamento em lote — implantação
 
+> **Registro histórico — não usar como estado atual do banco.** Este documento registra uma implantação e uma verificação relatadas em 25/10/2026. Ele preserva evidência e contexto daquela janela, mas não comprova o schema, o migration ledger, os grants ou as RPCs existentes hoje. Antes de qualquer ação, consulte o preflight read-only mais recente e o plano de cutover aprovado. Não reaplique a migration descrita aqui.
+
 ## Estado da publicação
 
 A migração SQL foi aplicada no projeto Supabase `eltxmfgrbobinzchtxme` em 25/10/2026. A conferência somente de leitura posterior confirmou:

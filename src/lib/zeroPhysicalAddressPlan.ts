@@ -194,7 +194,7 @@ export function buildZeroPhysicalAddressPlan(input: ZeroPhysicalAddressInput): Z
 
     if (slot.id !== addressId) {
       const auxiliary = parseCanonicalAuxiliaryId(slot.id, addressId);
-      if (!auxiliary) {
+      if (!auxiliary || auxiliary.sku === "VAZIO") {
         return fail("NON_CANONICAL_AUXILIARY_ID", `O ID ${slot.id} não é um auxiliar canônico desta posição.`);
       }
       if (restrictionKey(slot.restricao) !== auxiliary.restriction || (sku && sku !== auxiliary.sku)) {

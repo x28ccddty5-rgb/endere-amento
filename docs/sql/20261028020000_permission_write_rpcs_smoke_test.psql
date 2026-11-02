@@ -1,0 +1,141 @@
+\set ON_ERROR_STOP on
+-- Teste transacional local/teste. Requer um perfil Administrador e o perfil legado Liderança.
+-- Todos os writes e eventos de auditoria desta prova são revertidos no ROLLBACK final.
+
+DO $preflight$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM public.profiles p WHERE pg_catalog.lower(pg_catalog.btrim(p.role)) = 'administrador') THEN
+    RAISE EXCEPTION 'SMOKE_TEST_REQUIRES_ADMIN_PROFILE';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM public.profiles p WHERE pg_catalog.lower(pg_catalog.btrim(p.role)) = 'lideranca') THEN
+    RAISE EXCEPTION 'SMOKE_TEST_REQUIRES_LEGACY_LIDERANCA_PROFILE';
+  END IF;
+END;
+$preflight$;
+
+BEGIN;
+
+SELECT p.id::text AS admin_id
+FROM public.profiles p
+WHERE pg_catalog.lower(pg_catalog.btrim(p.role)) = 'administrador'
+ORDER BY p.id
+LIMIT 1 \gset
+
+SELECT p.id::text AS legacy_id
+FROM public.profiles p
+WHERE pg_catalog.lower(pg_catalog.btrim(p.role)) = 'lideranca'
+ORDER BY p.id
+LIMIT 1 \gset
+
+SELECT pg_catalog.set_config('request.jwt.claim.sub', :'admin_id', TRUE);
+SELECT pg_catalog.set_config(
+  'request.jwt.claims',
+  pg_catalog.jsonb_build_object('sub', :'admin_id', 'role', 'authenticated')::text,
+  TRUE
+);
+SET LOCAL ROLE authenticated;
+
+-- Admin positive path: change one seeded permission, then restore it.
+-- Assert both operations actually changed one row; both writes roll back below.
+DO $test_admin_role_changes$
+DECLARE
+  v_result jsonb;
+BEGIN
+  v_result := public.save_role_permission_changes(
+    'apoio',
+    '[{"permission_key":"stock.physical_correction","allowed":true}]'::jsonb
+  );
+  IF (v_result ->> 'changed_count')::integer <> 1 THEN
+    RAISE EXCEPTION 'SMOKE_TEST_ADMIN_CHANGE_DID_NOT_CHANGE_ONE_PERMISSION';
+  END IF;
+
+  v_result := public.save_role_permission_changes(
+    'apoio',
+    '[{"permission_key":"stock.physical_correction","allowed":false}]'::jsonb
+  );
+  IF (v_result ->> 'changed_count')::integer <> 1 THEN
+    RAISE EXCEPTION 'SMOKE_TEST_ADMIN_RESTORE_DID_NOT_CHANGE_ONE_PERMISSION';
+  END IF;
+  RAISE NOTICE 'PASS: Administrador alterou e restaurou uma permissão de perfil.';
+END;
+$test_admin_role_changes$;
+
+-- Admin-only keys must not be granted to a non-admin profile even by the administrator matrix editor.
+DO $test_admin_only$
+DECLARE
+  v_message text;
+BEGIN
+  BEGIN
+    PERFORM public.save_role_permission_changes(
+      'apoio',
+      '[{"permission_key":"products.import_bulk","allowed":true}]'::jsonb
+    );
+  EXCEPTION WHEN OTHERS THEN
+    GET STACKED DIAGNOSTICS v_message = MESSAGE_TEXT;
+    IF v_message <> 'PERMISSION_ADMIN_ONLY_CANNOT_BE_GRANTED_TO_ROLE: products.import_bulk' THEN
+      RAISE;
+    END IF;
+    RAISE NOTICE 'PASS: chave administrativa exclusiva foi recusada.';
+    RETURN;
+  END;
+  RAISE EXCEPTION 'SMOKE_TEST_FAILED_ADMIN_ONLY_GRANT_WAS_ACCEPTED';
+END;
+$test_admin_only$;
+
+-- Non-admin actor must not edit the profile matrix.
+SELECT pg_catalog.set_config('request.jwt.claim.sub', :'legacy_id', TRUE);
+SELECT pg_catalog.set_config(
+  'request.jwt.claims',
+  pg_catalog.jsonb_build_object('sub', :'legacy_id', 'role', 'authenticated')::text,
+  TRUE
+);
+
+DO $test_non_admin$
+BEGIN
+  BEGIN
+    PERFORM public.save_role_permission_changes(
+      'apoio',
+      '[{"permission_key":"stock.physical_correction","allowed":false}]'::jsonb
+    );
+  EXCEPTION WHEN SQLSTATE '42501' THEN
+    RAISE NOTICE 'PASS: chamada feita pelo perfil legado não administrador foi recusada.';
+    RETURN;
+  END;
+  RAISE EXCEPTION 'SMOKE_TEST_FAILED_NON_ADMIN_CHANGED_ROLE_MATRIX';
+END;
+$test_non_admin$;
+
+-- Restore simulated actor to admin; a legacy target must not receive user overrides.
+SELECT pg_catalog.set_config('request.jwt.claim.sub', :'admin_id', TRUE);
+SELECT pg_catalog.set_config(
+  'request.jwt.claims',
+  pg_catalog.jsonb_build_object('sub', :'admin_id', 'role', 'authenticated')::text,
+  TRUE
+);
+SELECT pg_catalog.set_config('permission.smoke.legacy_id', :'legacy_id', TRUE);
+
+DO $test_legacy_target$
+DECLARE
+  v_message text;
+BEGIN
+  BEGIN
+    PERFORM public.save_user_permission_overrides(
+      pg_catalog.current_setting('permission.smoke.legacy_id')::uuid,
+      '[{"permission_key":"dashboard.view","decision":"allow"}]'::jsonb
+    );
+  EXCEPTION WHEN OTHERS THEN
+    GET STACKED DIAGNOSTICS v_message = MESSAGE_TEXT;
+    IF v_message <> 'PERMISSION_TARGET_USER_ROLE_NOT_DELEGABLE' THEN
+      RAISE;
+    END IF;
+    RAISE NOTICE 'PASS: não foi possível criar exceção individual para Liderança legado.';
+    RETURN;
+  END;
+  RAISE EXCEPTION 'SMOKE_TEST_FAILED_LEGACY_USER_OVERRIDE_WAS_ACCEPTED';
+END;
+$test_legacy_target$;
+
+RESET ROLE;
+ROLLBACK;
+
+SELECT 'SMOKE_TEST_COMPLETED_ROLLED_BACK' AS result;

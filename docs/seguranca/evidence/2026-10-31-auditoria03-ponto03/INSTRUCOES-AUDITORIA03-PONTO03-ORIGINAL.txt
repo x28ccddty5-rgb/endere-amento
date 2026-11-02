@@ -1,0 +1,53 @@
+AUDITORIA 03 — PONTO 03 — PACOTE DE IMPLEMENTAÇÃO LOCAL
+Data do pacote: 31/10/2026
+
+CONTEÚDO
+Este ZIP contém somente os arquivos alterados/criados para o alinhamento final das permissões de leitura, apresentação da Pesquisa, filtros, exportação, Realtime e dependências backend. Não inclui o projeto completo, .env, node_modules ou dist.
+
+REGRAS IMPLEMENTADAS
+- stock.search libera leitura completa das 14 colunas de slots para os cinco perfis por padrão.
+- stock.details.view permanece no catálogo como chave legada, sem efeito sobre apresentação, filtros, exportação ou leitura.
+- Desktop e Mobile preservam as apresentações existentes.
+- Filtros continuam locais sobre a base em memória.
+- Excel/PDF da Pesquisa usam projeção operacional fixa de 12 campos, sem ID técnico, respeitando o resultado filtrado.
+- Um canal slots-search-live é compartilhado nas áreas que consomem slots.
+- divergencias-live exige divergences.view; resolução segue separada.
+- Operações críticas bloqueiam quando a fotografia remota completa e o Realtime não estão prontos; RPCs atômicas seguem como validação final.
+- Contexto de permissões é atualizado no evento TOKEN_REFRESHED. A autorização RLS Realtime fica em cache durante uma conexão e só é reavaliada com novo JWT/reconexão; revogação imediata de canal já conectado não é garantida.
+
+ANTES DE COPIAR
+1. Confirme que C:\Projetos\endere-amento corresponde ao snapshot enviado em 31/10/2026 e que não há alterações locais posteriores nesses mesmos arquivos.
+2. Faça backup dos arquivos existentes listados em ARQUIVOS-E-SHA256.txt. O backup deve preservar os caminhos relativos.
+3. Extraia o ZIP sobre a raiz do projeto, mantendo os caminhos de src/, tests/, docs/ e scripts/.
+4. Não use git reset, git clean, checkout global ou restauração total do repositório.
+
+VALIDAÇÃO NO WINDOWS (PROJETO LOCAL)
+Execute na raiz C:\Projetos\endere-amento:
+
+  npm run lint
+  npm run build
+  node --experimental-loader ./tests/ts-transpile-loader.mjs --test tests/*.test.mjs
+
+A suíte foi executada neste pacote com 292 testes aprovados. O build não pôde ser confirmado no ambiente de montagem Linux porque o node_modules deste snapshot contém binários nativos Windows; valide npm run build no Windows local.
+
+BANCO — SOMENTE CLONE LOCAL
+A migração não foi executada neste ambiente. Depois da revisão do SQL e de confirmar que o container exato do clone local está ativo:
+
+  .\scripts\Apply-Audit03ReadScopeAlignment-ToLocalIntegration.ps1 -ConfirmApplyLocal
+  .\scripts\Test-Audit03ReadScopeAlignment-LocalIntegration.ps1
+
+O primeiro script exige o container supabase_db_enderecamento-integracao-local e o banco postgres. Não utiliza Supabase Cloud nem Vercel. O segundo é read-only.
+
+TESTES MANUAIS LOCAIS ANTES DE CONSIDERAR O PONTO 03 FECHADO
+- Os cinco perfis acessam Pesquisa por padrão e recebem todas as 14 colunas na resposta autorizada do banco.
+- Overrides individuais: negar stock.search bloqueia módulos dependentes e chamadas diretas; permitir/herdar funciona conforme a matriz.
+- Filtros Desktop/Mobile continuam disponíveis, sem consultas novas por filtro.
+- Excel/PDF têm exatamente os mesmos 12 campos, nunca incluem slots.id e respeitam filtros ativos.
+- Dashboard/Mapa/Lançamentos mantêm a base atualizada ao trocar entre telas dependentes sem nova fotografia por troca de aba.
+- INSERT/UPDATE/DELETE de slots aparecem em todos os clientes autorizados; testar reconexão e sincronização.
+- Usuário sem divergences.view não lê nem inicia divergencias-live; usuário com view consulta, mas só resolve com divergences.resolve.
+- Com Realtime desconectado ou fotografia incompleta, operações críticas ficam bloqueadas; conflito RPC não repete movimentação automaticamente.
+- Testar lançamento, transferência, lote e correção física no clone com fixtures locais, validando histórico e atomicidade.
+
+PRODUÇÃO
+Nenhuma migração, alteração de RLS/ACL, publicação Realtime ou deploy de produção foi realizada ou autorizada por este pacote. Produção permanece NO-GO até os testes locais, preflight read-only, rollback revisado e aprovação explícita.

@@ -9,6 +9,7 @@ const mapRow = (row: any): WarehousePositionConfig => ({
   posicao: String(row.posicao).toUpperCase(),
   ativo: Boolean(row.ativo),
   updatedAt: row.updated_at || undefined,
+  updatedBy: row.updated_by ?? null,
 });
 
 
@@ -31,6 +32,7 @@ const normalizeWarehousePositions = (
             ...current,
             ativo: Boolean(current.ativo || entry.ativo),
             updatedAt: current.updatedAt || entry.updatedAt,
+            updatedBy: current.updatedBy ?? entry.updatedBy ?? null,
           }
         : {
             ...entry,
@@ -64,7 +66,7 @@ export async function loadWarehousePositions(): Promise<{
     const response = await guardedSupabaseRequest(`warehouse-positions.read:${from}`, () =>
       supabase
         .from("warehouse_layout_positions")
-        .select("id,estoque,modulo,posicao,ativo,updated_at")
+        .select("id,estoque,modulo,posicao,ativo,updated_at,updated_by")
         .in("estoque", ["2", "3"])
         .order("estoque", { ascending: true })
         .order("modulo", { ascending: true })
@@ -103,35 +105,79 @@ export async function loadWarehousePositions(): Promise<{
 
 export async function saveWarehousePositions(
   entries: WarehousePositionConfig[],
-  userId: string
+  expectedEntries: WarehousePositionConfig[],
 ): Promise<{ data: WarehousePositionConfig[] | null; error: string | null }> {
-  const now = new Date().toISOString();
+  const expectedById = new Map(
+    expectedEntries
+      .filter(entry => Boolean(entry.updatedAt))
+      .map(entry => [entry.id, entry])
+  );
+  const changedEntries = entries.filter(entry => {
+    const previous = expectedById.get(entry.id);
+    if (!previous) return true;
+    return previous.estoque !== entry.estoque ||
+      previous.modulo !== entry.modulo ||
+      previous.posicao !== entry.posicao ||
+      Boolean(previous.ativo) !== Boolean(entry.ativo);
+  });
 
-  const payload = entries.map(entry => ({
-    id: entry.id,
+  if (changedEntries.length === 0) {
+    return { data: normalizeWarehousePositions(entries), error: null };
+  }
+
+  const payload = changedEntries.map(entry => ({
+    id: String(entry.id),
     estoque: String(entry.estoque).replace(/^E/i, ""),
     modulo: String(Number(entry.modulo)),
     posicao: entry.posicao.trim().toUpperCase(),
     ativo: Boolean(entry.ativo),
-    updated_at: now,
-    updated_by: userId,
   }));
 
-  const { data, error } = await supabase
-    .from("warehouse_layout_positions")
-    .upsert(payload, { onConflict: "id" })
-    .select("id,estoque,modulo,posicao,ativo,updated_at");
+  const expectedPayload = changedEntries.flatMap(entry => {
+    const previous = expectedById.get(entry.id);
+    if (!previous) return [];
+    return [{
+      id: previous.id,
+      estoque: String(previous.estoque).replace(/^E/i, ""),
+      modulo: String(Number(previous.modulo)),
+      posicao: previous.posicao.trim().toUpperCase(),
+      ativo: Boolean(previous.ativo),
+      updated_at: previous.updatedAt,
+      updated_by: previous.updatedBy ?? null,
+    }];
+  });
+
+  const { data, error } = await supabase.rpc("save_warehouse_positions_atomic" as never, {
+    p_expected_positions: expectedPayload,
+    p_positions: payload,
+  } as never);
 
   if (error) {
-    console.error("Erro ao salvar posições físicas dos estoques:", error);
+    console.error("Erro ao salvar posições físicas dos estoques pela RPC atômica:", error);
     return {
       data: null,
       error: error.message || "Não foi possível salvar as posições físicas.",
     };
   }
 
+  const result = data as { success?: boolean; rows?: any[] } | null;
+  if (result?.success !== true || !Array.isArray(result.rows)) {
+    return {
+      data: null,
+      error: "O banco não confirmou a gravação das posições físicas.",
+    };
+  }
+
+  const savedById = new Map<string, WarehousePositionConfig>(
+    result.rows.map(row => {
+      const saved = mapRow(row);
+      return [saved.id, saved];
+    })
+  );
   return {
-    data: normalizeWarehousePositions((data || []).map(mapRow)),
+    data: normalizeWarehousePositions(
+      entries.map(entry => savedById.get(entry.id) ?? entry)
+    ),
     error: null,
   };
 }

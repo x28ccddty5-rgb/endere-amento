@@ -1,0 +1,20 @@
+AUDITORIA 03 — B6.2B — CORREÇÃO DO TESTE RLS
+
+Substituir somente:
+- scripts/Test-PermissionCatalogRlsB62B-LocalIntegration.ps1
+- tests/permission-catalog-rls-b62b-contract.test.mjs
+
+A migration B6.2B NÃO deve ser reaplicada.
+
+O clone de integração possui a matriz completa (5 papéis / 145 linhas), mas pode
+ter apenas perfis reais de alguns papéis. O teste agora seleciona um perfil Auth
+existente sem overrides pessoais e simula cada um dos cinco papéis alterando
+profiles.role dentro de uma transação individual. Cada execução termina com
+ROLLBACK; nenhuma conta é criada e nenhuma alteração de perfil fica persistida.
+
+Executar na raiz do projeto:
+1) node --test .\tests\permission-catalog-rls-b62b-contract.test.mjs
+2) .\scripts\Test-PermissionCatalogRlsB62B-LocalIntegration.ps1
+
+A etapa 2 exige o container local:
+supabase_db_enderecamento-integracao-local

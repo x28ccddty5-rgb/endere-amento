@@ -1,0 +1,30 @@
+﻿permission_key,description,administrator,support,production,viewer,leadership,user_override,notes
+dashboard.view,Dashboard — consultar indicadores,Permitido,Negado,Negado,Permitido,Negado,Sim,"Base negada a Apoio e Produção; o Administrador pode permitir ou negar Dashboard para uma pessoa específica, conforme a regra de exceção individual."
+stock.search,"Pesquisa de SKU, descrição e endereço (leitura completa dos 14 campos)",Permitido,Permitido,Permitido,Permitido,Permitido,Sim,Pesquisa autoriza a base operacional completa; filtros e apresentação são definidos no frontend e não por permissão de campo.
+stock.details.view,Chave legada descontinuada,Permitido,Permitido,Negado,Permitido,Negado,Sim,Não controla mais leitura, apresentação, filtros ou exportação; mantida temporariamente por compatibilidade.
+stock.launch.view,"Abrir a tela de lançamentos em modo permitido, sem autorizar gravação",Permitido,Permitido,Negado,Permitido,Negado,Sim,Chave adicionada para separar a visualização da tela de lançamentos das operações de gravação. Isso permite ao Visualizador compreender o fluxo sem realizar lançamentos.
+stock.launch.create,Lançamento normal de entrada/saída,Permitido,Permitido,Negado,Negado,Negado,Sim,Apoio é o perfil operacional base; qualquer exceção exige decisão explícita do Administrador.
+stock.transfer.create,Transferência entre posições,Permitido,Permitido,Negado,Negado,Negado,Sim,"Permissão própria, mesmo quando a transferência usa fluxos relacionados a entrada/saída."
+stock.batch.process,Processamento de lote compartilhado,Permitido,Permitido,Negado,Negado,Negado,Sim,Protegida pela mesma autorização backend e pelo fluxo transacional existente.
+stock.physical_correction,Correção física de SKU/saldo pelo mapa,Permitido,Negado,Negado,Negado,Negado,Sim,Negada por padrão a Apoio; Administrador pode conceder individualmente a pessoa de confiança.
+history.view,Consultar histórico de movimentações,Permitido,Permitido,Negado,Permitido,Negado,Sim,"Sem expor o identificador técnico de movimentação na interface, conforme etapa 02."
+divergences.view,Consultar divergências,Permitido,Permitido,Negado,Permitido,Negado,Sim,Acesso de leitura não concede resolução.
+divergences.resolve,Resolver/tratar divergências,Permitido,Permitido,Negado,Negado,Negado,Sim,Permissão operacional separada; Apoio pode executar como perfil do setor.
+products.view,Abrir catálogo/Base de produtos e SKUs,Permitido,Negado,Negado,Permitido,Negado,Sim,Não confundir com a pesquisa operacional stock.search.
+products.create,Cadastrar SKU individual,Permitido,Negado,Negado,Negado,Negado,Sim,Administrador pode delegar por usuário; não cria acesso à importação em lote.
+products.edit,Editar cadastro de SKU individual,Permitido,Negado,Negado,Negado,Negado,Sim,Delegável individualmente para correção de cadastro; somente Administrador administra grants.
+products.import_bulk,Importar/atualizar base em lote,Permitido,Negado,Negado,Negado,Negado,Não — Admin exclusivo,Não delegável por exceção individual na primeira versão.
+products.delete_deactivate,Excluir/desativar SKU,Permitido,Negado,Negado,Negado,Negado,Não — Admin exclusivo,Não delegável por exceção individual na primeira versão.
+map.view,Visualizar mapa físico/gêmeo digital,Permitido,Permitido,Negado,Permitido,Negado,Sim,Leitura não permite editar saldo ou metadados.
+map.metadata.edit,Editar metadados do mapa sem corrigir saldo,Permitido,Negado,Negado,Negado,Negado,Sim,Concessão individual pode ser usada para pessoas de confiança; não altera a permissão de corrigir estoque.
+warehouse.layout.view,Consultar estrutura física do estoque,Permitido,Negado,Negado,Permitido,Negado,Sim,"Apoio tem visualização do mapa, mas não acesso à tela de gestão da estrutura."
+warehouse.layout.manage,Criar/editar/ativar/desativar/remover posições ou módulos,Permitido,Negado,Negado,Negado,Negado,Não — Admin exclusivo,Inclui alterações de estrutura física; independente da correção física de saldo.
+consultor.use,Usar Consultor de Estoque/IA,Permitido,Permitido,Permitido,Permitido,Negado,Sim,A permissão não concede escrita no banco; consumo externo do provedor de IA deve ser avaliado à parte.
+reports.export,Exportar dados/relatórios em qualquer formato,Permitido,Negado,Permitido,Permitido,Negado,Sim,A exportação exige também leitura da tela/conjunto; Apoio recebe somente por concessão individual.
+database.view,Abrir Base de Dados em leitura,Permitido,Negado,Negado,Permitido,Negado,Sim,Visualizador pode consultar; Apoio/Produção não recebem a tela administrativa pela permissão de busca.
+database.manage,Manutenção geral da Base de Dados,Permitido,Negado,Negado,Negado,Negado,Não — Admin exclusivo,Não delegável como permissão comum; ações específicas delegáveis devem ter chaves próprias.
+users.view,Consultar lista/gestão de usuários,Permitido,Negado,Negado,Negado,Negado,Não — Admin exclusivo,Usuários e perfis continuam exclusivos do Administrador.
+users.manage,Criar/alterar/desativar/excluir usuários,Permitido,Negado,Negado,Negado,Negado,Não — Admin exclusivo,Manter proteções da conta própria e do último administrador.
+permissions.manage,Administrar permissões de perfis e usuários,Permitido,Negado,Negado,Negado,Negado,Não — Admin exclusivo,Somente Administrador pode alterar matriz-base ou exceções; Liderança não pode administrar permissões.
+configuration.view,Abrir configurações administrativas,Permitido,Negado,Negado,Permitido,Negado,"Sim, somente leitura",Visualizador vê parâmetros não secretos em modo somente leitura; nenhuma ação de alteração; segredos/credenciais não podem ser expostos.
+configuration.manage,Alterar configurações administrativas,Permitido,Negado,Negado,Negado,Negado,Não — Admin exclusivo,Não delegável por exceção individual.

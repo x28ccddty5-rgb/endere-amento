@@ -13,6 +13,15 @@ import { jsPDF } from "jspdf";
 import autoTable from "jspdf-autotable";
 import * as XLSX from "xlsx";
 import { supabase } from './lib/supabase';
+import type { PermissionKey } from "./constants/permissionCatalog.ts";
+import { createStockSearchSpreadsheetRow, createStockSearchPdfRow, getStockSearchPdfHeaders } from "./lib/stockSearchExportProjection";
+import {
+  checkCurrentAppPermission,
+  checkCurrentAppPermissions,
+  isAppPermissionEnforcementEnabled,
+  loadMyAppPermissionContext,
+} from "./lib/appPermissionService.ts";
+import { arePermissionsGranted, type AppPermissionContext } from "./lib/permissionAppContextModel.ts";
 import { guardedSupabaseRequest } from './lib/supabaseRequestGuard';
 import { enqueueLancamentoDraftWrite } from './lib/lancamentoDraftQueue';
 import {
@@ -24,6 +33,7 @@ import {
   type SharedLancamentoDraftSnapshot,
 } from "./lib/sharedLancamentoDraft";
 import { findCorroboratedDivergenceSlot } from "./lib/divergenceResolution";
+import { buildMapQuickCorrectionPlan, isMapQuickCorrectionSnapshotCurrent } from "./lib/mapQuickCorrection";
 import { buildZeroPhysicalAddressPlan, ZeroPhysicalAddressPlanError } from "./lib/zeroPhysicalAddressPlan";
 import { 
   processLancamentosInSequence,
@@ -137,6 +147,8 @@ interface SharedDraftMeta {
   generationId: string | null;
   revision: number;
 }
+
+type StockMutationOperation = "launch" | "transfer" | "physical_correction";
 
 interface SharedDraftBatchContext {
   batchId: string;
@@ -255,18 +267,48 @@ const normalizeTypedMovementType = (
 };
 
 
+const SLOT_DATA_ACTIVE_TABS = new Set([
+  "dashboard",
+  "endereçamento",
+  "lançamento",
+  "divergências",
+  "base",
+  "configuracao",
+  "mapa",
+  "ai",
+]);
+
+const DIVERGENCE_DATA_ACTIVE_TABS = new Set([
+  "dashboard",
+  "lançamento",
+  "divergências",
+  "mapa",
+  "ai",
+]);
+
 const getIsoDateDaysAgo = (days: number): string => {
   const date = new Date();
   date.setDate(date.getDate() - days);
   return getTodayIsoDate(date);
 };
 
-let slotsLoadPromise: Promise<WarehouseSlot[]> | null = null;
+type SlotsSnapshotSource = "remote_complete" | "offline_cache";
+interface SlotsSnapshotLoadResult {
+  rows: WarehouseSlot[];
+  source: SlotsSnapshotSource;
+}
 
-const loadSlotsFromSupabase = (): Promise<WarehouseSlot[]> => {
-  if (slotsLoadPromise) return slotsLoadPromise;
+const slotsLoadPromises = new Map<string, Promise<SlotsSnapshotLoadResult>>();
 
-  slotsLoadPromise = (async (): Promise<WarehouseSlot[]> => {
+const loadSlotsFromSupabase = (
+  cacheScope: string,
+  authorizationFingerprint: string,
+): Promise<SlotsSnapshotLoadResult> => {
+  const cacheKey = `${cacheScope}:${authorizationFingerprint}`;
+  const existing = slotsLoadPromises.get(cacheKey);
+  if (existing) return existing;
+
+  const promise = (async (): Promise<SlotsSnapshotLoadResult> => {
     const allData: any[] = [];
     let from = 0;
     let paginationComplete = false;
@@ -284,8 +326,12 @@ const loadSlotsFromSupabase = (): Promise<WarehouseSlot[]> => {
 
       if (error) {
         if (!response.blocked) console.error("Erro ao carregar slots:", error);
-        const cached = await readOfflineSnapshot<WarehouseSlot[]>("slots");
-        return cached ?? [];
+        return {
+          rows: (await readOfflineSnapshot<WarehouseSlot[]>(
+            "slots", cacheScope, authorizationFingerprint,
+          )) ?? [],
+          source: "offline_cache",
+        };
       }
 
       if (!data || data.length === 0) {
@@ -305,66 +351,30 @@ const loadSlotsFromSupabase = (): Promise<WarehouseSlot[]> => {
 
     if (!paginationComplete) {
       console.error(`Carga de slots interrompida no limite de ${MAX_READ_PAGES} páginas; evitando consultas sem fim.`);
-      const cached = await readOfflineSnapshot<WarehouseSlot[]>("slots");
-      return cached ?? [];
+      return {
+        rows: (await readOfflineSnapshot<WarehouseSlot[]>(
+          "slots", cacheScope, authorizationFingerprint,
+        )) ?? [],
+        source: "offline_cache",
+      };
     }
 
     const result = allData as WarehouseSlot[];
-    await saveOfflineSnapshot("slots", result);
-    return result;
+    await saveOfflineSnapshot("slots", result, cacheScope, authorizationFingerprint);
+    return { rows: result, source: "remote_complete" };
   })();
 
-  slotsLoadPromise.then(
+  slotsLoadPromises.set(cacheKey, promise);
+  void promise.then(
     () => {
-      slotsLoadPromise = null;
+      if (slotsLoadPromises.get(cacheKey) === promise) slotsLoadPromises.delete(cacheKey);
     },
     () => {
-      slotsLoadPromise = null;
-    }
+      if (slotsLoadPromises.get(cacheKey) === promise) slotsLoadPromises.delete(cacheKey);
+    },
   );
 
-  return slotsLoadPromise;
-};
-
-/**
- * Persiste somente os slots que realmente mudaram.
- * O banco continua sendo a fonte oficial; o React mantém apenas o estado da tela.
- */
-const saveSlotsToSupabase = async (slotsData: WarehouseSlot[]): Promise<boolean> => {
-  if (slotsData.length === 0) return true;
-
-  // Não invalide uma carga em andamento: isso permitiria duas paginações concorrentes.
-  const seenIds = new Set<string>();
-  const duplicatedIds = new Set<string>();
-
-  for (const slot of slotsData) {
-    if (seenIds.has(slot.id)) duplicatedIds.add(slot.id);
-    seenIds.add(slot.id);
-  }
-
-  if (duplicatedIds.size > 0) {
-    console.error(
-      "Persistência de slots abortada: IDs duplicados no payload.",
-      Array.from(duplicatedIds)
-    );
-    return false;
-  }
-
-  const { error } = await supabase
-    .from("slots")
-    .upsert(slotsData);
-
-  if (error) {
-    console.error("Erro ao salvar slots:", {
-      code: error.code,
-      message: error.message,
-      details: error.details,
-      hint: error.hint,
-    });
-    return false;
-  }
-
-  return true;
+  return promise;
 };
 
 interface HistoryLoadOptions {
@@ -493,7 +503,9 @@ const validateHistorySlotLinks = (
  * for explicitamente necessário (ex.: exportação "Tudo").
  */
 const loadHistoryFromSupabaseUncached = async (
-  options: HistoryLoadOptions = {}
+  options: HistoryLoadOptions,
+  cacheScope: string,
+  authorizationFingerprint: string,
 ): Promise<HistoricoMov[]> => {
   const allData: any[] = [];
   let from = 0;
@@ -537,8 +549,9 @@ const loadHistoryFromSupabaseUncached = async (
     const { data, error } = response;
     if (error) {
       if (!response.blocked) console.error("Erro ao carregar histórico:", error);
-      const cached = await readOfflineSnapshot<HistoricoMov[]>("history");
-      return cached ?? [];
+      return (await readOfflineSnapshot<HistoricoMov[]>(
+        "history", cacheScope, authorizationFingerprint,
+      )) ?? [];
     }
     if (usedSlotIdColumn) historySlotIdColumnSupported = true;
 
@@ -558,13 +571,14 @@ const loadHistoryFromSupabaseUncached = async (
   }
 
   if (!paginationComplete) {
-    console.error(`Carga de histórico interrompida no limite de ${MAX_READ_PAGES} páginas; evitando consultas sem fim. Usando o cache disponível.`);
-    const cached = await readOfflineSnapshot<HistoricoMov[]>("history");
-    return cached ?? [];
+    console.error(`Carga de histórico interrompida no limite de ${MAX_READ_PAGES} páginas; evitando consultas sem fim. Usando o cache autorizado desta sessão.`);
+    return (await readOfflineSnapshot<HistoricoMov[]>(
+      "history", cacheScope, authorizationFingerprint,
+    )) ?? [];
   }
 
   const result = allData.map(mapHistoryRowFromSupabase);
-  await saveOfflineSnapshot("history", result);
+  await saveOfflineSnapshot("history", result, cacheScope, authorizationFingerprint);
   return result;
 };
 
@@ -574,37 +588,40 @@ const loadHistoryFromSupabaseUncached = async (
 const historyLoadPromises = new globalThis.Map<string, Promise<HistoricoMov[]>>();
 
 const loadHistoryFromSupabase = (
-  options: HistoryLoadOptions = {}
+  options: HistoryLoadOptions,
+  cacheScope: string,
+  authorizationFingerprint: string,
 ): Promise<HistoricoMov[]> => {
-  const key = `${options.startDate ?? ""}|${options.endDate ?? ""}`;
+  const key = `${cacheScope}|${authorizationFingerprint}|${options.startDate ?? ""}|${options.endDate ?? ""}`;
   const existing = historyLoadPromises.get(key);
   if (existing) return existing;
 
-  const promise = loadHistoryFromSupabaseUncached(options);
+  const promise = loadHistoryFromSupabaseUncached(options, cacheScope, authorizationFingerprint);
   historyLoadPromises.set(key, promise);
 
   promise.then(
     () => {
-      if (historyLoadPromises.get(key) === promise) {
-        historyLoadPromises.delete(key);
-      }
+      if (historyLoadPromises.get(key) === promise) historyLoadPromises.delete(key);
     },
     () => {
-      if (historyLoadPromises.get(key) === promise) {
-        historyLoadPromises.delete(key);
-      }
-    }
+      if (historyLoadPromises.get(key) === promise) historyLoadPromises.delete(key);
+    },
   );
 
   return promise;
 };
 
-let latestHistoryLoadPromise: Promise<HistoricoMov | null> | null = null;
+const latestHistoryLoadPromises = new Map<string, Promise<HistoricoMov | null>>();
 
-const loadLatestHistoryRecord = (): Promise<HistoricoMov | null> => {
-  if (latestHistoryLoadPromise) return latestHistoryLoadPromise;
+const loadLatestHistoryRecord = (
+  cacheScope: string,
+  authorizationFingerprint: string,
+): Promise<HistoricoMov | null> => {
+  const cacheKey = `${cacheScope}:${authorizationFingerprint}`;
+  const existing = latestHistoryLoadPromises.get(cacheKey);
+  if (existing) return existing;
 
-  latestHistoryLoadPromise = (async (): Promise<HistoricoMov | null> => {
+  const promise = (async (): Promise<HistoricoMov | null> => {
     const includeSlotId = historySlotIdColumnSupported !== false;
     const buildLatestHistoryQuery = (withSlotId: boolean) =>
       supabase
@@ -645,68 +662,32 @@ const loadLatestHistoryRecord = (): Promise<HistoricoMov | null> => {
     return data ? mapHistoryRowFromSupabase(data) : null;
   })();
 
-  latestHistoryLoadPromise.then(
+  latestHistoryLoadPromises.set(cacheKey, promise);
+  void promise.then(
     () => {
-      latestHistoryLoadPromise = null;
+      if (latestHistoryLoadPromises.get(cacheKey) === promise) latestHistoryLoadPromises.delete(cacheKey);
     },
     () => {
-      latestHistoryLoadPromise = null;
-    }
+      if (latestHistoryLoadPromises.get(cacheKey) === promise) latestHistoryLoadPromises.delete(cacheKey);
+    },
   );
 
-  return latestHistoryLoadPromise;
+  return promise;
 };
 
-const appendHistoryToSupabase = async (
-  historyData: HistoricoMov[],
-  knownSlotIds?: Set<string>,
-): Promise<boolean> => {
-  if (historyData.length === 0) return true;
-
-  // slot_id é um vínculo auxiliar (sem FK no esquema auditado). Mantém a
-  // movimentação mesmo quando o endereço mudou, mas não grava um vínculo órfão.
-  const validatedHistory = knownSlotIds
-    ? validateHistorySlotLinks(historyData, knownSlotIds)
-    : historyData;
-
-  // INSERT não é repetido automaticamente: uma resposta de rede perdida pode
-  // acontecer depois de o banco ter confirmado a gravação, gerando duplicatas.
-  let { error } = await supabase
-    .from("history")
-    .insert(mapHistoryRowsForSupabase(validatedHistory));
-
-  if (error && historySlotIdColumnSupported !== false && isMissingSlotIdColumnError(error)) {
-    historySlotIdColumnSupported = false;
-    console.warn("A coluna history.slot_id não existe no schema atual. Repetindo uma única vez sem o vínculo opcional.");
-    ({ error } = await supabase
-      .from("history")
-      .insert(mapHistoryRowsForSupabase(validatedHistory)));
-  }
-
-  if (error) {
-    console.error("Erro ao inserir histórico:", error);
-    return false;
-  }
-
-  return true;
-};
-
-let divergenciasLoadPromise: Promise<Divergencia[]> | null = null;
-
-const mapDivergenciaRowFromSupabase = (row: any) => {
+// Normaliza o vínculo opcional de endereço entre o modelo da aplicação e o schema SQL.
+const mapDivergenciaRowFromSupabase = (row: any): Divergencia => {
   const { slot_id, slotId: legacySlotId, ...rest } = row ?? {};
 
   return {
     ...rest,
     slotId: slot_id ?? legacySlotId ?? undefined,
-  };
+  } as Divergencia;
 };
 
-let divergenciasSlotIdColumnSupported: boolean | null = null;
-
+// As RPCs de mutação recebem o nome SQL slot_id; a aplicação mantém slotId.
 const mapDivergenciasForSupabase = (rows: Divergencia[]) =>
   rows.map(({ slotId, ...row }) => {
-    if (divergenciasSlotIdColumnSupported === false) return row;
     const normalizedSlotId = typeof slotId === "string" ? slotId.trim() : "";
     return { ...row, slot_id: normalizedSlotId || null };
   });
@@ -731,9 +712,9 @@ const normalizeDivergenciaRow = (row: any): Divergencia | null => {
 };
 
 /**
- * Batch launch must calculate from an authoritative, bounded Supabase read.
- * Unlike dashboard loaders, these functions never fall back to offline snapshots
- * or a cached in-flight Promise: the batch must not mutate stock from a stale cache.
+ * O lançamento em lote exige snapshots atuais e completos do banco.
+ * Estas leituras não aceitam cache offline nem Promise compartilhada; a
+ * paginação tem limite defensivo e interrompe o lote diante de falha/incompletude.
  */
 const loadFreshSlotsForBatch = async (): Promise<WarehouseSlot[]> => {
   const rows: WarehouseSlot[] = [];
@@ -789,10 +770,22 @@ const loadFreshDivergenciasForBatch = async (): Promise<Divergencia[]> => {
   return normalized as Divergencia[];
 };
 
-const loadDivergenciasFromSupabase = (): Promise<Divergencia[]> => {
-  if (divergenciasLoadPromise) return divergenciasLoadPromise;
+interface DivergenciasSnapshotLoadResult {
+  rows: Divergencia[];
+  source: "remote_complete" | "offline_cache";
+}
 
-  divergenciasLoadPromise = (async (): Promise<Divergencia[]> => {
+const divergenciasLoadPromises = new Map<string, Promise<DivergenciasSnapshotLoadResult>>();
+
+const loadDivergenciasFromSupabase = (
+  cacheScope: string,
+  authorizationFingerprint: string,
+): Promise<DivergenciasSnapshotLoadResult> => {
+  const cacheKey = `${cacheScope}:${authorizationFingerprint}`;
+  const existing = divergenciasLoadPromises.get(cacheKey);
+  if (existing) return existing;
+
+  const promise = (async (): Promise<DivergenciasSnapshotLoadResult> => {
     const allData: any[] = [];
     let from = 0;
     let paginationComplete = false;
@@ -812,10 +805,15 @@ const loadDivergenciasFromSupabase = (): Promise<Divergencia[]> => {
 
       if (error) {
         if (!response.blocked) console.error("Erro ao carregar divergências:", error);
-        const cached = await readOfflineSnapshot<Divergencia[]>("divergencias");
-        return (cached ?? [])
-          .map(normalizeDivergenciaRow)
-          .filter((div): div is Divergencia => Boolean(div));
+        const cached = await readOfflineSnapshot<Divergencia[]>(
+          "divergencias", cacheScope, authorizationFingerprint,
+        );
+        return {
+          rows: (cached ?? [])
+            .map(normalizeDivergenciaRow)
+            .filter((div): div is Divergencia => Boolean(div)),
+          source: "offline_cache",
+        };
       }
 
       if (!data || data.length === 0) {
@@ -834,59 +832,37 @@ const loadDivergenciasFromSupabase = (): Promise<Divergencia[]> => {
     }
 
     if (!paginationComplete) {
-      console.error(`Carga de divergências interrompida no limite de ${MAX_READ_PAGES} páginas; evitando consultas sem fim. Usando o cache disponível.`);
-      const cached = await readOfflineSnapshot<Divergencia[]>("divergencias");
-      return (cached ?? [])
-        .map(normalizeDivergenciaRow)
-        .filter((div): div is Divergencia => Boolean(div));
+      console.error(`Carga de divergências interrompida no limite de ${MAX_READ_PAGES} páginas; evitando paginação infinita.`);
+      const cached = await readOfflineSnapshot<Divergencia[]>(
+        "divergencias", cacheScope, authorizationFingerprint,
+      );
+      return {
+        rows: (cached ?? [])
+          .map(normalizeDivergenciaRow)
+          .filter((div): div is Divergencia => Boolean(div)),
+        source: "offline_cache",
+      };
     }
 
     const result = allData
       .map(normalizeDivergenciaRow)
       .filter((div): div is Divergencia => Boolean(div));
 
-    await saveOfflineSnapshot("divergencias", result);
-    return result;
+    await saveOfflineSnapshot("divergencias", result, cacheScope, authorizationFingerprint);
+    return { rows: result, source: "remote_complete" };
   })();
 
-  divergenciasLoadPromise.then(
+  divergenciasLoadPromises.set(cacheKey, promise);
+  void promise.then(
     () => {
-      divergenciasLoadPromise = null;
+      if (divergenciasLoadPromises.get(cacheKey) === promise) divergenciasLoadPromises.delete(cacheKey);
     },
     () => {
-      divergenciasLoadPromise = null;
-    }
+      if (divergenciasLoadPromises.get(cacheKey) === promise) divergenciasLoadPromises.delete(cacheKey);
+    },
   );
 
-  return divergenciasLoadPromise;
-};
-
-const saveDivergenciasToSupabase = async (
-  divergenciasData: Divergencia[]
-): Promise<boolean> => {
-  if (divergenciasData.length === 0) return true;
-
-  // Não invalide uma leitura em andamento ao salvar: isso evita consultas duplicadas.
-  let { error } = await supabase
-    .from("divergencias")
-    .upsert(mapDivergenciasForSupabase(divergenciasData));
-
-  if (error && divergenciasSlotIdColumnSupported !== false && isMissingSlotIdColumnError(error)) {
-    divergenciasSlotIdColumnSupported = false;
-    console.warn("A coluna divergencias.slot_id não existe no schema atual. Salvando divergências sem esse vínculo opcional.");
-    ({ error } = await supabase
-      .from("divergencias")
-      .upsert(mapDivergenciasForSupabase(divergenciasData)));
-  } else if (!error) {
-    divergenciasSlotIdColumnSupported = true;
-  }
-
-  if (error) {
-    console.error("Erro ao salvar divergências:", error);
-    return false;
-  }
-
-  return true;
+  return promise;
 };
 
 
@@ -919,9 +895,207 @@ export default function App() {
 
   // --- USER AUTHENTICATION & SECURITY STATE ---
   const [users, setUsers] = useState<AppUser[]>([]);
+  const sessionDataGenerationRef = useRef(0);
 
   const [currentUser, setCurrentUser] = useState<AppUser | null>(null);
   const [authUserId, setAuthUserId] = useState<string | null>(null);
+
+  // Permission enforcement is opt-in during rollout and can run in development only
+  // against the local Supabase sandbox. The normal localhost -> production setup stays unchanged.
+  const permissionEnforcementEnabled = isAppPermissionEnforcementEnabled();
+  const [appPermissionContext, setAppPermissionContext] = useState<AppPermissionContext | null>(null);
+  const [permissionContextStatus, setPermissionContextStatus] = useState<"idle" | "loading" | "ready" | "error">("idle");
+  const [permissionContextError, setPermissionContextError] = useState<string | null>(null);
+  const [permissionContextRevision, setPermissionContextRevision] = useState(0);
+
+  // Realtime caches the table RLS decision for the lifetime of a WebSocket.
+  // Supabase sends the renewed JWT to Realtime on TOKEN_REFRESHED; reload the
+  // app permission context on the same event so UI and Realtime authorization
+  // converge without adding a permission channel or polling.
+  useEffect(() => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event) => {
+      if (event === "TOKEN_REFRESHED" || event === "SIGNED_IN") {
+        setPermissionContextRevision(current => current + 1);
+      } else if (event === "SIGNED_OUT") {
+        setAuthUserId(null);
+        setCurrentUser(null);
+        setAppPermissionContext(null);
+        setPermissionContextStatus("idle");
+        setPermissionContextError(null);
+        setPermissionContextRevision(current => current + 1);
+      }
+    });
+
+    return () => subscription.unsubscribe();
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+
+    if (!permissionEnforcementEnabled) {
+      setAppPermissionContext(null);
+      setPermissionContextStatus("idle");
+      setPermissionContextError(null);
+      return () => { active = false; };
+    }
+
+    if (!authUserId) {
+      setAppPermissionContext(null);
+      setPermissionContextStatus("idle");
+      setPermissionContextError(null);
+      return () => { active = false; };
+    }
+
+    setAppPermissionContext(null);
+    setPermissionContextStatus("loading");
+    setPermissionContextError(null);
+
+    loadMyAppPermissionContext(authUserId)
+      .then((context) => {
+        if (!active) return;
+        setAppPermissionContext(context);
+        setPermissionContextStatus("ready");
+      })
+      .catch((error: unknown) => {
+        if (!active) return;
+        const message = error instanceof Error ? error.message : "Falha desconhecida ao carregar permissões.";
+        console.error("Não foi possível carregar o contexto de permissões; exportações serão bloqueadas.", message);
+        setAppPermissionContext(null);
+        setPermissionContextStatus("error");
+        setPermissionContextError(message);
+      });
+
+    return () => { active = false; };
+  }, [authUserId, permissionEnforcementEnabled, permissionContextRevision]);
+
+  const canUseAppPermissionForUi = (permissionKey: PermissionKey): boolean => {
+    if (!permissionEnforcementEnabled) return true;
+    return (
+      permissionContextStatus === "ready" &&
+      appPermissionContext?.userId === authUserId &&
+      appPermissionContext.permissions[permissionKey] === true
+    );
+  };
+  // Presentation only: the authorized stock-search scope contains every field.
+  // These flags preserve the existing desktop/mobile layouts and are not grants.
+  const showStockDetailsInSearch = true;
+  const showSlotMetadataInSearch = true;
+
+  // A cached snapshot is reusable only by the same authenticated user with the
+  // exact same effective permission matrix. A changed/revoked permission therefore
+  // invalidates the offline fallback without deleting another user's cache.
+  const offlineCacheScope = authUserId ?? "unauthenticated";
+  const offlineCacheAuthorizationFingerprint = permissionEnforcementEnabled
+    ? permissionContextStatus === "ready" &&
+      appPermissionContext?.userId === authUserId &&
+      appPermissionContext
+      ? Object.keys(appPermissionContext.permissions)
+          .sort()
+          .map((key) => `${key}:${appPermissionContext.permissions[key as PermissionKey] ? "1" : "0"}`)
+          .join("|")
+      : "permission-context-unavailable"
+    : "legacy-unrestricted";
+
+  const canExportWithScope = (...scopeKeys: PermissionKey[]): boolean => {
+    if (!permissionEnforcementEnabled) return true;
+    if (
+      permissionContextStatus !== "ready" ||
+      !appPermissionContext ||
+      appPermissionContext.userId !== authUserId
+    ) return false;
+    return arePermissionsGranted(appPermissionContext.permissions, ["reports.export", ...scopeKeys]);
+  };
+
+  const canExportStockSearch = canExportWithScope("stock.search");
+  const canExportHistory = canExportWithScope("history.view");
+  const canExportDivergences = canExportWithScope("divergences.view");
+  const canExportDashboardDetails = canExportWithScope("dashboard.view");
+  const canExportConsultor = canExportWithScope("consultor.use");
+
+  /** Rechecks the mutation permission in PostgreSQL immediately before writing. */
+  const requestAppMutationPermission = async (
+    permissionKey: PermissionKey,
+    actionLabel: string,
+  ): Promise<boolean> => {
+    if (!permissionEnforcementEnabled) return true;
+
+    if (
+      !authUserId ||
+      permissionContextStatus !== "ready" ||
+      !appPermissionContext ||
+      appPermissionContext.userId !== authUserId
+    ) {
+      alert(`Não foi possível validar as permissões da sessão. ${actionLabel} foi bloqueado; atualize o aplicativo e tente novamente.`);
+      return false;
+    }
+
+    if (!arePermissionsGranted(appPermissionContext.permissions, [permissionKey])) {
+      alert(`Seu perfil não possui permissão para ${actionLabel.toLowerCase()}.`);
+      return false;
+    }
+
+    try {
+      const allowed = await checkCurrentAppPermission(permissionKey);
+      if (allowed) return true;
+
+      setAppPermissionContext(null);
+      setPermissionContextStatus("error");
+      setPermissionContextError("PERMISSION_MUTATION_REJECTED");
+      alert(`A permissão para ${actionLabel.toLowerCase()} foi negada pelo banco. Atualize a sessão antes de tentar novamente.`);
+      return false;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Falha desconhecida ao validar a permissão.";
+      console.error(`Verificação de permissão para ${actionLabel.toLowerCase()} falhou; operação bloqueada.`, message);
+      setAppPermissionContext(null);
+      setPermissionContextStatus("error");
+      setPermissionContextError(message);
+      alert(`Não foi possível confirmar sua permissão para ${actionLabel.toLowerCase()}. A operação foi bloqueada por segurança.`);
+      return false;
+    }
+  };
+
+  const requestReportExportPermission = async (scopeKeys: readonly PermissionKey[]): Promise<boolean> => {
+    if (!permissionEnforcementEnabled) return true;
+
+    if (
+      !authUserId ||
+      permissionContextStatus !== "ready" ||
+      !appPermissionContext ||
+      appPermissionContext.userId !== authUserId
+    ) {
+      alert("Não foi possível validar as permissões desta sessão. A exportação foi bloqueada; atualize o aplicativo e tente novamente.");
+      return false;
+    }
+
+    const requiredKeys = Array.from(new Set<PermissionKey>(["reports.export", ...scopeKeys]));
+    if (!arePermissionsGranted(appPermissionContext.permissions, requiredKeys)) {
+      alert("Seu perfil não possui permissão para exportar dados deste módulo ou consultar todos os dados necessários.");
+      return false;
+    }
+
+    try {
+      // One database round-trip checks the global export grant and the module/data scope.
+      const allowed = await checkCurrentAppPermissions(requiredKeys);
+      if (!allowed) {
+        // Backend denial while the cached context says otherwise means stale/inconsistent auth state.
+        // Block sensitive exports until login/session refresh rather than guessing which key changed.
+        setAppPermissionContext(null);
+        setPermissionContextStatus("error");
+        setPermissionContextError("PERMISSION_SCOPE_REJECTED");
+        alert("Uma permissão necessária foi negada ou mudou. Atualize a sessão antes de exportar novamente.");
+        return false;
+      }
+      return true;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Falha desconhecida ao validar as permissões.";
+      console.error("Verificação das permissões de exportação falhou; operação bloqueada.", message);
+      setAppPermissionContext(null);
+      setPermissionContextStatus("error");
+      setPermissionContextError(message);
+      alert("Não foi possível confirmar suas permissões de exportação. A operação foi bloqueada por segurança.");
+      return false;
+    }
+  };
 
   // Login Form input state
   const [loginUsername, setLoginUsername] = useState("");
@@ -929,6 +1103,7 @@ export default function App() {
   const [loginError, setLoginError] = useState("");
   const [authLoading, setAuthLoading] = useState(true);
   const [usersLoading, setUsersLoading] = useState(false);
+  const [usersLoadError, setUsersLoadError] = useState<string | null>(null);
 
   const [activeTab, setActiveTab] = useState<string>("endereçamento");
 
@@ -1137,37 +1312,57 @@ export default function App() {
   const productsLoadPromiseRef = useRef<Promise<Product[] | null> | null>(null);
 
   const loadUsersFromSupabase = async () => {
+    const requestGeneration = sessionDataGenerationRef.current;
     if (!isAdmin(currentUser?.role)) {
-      setUsers([]);
-      setUsersLoading(false);
+      if (requestGeneration === sessionDataGenerationRef.current) {
+        setUsers([]);
+        setUsersLoading(false);
+        setUsersLoadError(null);
+      }
       return;
     }
 
     if (usersLoadPromiseRef.current) {
-      const cachedUsers = await usersLoadPromiseRef.current;
-      setUsers(cachedUsers);
-      setUsersLoading(false);
+      try {
+        const cachedUsers = await usersLoadPromiseRef.current;
+        if (requestGeneration === sessionDataGenerationRef.current) {
+          setUsers(cachedUsers);
+          setUsersLoadError(null);
+        }
+      } catch (error) {
+        console.error("Erro ao carregar usuários administrativos:", error);
+        if (requestGeneration === sessionDataGenerationRef.current) {
+          setUsersLoadError("Não foi possível carregar a lista de usuários. Tente novamente.");
+        }
+      } finally {
+        if (requestGeneration === sessionDataGenerationRef.current) {
+          setUsersLoading(false);
+        }
+      }
       return;
     }
 
     setUsersLoading(true);
+    setUsersLoadError(null);
 
     const promise = (async (): Promise<AppUser[]> => {
       const { error, data } = await supabase.functions.invoke("admin-users", {
         body: { operation: "list" }
       });
 
-      if (error || !data?.users) {
-        console.error("Erro ao carregar usuários administrativos:", error);
-        return [];
+      if (error) throw error;
+      if (!data || !Array.isArray(data.users)) {
+        throw new Error("Resposta inválida ao consultar a lista administrativa de usuários.");
       }
 
       return data.users.map((user: {
+        id: string;
         email?: string;
         username: string;
         name: string;
         role: string;
       }) => ({
+        id: user.id,
         email: user.email,
         username: user.username,
         name: user.name,
@@ -1179,12 +1374,22 @@ export default function App() {
 
     try {
       const formattedUsers = await promise;
-      setUsers(formattedUsers);
+      if (requestGeneration === sessionDataGenerationRef.current) {
+        setUsers(formattedUsers);
+        setUsersLoadError(null);
+      }
+    } catch (error) {
+      console.error("Erro ao carregar usuários administrativos:", error);
+      if (requestGeneration === sessionDataGenerationRef.current) {
+        setUsersLoadError("Não foi possível carregar a lista de usuários. Tente novamente.");
+      }
     } finally {
       if (usersLoadPromiseRef.current === promise) {
         usersLoadPromiseRef.current = null;
       }
-      setUsersLoading(false);
+      if (requestGeneration === sessionDataGenerationRef.current) {
+        setUsersLoading(false);
+      }
     }
   };
 
@@ -1192,18 +1397,22 @@ useEffect(() => {
   loadCurrentAuthUser();
 }, []);
 
+const shouldSyncSlotsForActiveTab = SLOT_DATA_ACTIVE_TABS.has(activeTab);
+const canReadCompleteSlots = !permissionEnforcementEnabled || (
+  permissionContextStatus === "ready" && canUseAppPermissionForUi("stock.search")
+);
+
 useEffect(() => {
-  if (!currentUser || !isAdmin(currentUser.role)) {
-    setUsers([]);
-    setUsersLoading(false);
+  if (!authUserId || !currentUser || !shouldSyncSlotsForActiveTab) {
+    slotsRealtimeStatusRef.current = "inactive";
     return;
   }
-
-  loadUsersFromSupabase();
-}, [currentUser]);
-
-useEffect(() => {
-  if (!authUserId || !currentUser || activeTab !== "endereçamento") return;
+  if (!canReadCompleteSlots) {
+    updateSlotsState(() => []);
+    slotsRealtimeStatusRef.current = permissionContextStatus === "ready" ? "denied" : "syncing";
+    return;
+  }
+  slotsRealtimeStatusRef.current = "syncing";
 
   let active = true;
   let initialLoadComplete = false;
@@ -1224,7 +1433,7 @@ useEffect(() => {
     if (snapshotTimer !== null) clearTimeout(snapshotTimer);
     snapshotTimer = setTimeout(() => {
       snapshotTimer = null;
-      if (active) void saveOfflineSnapshot("slots", slotsRef.current);
+      if (active) void saveOfflineSnapshot("slots", slotsRef.current, offlineCacheScope, offlineCacheAuthorizationFingerprint);
     }, 250);
   };
 
@@ -1273,6 +1482,16 @@ useEffect(() => {
       reconnectResyncTimer = null;
     }
 
+    if (reason === "reconnect") {
+      // The authoritative snapshot includes changes committed while the channel
+      // was unavailable; discard queued pre-snapshot events to avoid stale replay.
+      pendingSlotChanges.clear();
+      if (slotFlushTimer !== null) {
+        clearTimeout(slotFlushTimer);
+        slotFlushTimer = null;
+      }
+    }
+    slotsRealtimeStatusRef.current = "syncing";
     lastInitialLoadAt = Date.now();
     initialLoadInFlight = true;
     const generation = ++loadGeneration;
@@ -1281,11 +1500,11 @@ useEffect(() => {
 
     // A assinatura é estabelecida antes da fotografia paginada. Assim, eventos
     // recebidos enquanto a carga ocorre prevalecem sobre os dados da consulta.
-    void loadSlotsFromSupabase()
-      .then(data => {
+    void loadSlotsFromSupabase(offlineCacheScope, offlineCacheAuthorizationFingerprint)
+      .then(snapshot => {
         if (!active || generation !== loadGeneration) return;
 
-        const mergedById = new Map<string, WarehouseSlot>(data.map(slot => [slot.id, slot] as [string, WarehouseSlot]));
+        const mergedById = new Map<string, WarehouseSlot>(snapshot.rows.map(slot => [slot.id, slot] as [string, WarehouseSlot]));
         for (const [id, incoming] of changesDuringInitialLoad) {
           if (incoming === null) mergedById.delete(id);
           else mergedById.set(id, incoming);
@@ -1294,9 +1513,13 @@ useEffect(() => {
         const merged = Array.from(mergedById.values());
         initialLoadComplete = true;
         updateSlotsState(() => merged);
-        void saveOfflineSnapshot("slots", merged);
+        slotsRealtimeStatusRef.current = snapshot.source === "remote_complete" && channelConnected
+          ? "ready"
+          : "stale";
+        void saveOfflineSnapshot("slots", merged, offlineCacheScope, offlineCacheAuthorizationFingerprint);
       })
       .catch(error => {
+        slotsRealtimeStatusRef.current = "stale";
         console.error("Erro ao carregar posições da Pesquisa de Estoque:", error);
       })
       .finally(() => {
@@ -1346,6 +1569,7 @@ useEffect(() => {
         }
       } else if (status === "CHANNEL_ERROR" || status === "TIMED_OUT" || status === "CLOSED") {
         channelConnected = false;
+        slotsRealtimeStatusRef.current = "stale";
         console.warn("[Realtime] Atualização ao vivo da Pesquisa de Estoque indisponível:", status);
         hadConnectionError = true;
         // If the initial snapshot has not started yet, perform a single fallback
@@ -1363,12 +1587,32 @@ useEffect(() => {
     if (reconnectResyncTimer !== null) clearTimeout(reconnectResyncTimer);
     pendingSlotChanges.clear();
     changesDuringInitialLoad.clear();
+    slotsRealtimeStatusRef.current = "inactive";
     void supabase.removeChannel(channel);
   };
-}, [authUserId, currentUser, activeTab]);
+}, [
+  authUserId,
+  currentUser,
+  shouldSyncSlotsForActiveTab,
+  canReadCompleteSlots,
+  permissionContextStatus,
+  offlineCacheAuthorizationFingerprint,
+]);
 
 useEffect(() => {
   if (!authUserId) return;
+  if (permissionEnforcementEnabled && (
+    permissionContextStatus !== "ready" ||
+    (!canUseAppPermissionForUi("warehouse.layout.view") &&
+      !canUseAppPermissionForUi("warehouse.layout.manage") &&
+      !canUseAppPermissionForUi("map.view"))
+  )) {
+    setWarehouseLayout(getDefaultE1Layout());
+    setWarehouseLayoutError(null);
+    setWarehousePositions([]);
+    setWarehousePositionsError(null);
+    return;
+  }
 
   let cancelled = false;
 
@@ -1388,10 +1632,25 @@ useEffect(() => {
   return () => {
     cancelled = true;
   };
-}, [authUserId]);
+}, [
+  authUserId,
+  permissionEnforcementEnabled,
+  permissionContextStatus,
+  offlineCacheAuthorizationFingerprint,
+]);
 
 useEffect(() => {
   if (!authUserId) return;
+  if (permissionEnforcementEnabled && (
+    permissionContextStatus !== "ready" ||
+    (!canUseAppPermissionForUi("warehouse.layout.view") &&
+      !canUseAppPermissionForUi("warehouse.layout.manage") &&
+      !canUseAppPermissionForUi("map.view"))
+  )) {
+    setWarehousePositions([]);
+    setWarehousePositionsError(null);
+    return;
+  }
 
   let cancelled = false;
 
@@ -1411,13 +1670,25 @@ useEffect(() => {
   return () => {
     cancelled = true;
   };
-}, [authUserId]);
+}, [
+  authUserId,
+  permissionEnforcementEnabled,
+  permissionContextStatus,
+  offlineCacheAuthorizationFingerprint,
+]);
 
 useEffect(() => {
   if (activeTab !== "dashboard" && activeTab !== "histórico" && activeTab !== "ai") {
     return;
   }
+  if (permissionEnforcementEnabled && (
+    permissionContextStatus !== "ready" || !canUseAppPermissionForUi("history.view")
+  )) {
+    setHistory([]);
+    return;
+  }
 
+  let active = true;
   const loadHistory = async () => {
     const today = getTodayIsoDate();
     const needsDashboardWindow = activeTab === "dashboard" || activeTab === "ai";
@@ -1430,8 +1701,9 @@ useEffect(() => {
         ? getIsoDateDaysAgo(HISTORY_DASHBOARD_DAYS)
         : today,
       endDate: today,
-    });
+    }, offlineCacheScope, offlineCacheAuthorizationFingerprint);
 
+    if (!active) return;
     if (!needsDashboardWindow) {
       setHistory(data);
       return;
@@ -1439,7 +1711,8 @@ useEffect(() => {
 
     // Mantém o indicador de "última movimentação" do Dashboard mesmo
     // quando o último movimento aconteceu fora da janela dos últimos 60 dias.
-    const latest = await loadLatestHistoryRecord();
+    const latest = await loadLatestHistoryRecord(offlineCacheScope, offlineCacheAuthorizationFingerprint);
+    if (!active) return;
     const merged = latest && !data.some(item => item.id === latest.id)
       ? [latest, ...data]
       : data;
@@ -1448,17 +1721,42 @@ useEffect(() => {
   };
 
   void loadHistory().catch(error => {
-    console.error("Erro inesperado ao preparar histórico da tela:", error);
+    if (active) console.error("Erro inesperado ao preparar histórico da tela:", error);
   });
-}, [activeTab]);
+
+  return () => { active = false; };
+}, [
+  activeTab,
+  authUserId,
+  permissionEnforcementEnabled,
+  permissionContextStatus,
+  offlineCacheAuthorizationFingerprint,
+]);
+
+const shouldSyncDivergenciasForActiveTab = DIVERGENCE_DATA_ACTIVE_TABS.has(activeTab);
+const canReadDivergencias = !permissionEnforcementEnabled || (
+  permissionContextStatus === "ready" && canUseAppPermissionForUi("divergences.view")
+);
 
 useEffect(() => {
   if (!currentUser) {
     divergenciasRef.current = [];
     setDivergencias([]);
+    divergenciasRealtimeStatusRef.current = "inactive";
+    return;
+  }
+  if (!canReadDivergencias) {
+    divergenciasRef.current = [];
+    setDivergencias([]);
+    divergenciasRealtimeStatusRef.current = permissionContextStatus === "ready" ? "denied" : "syncing";
+    return;
+  }
+  if (!shouldSyncDivergenciasForActiveTab) {
+    divergenciasRealtimeStatusRef.current = "inactive";
     return;
   }
 
+  divergenciasRealtimeStatusRef.current = "syncing";
   let active = true;
   let initialLoadComplete = false;
   let initialLoadInFlight = false;
@@ -1492,7 +1790,7 @@ useEffect(() => {
 
     // Lotes de eventos Realtime se reflejan en estado y cache una sola vez,
     // evitando miles de escrituras locales si llegan muchas divergencias juntas.
-    void saveOfflineSnapshot("divergencias", next);
+    void saveOfflineSnapshot("divergencias", next, offlineCacheScope, offlineCacheAuthorizationFingerprint);
   };
 
   const schedulePendingChangesFlush = () => {
@@ -1540,17 +1838,18 @@ useEffect(() => {
 
     initialLoadInFlight = true;
     initialLoadComplete = false;
+    divergenciasRealtimeStatusRef.current = "syncing";
     lastInitialLoadAt = Date.now();
     const generation = ++loadGeneration;
     changesDuringInitialLoad.clear();
 
     // A fotografia completa é refeita após uma reconexão bem-sucedida para
     // recuperar eventos ocorridos enquanto o websocket esteve desconectado.
-    void loadDivergenciasFromSupabase()
-      .then(data => {
+    void loadDivergenciasFromSupabase(offlineCacheScope, offlineCacheAuthorizationFingerprint)
+      .then(snapshot => {
         if (!active || generation !== loadGeneration) return;
 
-        const mergedById = new Map<string, Divergencia>(data.map(item => [item.id, item]));
+        const mergedById = new Map<string, Divergencia>(snapshot.rows.map(item => [item.id, item]));
         for (const [id, eventRow] of changesDuringInitialLoad) {
           if (eventRow === null) mergedById.delete(id);
           else mergedById.set(id, eventRow);
@@ -1561,9 +1860,13 @@ useEffect(() => {
         initialLoadComplete = true;
         divergenciasRef.current = merged;
         setDivergencias(merged);
-        void saveOfflineSnapshot("divergencias", merged);
+        divergenciasRealtimeStatusRef.current = snapshot.source === "remote_complete" && channelConnected
+          ? "ready"
+          : "stale";
+        void saveOfflineSnapshot("divergencias", merged, offlineCacheScope, offlineCacheAuthorizationFingerprint);
       })
       .catch(error => {
+        divergenciasRealtimeStatusRef.current = "stale";
         console.error("Erro ao inicializar sincronização de divergências:", error);
       })
       .finally(() => {
@@ -1614,6 +1917,7 @@ useEffect(() => {
         }
       } else if (status === "CHANNEL_ERROR" || status === "TIMED_OUT" || status === "CLOSED") {
         channelConnected = false;
+        divergenciasRealtimeStatusRef.current = "stale";
         console.warn("[Realtime] Sincronização de divergências indisponível:", status);
         hadConnectionError = true;
         // Se ainda não houve fotografia inicial, carrega uma vez como fallback.
@@ -1630,17 +1934,47 @@ useEffect(() => {
     if (divergenceFlushTimer !== null) clearTimeout(divergenceFlushTimer);
     pendingChanges.clear();
     changesDuringInitialLoad.clear();
+    divergenciasRealtimeStatusRef.current = "inactive";
     void supabase.removeChannel(channel);
   };
-}, [currentUser, authUserId]);
+}, [
+  currentUser,
+  authUserId,
+  shouldSyncDivergenciasForActiveTab,
+  canReadDivergencias,
+  offlineCacheAuthorizationFingerprint,
+]);
 
   // --- DYNAMIC REGISTERED CUSTOM PRODUCTS STATE ---
   const [productsList, setProductsList] = useState<Product[]>([]);
 
+  const canReadProductsForCurrentContext = (): boolean => {
+    if (!permissionEnforcementEnabled) return true;
+    if (permissionContextStatus !== "ready") return false;
+    return [
+      "products.view",
+      "products.create",
+      "products.edit",
+      "products.import_bulk",
+      "products.delete_deactivate",
+      "stock.search",
+      "stock.launch.view",
+      "stock.launch.create",
+      "stock.transfer.create",
+      "stock.batch.process",
+      "consultor.use",
+    ].some((key) => canUseAppPermissionForUi(key as PermissionKey));
+  };
+
   const loadProductsFromSupabase = async () => {
+    const requestGeneration = sessionDataGenerationRef.current;
+    if (!canReadProductsForCurrentContext()) {
+      setProductsList([]);
+      return;
+    }
     if (productsLoadPromiseRef.current) {
       const cachedProducts = await productsLoadPromiseRef.current;
-      if (cachedProducts) {
+      if (requestGeneration === sessionDataGenerationRef.current && cachedProducts) {
         setProductsList(cachedProducts);
       }
       return;
@@ -1656,7 +1990,7 @@ useEffect(() => {
 
       if (error) {
         if (!response.blocked) console.error("Erro ao carregar produtos:", error);
-        const cached = await readOfflineSnapshot<Product[]>("products");
+        const cached = await readOfflineSnapshot<Product[]>("products", offlineCacheScope, offlineCacheAuthorizationFingerprint);
         return cached ?? [];
       }
 
@@ -1665,7 +1999,7 @@ useEffect(() => {
         descricao: p.descricao,
         paletizacao: Number(p.paletizacao || 0)
       }));
-      await saveOfflineSnapshot("products", result);
+      await saveOfflineSnapshot("products", result, offlineCacheScope, offlineCacheAuthorizationFingerprint);
       return result;
     })();
 
@@ -1673,7 +2007,7 @@ useEffect(() => {
 
     try {
       const loadedProducts = await promise;
-      if (loadedProducts) {
+      if (requestGeneration === sessionDataGenerationRef.current && loadedProducts) {
         setProductsList(loadedProducts);
       }
     } finally {
@@ -1688,6 +2022,11 @@ useEffect(() => {
   // Pesquisa, Lançamento ou as telas operacionais sem as referências.
   useEffect(() => {
     if (!currentUser) {
+      setProductsList([]);
+      return;
+    }
+    if (permissionEnforcementEnabled && permissionContextStatus !== "ready") {
+      setProductsList([]);
       return;
     }
 
@@ -1701,10 +2040,18 @@ useEffect(() => {
       "ai"
     ];
 
-    if (tabsRequiringProducts.includes(activeTab)) {
+    if (tabsRequiringProducts.includes(activeTab) && canReadProductsForCurrentContext()) {
       loadProductsFromSupabase();
+    } else if (!canReadProductsForCurrentContext()) {
+      setProductsList([]);
     }
-  }, [activeTab, currentUser]);
+  }, [
+    activeTab,
+    currentUser,
+    permissionEnforcementEnabled,
+    permissionContextStatus,
+    offlineCacheAuthorizationFingerprint,
+  ]);
 
   // Save changes to custom references list
   const registerNewProduct = async (
@@ -1712,7 +2059,8 @@ useEffect(() => {
     desc: string,
     paletizacao: number
   ): Promise<boolean> => {
-    
+    if (!(await requestAppMutationPermission("products.create", "cadastrar produto"))) return false;
+
   const code = ref.trim().toUpperCase();
 
   if (!code || !desc.trim()) return false;
@@ -1750,6 +2098,8 @@ useEffect(() => {
   paletizacao: number
 ): Promise<boolean> => {
 
+  if (!(await requestAppMutationPermission("products.edit", "editar produto"))) return false;
+
   const { error } = await supabase
     .from("products")
     .update({
@@ -1773,6 +2123,8 @@ useEffect(() => {
 const deleteProduct = async (
   referencia: string
 ): Promise<boolean> => {
+
+  if (!(await requestAppMutationPermission("products.delete_deactivate", "excluir produto"))) return false;
 
   const confirmDelete = window.confirm(
     `Excluir referência ${referencia}?`
@@ -1878,6 +2230,8 @@ const deleteProduct = async (
   // --- CORE SYSTEM DATA PERSISTENCE ---
   const [slots, setSlots] = useState<WarehouseSlot[]>([]);
   const slotsRef = useRef<WarehouseSlot[]>([]);
+  const slotsRealtimeStatusRef = useRef<"inactive" | "syncing" | "ready" | "stale" | "denied">("inactive");
+  const divergenciasRealtimeStatusRef = useRef<"inactive" | "syncing" | "ready" | "stale" | "denied">("inactive");
 
   const updateSlotsState = (
     updater: (current: WarehouseSlot[]) => WarehouseSlot[]
@@ -1923,30 +2277,71 @@ const deleteProduct = async (
   };
 
   /**
-   * Atualiza e persiste somente os slots novos/alterados.
-   * Isso mantém o Supabase como fonte oficial sem reenviar toda a tabela.
+   * A edição móvel só altera metadados. O saldo, SKU e identidade física são
+   * validados pelo banco e nunca são enviados como campos graváveis.
    */
-  const persistSlotsUpdate = async (updatedSlots: WarehouseSlot[]): Promise<boolean> => {
-    const previousById = new globalThis.Map(slots.map(slot => [slot.id, slot]));
-    const changedSlots = updatedSlots.filter(slot => {
-      const previous = previousById.get(slot.id);
-      return !previous || JSON.stringify(previous) !== JSON.stringify(slot);
-    });
-
-    const saved = await saveSlotsToSupabase(changedSlots);
-
-    if (saved) {
-      const nextSlots = mergeSlotsState(changedSlots);
-      await saveOfflineSnapshot("slots", nextSlots);
+  const handleMobileUpdateSlot = async (updatedSlot: WarehouseSlot): Promise<boolean> => {
+    if (slotsRealtimeStatusRef.current !== "ready") {
+      alert("Os dados do endereço ainda não estão sincronizados. Aguarde a atualização antes de editar os metadados.");
+      return false;
+    }
+    if (!(await requestAppMutationPermission("map.metadata.edit", "editar metadados do mapa"))) {
+      return false;
     }
 
-    return saved;
-  };
+    if (!navigator.onLine) {
+      alert("A edição de metadados exige conexão com o Supabase. Nenhum dado foi alterado.");
+      return false;
+    }
 
-  const handleMobileUpdateSlot = async (updatedSlot: WarehouseSlot): Promise<boolean> =>
-    persistSlotsUpdate(
-      slots.map(slot => (slot.id === updatedSlot.id ? updatedSlot : slot))
-    );
+    const previous = slotsRef.current.find(slot => slot.id === updatedSlot.id);
+    if (!previous) {
+      alert("O endereço não está mais na fotografia atual. Atualize o aplicativo antes de editar.");
+      return false;
+    }
+
+    const metadata = {
+      dataChacote: String(updatedSlot.dataChacote ?? "").trim(),
+      galpao: updatedSlot.galpao ?? "3",
+      restricao: updatedSlot.restricao ?? "nenhuma",
+      observacao: String(updatedSlot.observacao ?? "").trim(),
+    };
+
+    const { data, error } = await supabase.rpc("update_slot_metadata_atomic" as never, {
+      p_expected_slot: {
+        id: previous.id,
+        estoque: previous.estoque,
+        modulo: previous.modulo,
+        posicao: previous.posicao,
+        referencia: previous.referencia,
+        descricao: previous.descricao,
+        saldo: previous.saldo,
+        dataChacote: previous.dataChacote,
+        galpao: previous.galpao ?? null,
+        restricao: previous.restricao ?? null,
+        observacao: previous.observacao ?? null,
+      },
+      p_metadata: metadata,
+    } as never);
+    const result = data as { success?: boolean; code?: string; message?: string } | null;
+
+    if (error || result?.success !== true) {
+      console.error("Edição de metadados não confirmada:", {
+        code: result?.code ?? error?.code,
+        message: result?.message ?? error?.message,
+      });
+      alert(
+        "Não foi possível confirmar a edição dos metadados. Atualize o endereço e tente novamente. " +
+        "Nenhum saldo ou SKU foi alterado por este fluxo."
+      );
+      return false;
+    }
+
+    const savedSlot: WarehouseSlot = { ...previous, ...metadata };
+    const nextSlots = mergeSlotsState([savedSlot]);
+    await saveOfflineSnapshot("slots", nextSlots, offlineCacheScope, offlineCacheAuthorizationFingerprint);
+    return true;
+  };
 
   const handleSaveWarehouseLayout = async (
     entries: WarehouseLayoutEntry[]
@@ -1958,7 +2353,7 @@ const deleteProduct = async (
 
     setWarehouseLayoutSaving(true);
 
-    const result = await saveWarehouseLayout(entries, authUserId);
+    const result = await saveWarehouseLayout(entries, warehouseLayout);
 
     if (result.error || !result.data) {
       setWarehouseLayoutSaving(false);
@@ -1984,7 +2379,7 @@ const deleteProduct = async (
 
     setWarehousePositionsSaving(true);
 
-    const result = await saveWarehousePositions(entries, authUserId);
+    const result = await saveWarehousePositions(entries, warehousePositions);
 
     if (result.error || !result.data) {
       setWarehousePositionsSaving(false);
@@ -2075,54 +2470,6 @@ const deleteProduct = async (
     return true;
   };
 
-  const appendHistory = async (newMovements: HistoricoMov[]): Promise<boolean> => {
-    if (newMovements.length === 0) return true;
-
-    const knownSlotIds = new Set<string>(slotsRef.current.map(slot => String(slot.id).trim()));
-    const saved = await appendHistoryToSupabase(newMovements, knownSlotIds);
-
-    if (saved) {
-      const nextHistory = [...newMovements, ...history];
-      setHistory(nextHistory);
-      await saveOfflineSnapshot("history", nextHistory);
-
-      setHistoryQueryRows(prev => {
-        if (!prev) return prev;
-        const inSelectedPeriod = newMovements.filter(
-          movement =>
-            movement.data >= histDateStart &&
-            movement.data <= histDateEnd
-        );
-        return [...inSelectedPeriod, ...prev];
-      });
-    }
-
-    return saved;
-  };
-
-  const persistDivergenciasUpdate = async (
-    updatedDivergencias: Divergencia[]
-  ): Promise<boolean> => {
-    const previousById = new globalThis.Map(divergenciasRef.current.map(div => [div.id, div]));
-    const changed = updatedDivergencias.filter(div => {
-      const previous = previousById.get(div.id);
-      return !previous || JSON.stringify(previous) !== JSON.stringify(div);
-    });
-
-    const saved = await saveDivergenciasToSupabase(changed);
-
-    if (saved) {
-      const merged = updateDivergenciasState(current => {
-        const byId = new globalThis.Map(current.map(div => [div.id, div]));
-        changed.forEach(div => byId.set(div.id, div));
-        return Array.from(byId.values());
-      });
-      await saveOfflineSnapshot("divergencias", merged);
-    }
-
-    return saved;
-  };
-
   /**
    * Persistência transacional dos fluxos diários de entrada, saída, lote e
    * transferência. Envia snapshots completos dos endereços impactados para as
@@ -2136,6 +2483,7 @@ const deleteProduct = async (
     expectedDivergenciasSnapshot: Divergencia[],
     updatedDivergencias: Divergencia[],
     sharedDraftCommit?: SharedDraftBatchContext,
+    operationType?: StockMutationOperation,
   ): Promise<{
     ok: boolean;
     reason?: string;
@@ -2153,6 +2501,44 @@ const deleteProduct = async (
     });
     if (!navigator.onLine) {
       return failed("A operação de estoque exige conexão com o Supabase. Nenhuma gravação foi iniciada.");
+    }
+    if (!sharedDraftCommit && (
+      slotsRealtimeStatusRef.current !== "ready" ||
+      divergenciasRealtimeStatusRef.current !== "ready"
+    )) {
+      return failed("O estoque ou as divergências ainda não estão sincronizados em tempo real. Aguarde a atualização ou reconecte o aplicativo antes de movimentar.");
+    }
+
+    if (sharedDraftCommit) {
+      if (!(await requestAppMutationPermission("divergences.view", "consultar divergências para validar o lote"))) {
+        return failed("O lote foi bloqueado porque a consulta de divergências não foi autorizada.");
+      }
+      if (!(await requestAppMutationPermission("stock.batch.process", "processar lote compartilhado"))) {
+        return failed("O lote foi bloqueado porque a permissão de processamento não foi confirmada.");
+      }
+      if (!(await requestAppMutationPermission("stock.launch.create", "registrar lançamentos do lote"))) {
+        return failed("O lote foi bloqueado porque a permissão de lançamento não foi confirmada.");
+      }
+    } else {
+      if (!(await requestAppMutationPermission("divergences.view", "consultar divergências para validar a movimentação"))) {
+        return failed("A operação foi bloqueada porque a consulta de divergências não foi autorizada.");
+      }
+      if (!operationType) {
+        return failed("Tipo de operação de estoque não informado. Nenhuma gravação foi iniciada.");
+      }
+      const operationPermission: PermissionKey = operationType === "transfer"
+        ? "stock.transfer.create"
+        : operationType === "physical_correction"
+          ? "stock.physical_correction"
+          : "stock.launch.create";
+      const operationLabel = operationType === "transfer"
+        ? "transferir estoque"
+        : operationType === "physical_correction"
+          ? "corrigir fisicamente o estoque"
+          : "registrar lançamento de estoque";
+      if (!(await requestAppMutationPermission(operationPermission, operationLabel))) {
+        return failed(`A operação foi bloqueada: a permissão '${operationPermission}' não foi confirmada.`);
+      }
     }
 
     const scopeKey = (row: { estoque: string; modulo: string; posicao?: string }): string =>
@@ -2223,14 +2609,34 @@ const deleteProduct = async (
       !changedExistingDivergence &&
       newDivergencesOnly.every(div => div.status === "Aberta")
     ) {
-      const saved = await saveDivergenciasToSupabase(newDivergencesOnly);
-      if (!saved) return failed("A divergência foi identificada, mas o Supabase não confirmou seu registro. Nenhum saldo foi alterado.");
+      // Conflict-only rows use a server-authorized insert-only RPC. This route
+      // never updates stock, writes history, or overwrites an existing divergence.
+      const { data: conflictResult, error: conflictError } = await supabase.rpc(
+        "record_stock_conflict_divergences_atomic",
+        {
+          p_operation_type: operationType,
+          p_divergencias: mapDivergenciasForSupabase(newDivergencesOnly),
+        } as never,
+      );
+      if (conflictError || conflictResult?.success !== true) {
+        const code = String(conflictResult?.code ?? conflictError?.code ?? "SEM_CONFIRMACAO");
+        const reason = String(conflictResult?.message ?? conflictError?.message ?? "O servidor não confirmou o registro das divergências.");
+        console.error("Registro de divergências por conflito não confirmado:", {
+          rpc: "record_stock_conflict_divergences_atomic",
+          code,
+          message: reason,
+        });
+        return failed(
+          `A divergência foi identificada, mas o Supabase não confirmou seu registro (${code}). ${reason} Nenhum saldo foi alterado.`,
+          code,
+        );
+      }
       const merged = updateDivergenciasState(current => {
         const byId = new Map(current.map(div => [div.id, div]));
         newDivergencesOnly.forEach(div => byId.set(div.id, div));
         return Array.from(byId.values());
       });
-      await saveOfflineSnapshot("divergencias", merged);
+      await saveOfflineSnapshot("divergencias", merged, offlineCacheScope, offlineCacheAuthorizationFingerprint);
       return { ok: true, deletedSlotIds: [] };
     }
 
@@ -2412,6 +2818,7 @@ const deleteProduct = async (
           p_divergencias: mapDivergenciasForSupabase(finalDivergenciasInScopes),
           p_history: mapHistoryRowsForSupabase(validatedMovements),
           p_delete_slot_ids: deleteSlotIds,
+          p_operation_type: operationType,
         }
       : {
           p_expected_slots: expectedSlotsInScopes,
@@ -2419,6 +2826,7 @@ const deleteProduct = async (
           p_expected_divergencias: mapDivergenciasForSupabase(expectedDivergenciasInScopes),
           p_divergencias: mapDivergenciasForSupabase(finalDivergenciasInScopes),
           p_history: mapHistoryRowsForSupabase(validatedMovements),
+          p_operation_type: operationType,
         };
     const rpcArgs = sharedDraftCommit
       ? {
@@ -2427,7 +2835,11 @@ const deleteProduct = async (
           p_expected_revision: sharedDraftCommit.expectedRevision,
           p_input_rows: sharedDraftCommit.inputRows,
           p_result_summary: sharedDraftCommit.resultSummary,
-          ...stockRpcArgs,
+          p_expected_slots: expectedSlotsInScopes,
+          p_slots: finalSlotsPayload,
+          p_expected_divergencias: mapDivergenciasForSupabase(expectedDivergenciasInScopes),
+          p_divergencias: mapDivergenciasForSupabase(finalDivergenciasInScopes),
+          p_history: mapHistoryRowsForSupabase(validatedMovements),
           p_delete_slot_ids: deleteSlotIds,
         }
       : stockRpcArgs;
@@ -2473,13 +2885,13 @@ const deleteProduct = async (
       ...current.filter(slot => !scopeKeys.has(scopeKey(slot))),
       ...finalSlotsPayload,
     ]);
-    await saveOfflineSnapshot("slots", nextSlots);
+    await saveOfflineSnapshot("slots", nextSlots, offlineCacheScope, offlineCacheAuthorizationFingerprint);
 
     const nextDivergencias = updateDivergenciasState(current => [
       ...current.filter(div => !scopeKeys.has(scopeKey(div))),
       ...finalDivergenciasInScopes,
     ]);
-    await saveOfflineSnapshot("divergencias", nextDivergencias);
+    await saveOfflineSnapshot("divergencias", nextDivergencias, offlineCacheScope, offlineCacheAuthorizationFingerprint);
 
     const movementIds = new Set(newMovements.map(movement => movement.id));
     const nextHistory = [
@@ -2487,7 +2899,7 @@ const deleteProduct = async (
       ...history.filter(movement => !movementIds.has(movement.id)),
     ];
     setHistory(nextHistory);
-    await saveOfflineSnapshot("history", nextHistory);
+    await saveOfflineSnapshot("history", nextHistory, offlineCacheScope, offlineCacheAuthorizationFingerprint);
     setHistoryQueryRows(previous => {
       if (!previous) return previous;
       const inSelectedPeriod = newMovements.filter(
@@ -2571,7 +2983,7 @@ const deleteProduct = async (
 
     // Atualiza a interface/cache apenas após a confirmação da transação no banco.
     const nextSlots = mergeSlotsState(changedSlots);
-    await saveOfflineSnapshot("slots", nextSlots);
+    await saveOfflineSnapshot("slots", nextSlots, offlineCacheScope, offlineCacheAuthorizationFingerprint);
 
     const movementIds = new Set(newMovements.map(movement => movement.id));
     const nextHistory = [
@@ -2579,7 +2991,7 @@ const deleteProduct = async (
       ...history.filter(movement => !movementIds.has(movement.id)),
     ];
     setHistory(nextHistory);
-    await saveOfflineSnapshot("history", nextHistory);
+    await saveOfflineSnapshot("history", nextHistory, offlineCacheScope, offlineCacheAuthorizationFingerprint);
 
     setHistoryQueryRows(previous => {
       if (!previous) return previous;
@@ -2598,7 +3010,7 @@ const deleteProduct = async (
       changedDivergencias.forEach(div => byId.set(div.id, div));
       return Array.from(byId.values());
     });
-    await saveOfflineSnapshot("divergencias", mergedDivergencias);
+    await saveOfflineSnapshot("divergencias", mergedDivergencias, offlineCacheScope, offlineCacheAuthorizationFingerprint);
 
     return true;
   };
@@ -2608,8 +3020,27 @@ const deleteProduct = async (
     action: "sobrescrever" | "zerar",
     observacaoValue: string
   ): Promise<boolean> => {
-    if (!currentUser || !canExecuteOperations(currentUser.role)) {
+    if (!currentUser) {
+      alert("Não foi possível identificar a sessão atual. Atualize o aplicativo e tente novamente.");
+      return false;
+    }
+    // Durante a migração, preserva o bloqueio legado quando a autorização dinâmica
+    // ainda não está habilitada. Com o painel ativo, os dois grants são consultados.
+    if (!permissionEnforcementEnabled && !canExecuteOperations(currentUser.role)) {
       alert("Seu perfil não possui permissão para corrigir divergências.");
+      return false;
+    }
+    if (slotsRealtimeStatusRef.current !== "ready" || divergenciasRealtimeStatusRef.current !== "ready") {
+      alert("O estoque ou as divergências ainda não estão sincronizados. Atualize os dados antes de corrigir fisicamente o endereço.");
+      return false;
+    }
+    if (!(await requestAppMutationPermission("divergences.view", "consultar divergências para resolver"))) {
+      return false;
+    }
+    if (!(await requestAppMutationPermission("stock.physical_correction", "zerar endereço fisicamente"))) {
+      return false;
+    }
+    if (!(await requestAppMutationPermission("divergences.resolve", "resolver as divergências do endereço"))) {
       return false;
     }
     if (action !== "zerar") {
@@ -2752,6 +3183,29 @@ const deleteProduct = async (
       return false;
     }
 
+    const effectiveDate = typeof data.effective_date === "string" ? data.effective_date : targetDate;
+    const effectiveTime = typeof data.effective_time === "string" ? data.effective_time : currentHour;
+    const actorName = typeof data.actor_name === "string" ? data.actor_name : correctedBy;
+    const persistedFinalSlots = plan.finalSlots.map(slot => ({
+      ...slot,
+      ultimaData: effectiveDate,
+      ultimaHora: effectiveTime,
+      ultimoResponsavel: actorName,
+    })) as WarehouseSlot[];
+    const persistedDivergencias = plan.correctedDivergences.map(item => ({
+      ...item,
+      dataCorrecao: effectiveDate,
+      corrigidoPor: actorName,
+    }));
+    const persistedHistory = plan.history.map(movement => ({
+      ...movement,
+      dataLancamento: effectiveDate,
+      quemLancou: actorName,
+      data: effectiveDate,
+      hora: effectiveTime,
+      responsavel: actorName,
+    })) as HistoricoMov[];
+
     const addressParts = plan.addressId.split("-");
     const deletedIds = new Set(plan.deleteSlotIds);
     const isSameAddress = (slot: WarehouseSlot): boolean =>
@@ -2760,29 +3214,29 @@ const deleteProduct = async (
       normalizePosition(slot.posicao) === addressParts.slice(2).join("-");
     const nextSlots = updateSlotsState(current => [
       ...current.filter(slot => !isSameAddress(slot) && !deletedIds.has(slot.id)),
-      ...plan.finalSlots as WarehouseSlot[],
+      ...persistedFinalSlots,
     ]);
-    await saveOfflineSnapshot("slots", nextSlots);
+    await saveOfflineSnapshot("slots", nextSlots, offlineCacheScope, offlineCacheAuthorizationFingerprint);
 
-    const updatedDivergenceIds = new Set(plan.correctedDivergences.map(item => item.id));
+    const updatedDivergenceIds = new Set(persistedDivergencias.map(item => item.id));
     const mergedDivergencias = updateDivergenciasState(current => {
       const byId = new globalThis.Map(current.map(item => [item.id, item]));
-      plan.correctedDivergences.forEach(item => {
+      persistedDivergencias.forEach(item => {
         if (updatedDivergenceIds.has(item.id)) byId.set(item.id, item as unknown as Divergencia);
       });
       return Array.from(byId.values());
     });
-    await saveOfflineSnapshot("divergencias", mergedDivergencias);
+    await saveOfflineSnapshot("divergencias", mergedDivergencias, offlineCacheScope, offlineCacheAuthorizationFingerprint);
 
-    if (plan.history.length > 0) {
-      const newMovements = plan.history as unknown as HistoricoMov[];
+    if (persistedHistory.length > 0) {
+      const newMovements = persistedHistory;
       const movementIds = new Set(newMovements.map(movement => movement.id));
       const nextHistory = [
         ...newMovements,
         ...history.filter(movement => !movementIds.has(movement.id)),
       ];
       setHistory(nextHistory);
-      await saveOfflineSnapshot("history", nextHistory);
+      await saveOfflineSnapshot("history", nextHistory, offlineCacheScope, offlineCacheAuthorizationFingerprint);
       setHistoryQueryRows(previous => {
         if (!previous) return previous;
         const inSelectedPeriod = newMovements.filter(
@@ -2897,6 +3351,41 @@ const deleteProduct = async (
   const [historyQueryLoading, setHistoryQueryLoading] = useState(false);
   const [historyExportAll, setHistoryExportAll] = useState(false);
   const [historyExportLoading, setHistoryExportLoading] = useState(false);
+  const [historySortField, setHistorySortField] = useState<
+    "dataLancamento" | "estoque" | "modulo" | "posicao" | "referencia" | "quantidade" | "tipo" | "hora"
+  >("dataLancamento");
+  const [historySortDirection, setHistorySortDirection] = useState<"asc" | "desc">("desc");
+
+  useEffect(() => {
+    sessionDataGenerationRef.current += 1;
+    productsLoadPromiseRef.current = null;
+    usersLoadPromiseRef.current = null;
+    setUsersLoadError(null);
+    setUsersLoading(false);
+    updateSlotsState(() => []);
+    setProductsList([]);
+    setHistory([]);
+    setHistoryQueryRows(null);
+    divergenciasRef.current = [];
+    setDivergencias([]);
+    setWarehouseLayout(getDefaultE1Layout());
+    setWarehousePositions([]);
+    setUsers([]);
+  }, [authUserId]);
+
+  // IMPORTANT: this effect intentionally follows the authUserId reset effect above.
+  // The reset increments sessionDataGenerationRef; loading before it would make the
+  // newly started request stale and discard its result on every fresh login.
+  useEffect(() => {
+    if (!authUserId || !currentUser || !isAdmin(currentUser.role)) {
+      setUsers([]);
+      setUsersLoading(false);
+      setUsersLoadError(null);
+      return;
+    }
+
+    void loadUsersFromSupabase();
+  }, [authUserId, currentUser]);
 
   const handleHistoryPeriodSearch = async () => {
     if (!histDateStart || !histDateEnd) {
@@ -2909,12 +3398,18 @@ const deleteProduct = async (
       return;
     }
 
+    if (permissionEnforcementEnabled && !canUseAppPermissionForUi("history.view")) {
+      setHistoryQueryRows(null);
+      alert("Seu perfil não possui permissão para consultar o histórico.");
+      return;
+    }
+
     setHistoryQueryLoading(true);
     try {
       const data = await loadHistoryFromSupabase({
         startDate: histDateStart,
         endDate: histDateEnd
-      });
+      }, offlineCacheScope, offlineCacheAuthorizationFingerprint);
       setHistoryQueryRows(data);
     } finally {
       setHistoryQueryLoading(false);
@@ -3796,6 +4291,10 @@ if (
           return;
         }
 
+        // The batch reads a fresh full snapshot directly; divergence rows remain separately permissioned.
+        if (!(await requestAppMutationPermission("stock.search", "consultar o estoque para processar o lote"))) return;
+        if (!(await requestAppMutationPermission("divergences.view", "consultar divergências para processar o lote"))) return;
+
         // All reads are bounded and authoritative. No offline cache is accepted for a write.
         const [freshSlots, freshDivergencias, freshLayoutResult, freshPositionsResult] = await Promise.all([
           loadFreshSlotsForBatch(),
@@ -4156,6 +4655,8 @@ if (
         newHistory,
         divergencias,
         updatedDivergencias,
+        undefined,
+        "launch",
       );
       if (!transaction.ok) {
         alert(
@@ -4187,6 +4688,8 @@ if (
       newHistory,
       divergencias,
       divergencias,
+      undefined,
+      "launch",
     );
     if (!transaction.ok) {
       alert(
@@ -4255,6 +4758,8 @@ if (
       historyWithObservation,
       divergencias,
       divergencias,
+      undefined,
+      "transfer",
     );
     if (!transaction.ok) {
       alert(
@@ -4391,6 +4896,8 @@ if (refRaw) {
     }
   };
 
+  // Static import-layout template with synthetic example values only; it does not export live stock or reports.
+  // Keep this separate from reports.export until the template contains operational data.
   const handleExportarLayout = () => {
   const data = [
     {
@@ -4431,30 +4938,14 @@ if (refRaw) {
   );
 };
 
-  const handleExportarEnderecamento = () => {
+  const handleExportarEnderecamento = async () => {
+    if (!(await requestReportExportPermission(["stock.search"]))) return;
     if (filteredSlots.length === 0) {
       alert("Nenhum endereço corresponde aos filtros atuais.");
       return;
     }
 
-    const data = filteredSlots.map(s => ({
-      ID: s.id,
-      Estoque: `E${s.estoque}`,
-      Modulo_Rua: s.modulo,
-      Posicao: s.posicao || "Corredor",
-      Referencia_SKU: s.referencia || "",
-      Descricao_Produto: s.descricao || "",
-      Saldo_Pecas: s.saldo,
-      Data_Chacote: s.dataChacote || "",
-      Ultima_Movimentacao_Data: s.ultimaData || "",
-      Ultima_Movimentacao_Hora: s.ultimaHora || "",
-      Ultimo_Responsavel: s.ultimoResponsavel || "",
-      Galpao: s.galpao || "3",
-      Restricao: s.galpao === "12"
-        ? "autorizacao"
-        : (s.restricao || "nenhuma"),
-      Observacao: s.observacao || "",
-    }));
+    const data = filteredSlots.map(createStockSearchSpreadsheetRow);
 
     const worksheet = XLSX.utils.json_to_sheet(data);
     const workbook = XLSX.utils.book_new();
@@ -4471,31 +4962,82 @@ if (refRaw) {
     );
   };
 
-    const handleExportarEnderecamentoPDF = () => {
+    const handleExportarEnderecamentoPDF = async () => {
+      if (!(await requestReportExportPermission(["stock.search"]))) return;
       if (filteredSlots.length === 0) {
         alert("Nenhum endereço corresponde aos filtros atuais.");
         return;
       }
 
-      const doc = new jsPDF({
-        orientation: "landscape"
-      });
+      const doc = new jsPDF({ orientation: "landscape" });
+      const pageWidth = doc.internal.pageSize.getWidth();
+      const pageHeight = doc.internal.pageSize.getHeight();
+      const generatedAt = new Date().toLocaleString("pt-BR");
+      const activeFilters = [
+        filterEstoque ? `Estoque ${filterEstoque.replace(/^E/i, "")}` : "",
+        filterGalpao ? `Galpão ${filterGalpao}` : "",
+        searchRef.trim() ? `SKU ${searchRef.trim()}` : "",
+        searchDesc.trim() ? `Descrição: ${searchDesc.trim()}` : "",
+        searchModulo.trim() ? `Módulo ${searchModulo.trim()}` : "",
+        searchPosicao.trim() ? `Posição ${searchPosicao.trim()}` : "",
+        filterRestricao.trim() ? `Restrição ${filterRestricao.trim()}` : "",
+        searchObservacao.trim() ? `Observação: ${searchObservacao.trim()}` : "",
+        somenteAcimaPaletizacao ? "Somente acima da paletização" : "",
+      ].filter(Boolean);
+      const filtersSummary = `Filtros: ${activeFilters.length ? activeFilters.join(" | ") : "nenhum (todos os registros correspondentes)"}`;
 
-      doc.setFontSize(18);
-      doc.text("PORTO BRASIL", 14, 15);
-
-      doc.setFontSize(11);
-      doc.text("Relatório de Endereçamento", 14, 23);
-
-      doc.setFontSize(8);
-      doc.text(
-        `Registros exportados: ${filteredSlots.length} • Gerado em ${new Date().toLocaleString("pt-BR")}`,
-        14,
-        30
-      );
+      const drawHeader = () => {
+        doc.setFillColor(15, 23, 42);
+        doc.rect(0, 0, pageWidth, 30, "F");
+        doc.setFillColor(37, 99, 235);
+        doc.rect(0, 30, pageWidth, 2, "F");
+        doc.setTextColor(255, 255, 255);
+        doc.setFont("helvetica", "bold");
+        doc.setFontSize(8);
+        doc.text("PORTO BRASIL CERÂMICA  |  GESTÃO DE ARMAZENAGEM", 14, 9);
+        doc.setFontSize(18);
+        doc.text("Relatório de Endereçamento", 14, 19);
+        doc.setFont("helvetica", "normal");
+        doc.setFontSize(8);
+        doc.text(
+          "POSIÇÕES E SALDOS FÍSICOS",
+          14,
+          25
+        );
+        doc.setFont("helvetica", "bold");
+        doc.setFontSize(8);
+        doc.text("RELATÓRIO OPERACIONAL", pageWidth - 14, 10, { align: "right" });
+        doc.setFont("helvetica", "normal");
+        doc.setFontSize(7.5);
+        doc.text(`Gerado em ${generatedAt}`, pageWidth - 14, 17, { align: "right" });
+        doc.setTextColor(30, 41, 59);
+        doc.setFillColor(241, 245, 249);
+        doc.roundedRect(14, 35, pageWidth - 28, 12, 1.5, 1.5, "F");
+        doc.setFont("helvetica", "bold");
+        doc.setFontSize(9);
+        doc.text(`Registros: ${filteredSlots.length.toLocaleString("pt-BR")}`, 18, 42.5);
+        doc.text(`Saldo físico total: ${filteredSlotsTotalSaldo.toLocaleString("pt-BR")} peças`, 78, 42.5);
+        doc.setFont("helvetica", "normal");
+        doc.setFontSize(7);
+        const filterLines = doc.splitTextToSize(filtersSummary, pageWidth - 28);
+        doc.text(filterLines, 14, 52);
+        doc.setDrawColor(226, 232, 240);
+        doc.line(14, 56, pageWidth - 14, 56);
+        doc.setFont("helvetica", "normal");
+      };
 
       autoTable(doc, {
-        startY: 38,
+        startY: 60,
+        margin: { top: 60, bottom: 14, left: 14, right: 14 },
+        didDrawPage: () => {
+          drawHeader();
+          doc.setDrawColor(203, 213, 225);
+          doc.line(14, pageHeight - 10, pageWidth - 14, pageHeight - 10);
+          doc.setTextColor(100, 116, 139);
+          doc.setFontSize(7);
+          doc.text("Documento gerado pelo sistema de endereçamento • Conferir filtros e data de emissão", 14, pageHeight - 5);
+          doc.text(`Página ${doc.getNumberOfPages()}`, pageWidth - 14, pageHeight - 5, { align: "right" });
+        },
         didParseCell: (data) => {
           if (data.section !== "body") return;
 
@@ -4515,37 +5057,9 @@ if (refRaw) {
           }
         },
 
-        head: [[
-          "Estoque",
-          "Módulo",
-          "Posição",
-          "SKU",
-          "Descrição",
-          "Saldo",
-          "Data Chacote",
-          "Última Mov.",
-          "Responsável",
-          "Galpão",
-          "Restrição",
-          "Observação"
-        ]],
+        head: [getStockSearchPdfHeaders()],
 
-        body: filteredSlots.map((s) => [
-          s.estoque,
-          s.modulo,
-          s.posicao || "-",
-          s.referencia || "-",
-          s.descricao || "-",
-          s.saldo.toLocaleString("pt-BR"),
-          s.dataChacote || "-",
-          s.ultimaData || "-",
-          s.ultimoResponsavel || "-",
-          s.galpao || "3",
-          s.galpao === "12"
-            ? "autorizacao"
-            : (s.restricao || "nenhuma"),
-          s.observacao || "-"
-        ]),
+        body: filteredSlots.map(createStockSearchPdfRow),
 
         styles: {
           fontSize: 6.5,
@@ -4557,10 +5071,7 @@ if (refRaw) {
           fontStyle: "bold"
         },
 
-        columnStyles: {
-          4: { cellWidth: 55 },
-          11: { cellWidth: 55 }
-        }
+        columnStyles: { 4: { cellWidth: 55 }, 11: { cellWidth: 55 } }
       });
 
       doc.save(
@@ -4569,6 +5080,7 @@ if (refRaw) {
     };
 
   const handleExportarHistorico = async () => {
+    if (!(await requestReportExportPermission(["history.view"]))) return;
     if (!historyExportAll && (!histDateStart || !histDateEnd || histDateStart > histDateEnd)) {
       alert("Selecione um período válido para exportação.");
       return;
@@ -4583,7 +5095,9 @@ if (refRaw) {
           : {
               startDate: histDateStart,
               endDate: histDateEnd
-            }
+            },
+        offlineCacheScope,
+        offlineCacheAuthorizationFingerprint,
       );
 
       if (exportData.length === 0) {
@@ -4663,7 +5177,8 @@ if (refRaw) {
 
   // A correção de divergências é centralizada em DivergenciasPanel e no fluxo transacional acima.
 
-  const handleExportCSV = () => {
+  const handleExportCSV = async () => {
+    if (!(await requestReportExportPermission(["divergences.view"]))) return;
     const headers = "Data Divergência;Tipo Divergência;Estoque;Módulo;Posição;Ref Atual;Ref Nova;Saldo Lógico;Movimentação Intentada;Saldo Final;Responsável;Status\n";
     const rowsCSV = divergencias.map(d => 
       `"${d.dataDivergencia}";"${d.tipoDivergencia}";"${d.estoque}";"${d.modulo}";"${d.posicao}";"${d.refAtual}";"${d.refNova}";"${d.saldoAntes}";"${d.movimentacao}";"${d.saldoFinal}";"${d.responsavel}";"${d.status}"`
@@ -4679,7 +5194,8 @@ if (refRaw) {
     document.body.removeChild(link);
   };
 
-  const handlePrintDivergenciais = () => {
+  const handlePrintDivergenciais = async () => {
+    if (!(await requestReportExportPermission(["divergences.view"]))) return;
     window.print();
   };
 
@@ -5010,7 +5526,8 @@ if (refRaw) {
     p.descricao.toLowerCase().includes(baseSearch.toLowerCase())
   );
 
-    const handleExportConsolidationPDF = () => {
+    const handleExportConsolidationPDF = async () => {
+  if (!(await requestReportExportPermission(["products.view", "stock.search"]))) return;
   console.log("jsPDF teste:", jsPDF);
       
   const doc = new jsPDF();
@@ -6210,7 +6727,8 @@ if (refRaw) {
     }
   };
 
-  const handleExportConsultorExecutivePdf = (text: string) => {
+  const handleExportConsultorExecutivePdf = async (text: string) => {
+    if (!(await requestReportExportPermission(["consultor.use"]))) return;
     const doc = new jsPDF({
       orientation: "portrait",
       unit: "mm",
@@ -7574,6 +8092,82 @@ if (refRaw) {
   };
 
 
+  const role = currentUser ? normalizeRole(currentUser.role) : "";
+
+  const canAccessTab = (tab: string): boolean => {
+    if (!currentUser) return false;
+
+    if (permissionEnforcementEnabled) {
+      const slotBackedTabs = new Set([
+        "dashboard", "endereçamento", "lançamento", "divergências",
+        "base", "configuracao", "mapa", "ai",
+      ]);
+      if (slotBackedTabs.has(tab) && !canUseAppPermissionForUi("stock.search")) {
+        return false;
+      }
+      if (tab === "divergências" && !canUseAppPermissionForUi("divergences.view")) {
+        return false;
+      }
+
+      const permissionsByTab: Partial<Record<string, PermissionKey[]>> = {
+        dashboard: ["dashboard.view"],
+        "endereçamento": ["stock.search"],
+        "lançamento": ["stock.launch.view", "stock.launch.create", "stock.transfer.create", "stock.batch.process"],
+        "histórico": ["history.view"],
+        "divergências": ["divergences.view"],
+        base: ["products.view", "products.create", "products.edit", "products.import_bulk", "products.delete_deactivate"],
+        configuracao: ["warehouse.layout.view", "warehouse.layout.manage"],
+        mapa: ["map.view", "map.metadata.edit", "stock.physical_correction"],
+        ai: ["consultor.use"],
+        users: ["users.view", "users.manage"],
+      };
+      const requiredPermissions = permissionsByTab[tab];
+      return Boolean(requiredPermissions?.some(canUseAppPermissionForUi));
+    }
+
+    if (tab === "configuracao" || tab === "users") {
+      return isAdmin(currentUser.role);
+    }
+
+    switch (role) {
+      case "administrador":
+        return true;
+      case "lideranca":
+        return ["dashboard", "endereçamento", "lançamento", "histórico", "divergências", "base", "ai"].includes(tab);
+      case "apoio":
+        return ["endereçamento", "lançamento", "histórico", "divergências", "ai"].includes(tab);
+      case "producao":
+        return ["endereçamento", "ai"].includes(tab);
+      case "visualizador":
+        return ["dashboard", "endereçamento", "lançamento", "histórico", "divergências", "base", "ai"].includes(tab);
+      default:
+        return false;
+    }
+  };
+
+  // After a profile switch, the previous tab may not belong to the new role.
+  // Keep the desktop shell on the first accessible module instead of rendering
+  // an empty content area (mobile already has an equivalent fallback).
+  useEffect(() => {
+    if (!currentUser) return;
+    if (permissionEnforcementEnabled && permissionContextStatus !== "ready") return;
+    if (canAccessTab(activeTab)) return;
+
+    const fallbackTabs = [
+      "endereçamento", "dashboard", "lançamento", "histórico",
+      "divergências", "base", "configuracao", "mapa", "ai", "users",
+    ];
+    const fallbackTab = fallbackTabs.find((tab) => canAccessTab(tab));
+    if (fallbackTab) setActiveTab(fallbackTab);
+  }, [
+    activeTab,
+    currentUser,
+    authUserId,
+    permissionEnforcementEnabled,
+    permissionContextStatus,
+    appPermissionContext,
+  ]);
+
   // --- LOCK SCREEN CONDITIONAL RENDERING ON NOT LOGGED IN ---
   if (!currentUser) {
     return (
@@ -7629,7 +8223,7 @@ if (refRaw) {
               </div>
             )}
 
-            <button 
+            <button
               type="submit"
               disabled={authLoading}
               className="w-full bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed hover:bg-blue-700 text-white rounded-lg p-3 text-xs font-bold transition shadow shadow-blue-600/20 uppercase"
@@ -7643,13 +8237,26 @@ if (refRaw) {
     );
   }
 
-  const role = normalizeRole(currentUser.role);
-  const isReadOnly = isReadOnlyRole(currentUser.role);
-  const canAccessBatchLaunch = canExecuteOperations(currentUser.role);
-  const canExecuteBatchLaunch = canExecuteOperations(currentUser.role);
+  const isReadOnly = permissionEnforcementEnabled
+    ? !canUseAppPermissionForUi("stock.launch.create")
+    : isReadOnlyRole(currentUser.role);
+  const canAccessBatchLaunch = permissionEnforcementEnabled
+    ? canUseAppPermissionForUi("stock.batch.process") && canUseAppPermissionForUi("stock.launch.create")
+    : canExecuteOperations(currentUser.role);
+  const canExecuteBatchLaunch = permissionEnforcementEnabled
+    ? canUseAppPermissionForUi("stock.batch.process") && canUseAppPermissionForUi("stock.launch.create")
+    : canExecuteOperations(currentUser.role);
 
   const hasAccess = (requiredLevel: "administrador" | "operador" | "consulta"): boolean => {
     if (!currentUser) return false;
+
+    if (permissionEnforcementEnabled) {
+      if (requiredLevel === "administrador") return canUseAppPermissionForUi("database.manage");
+      if (requiredLevel === "operador") {
+        return canUseAppPermissionForUi("products.create") || canUseAppPermissionForUi("products.edit");
+      }
+      return true;
+    }
 
     if (requiredLevel === "administrador") {
       return isAdmin(currentUser.role);
@@ -7662,49 +8269,19 @@ if (refRaw) {
     return true;
   };
 
-  const canAccessTab = (tab: string): boolean => {
-    if (!currentUser) return false;
-
-    if (tab === "configuracao") {
-      return isAdmin(currentUser.role);
-    }
-
-    switch (role) {
-      case "administrador":
-        return true;
-      case "lideranca":
-        return ["dashboard", "endereçamento", "lançamento", "histórico", "divergências", "base", "ai"].includes(tab);
-      case "apoio":
-        return ["endereçamento", "lançamento", "histórico", "divergências", "ai"].includes(tab);
-      case "producao":
-        return ["endereçamento", "ai"].includes(tab);
-      case "visualizador":
-        return ["dashboard", "endereçamento", "lançamento", "histórico", "divergências", "base", "ai"].includes(tab);
-      default:
-        return false;
-    }
-  };
-
-  const mobileAllowedTabs = (() => {
-    switch (role) {
-      case "administrador":
-        return ["endereçamento", "lançamento", "divergências", "histórico", "ai", "base", "configuracao"];
-      case "producao":
-        return ["endereçamento", "ai"];
-      case "lideranca":
-        return ["endereçamento", "lançamento", "divergências", "histórico", "ai"];
-      case "apoio":
-        return ["endereçamento", "lançamento", "divergências", "histórico", "ai"];
-      case "visualizador":
-        return ["endereçamento", "lançamento", "divergências", "histórico", "ai"];
-      default:
-        return ["endereçamento"];
-    }
-  })();
+  const mobileAllowedTabs = ([
+    ...(canAccessTab("endereçamento") ? ["endereçamento"] : []),
+    ...(canAccessTab("lançamento") ? ["lançamento"] : []),
+    ...(canAccessTab("divergências") ? ["divergências"] : []),
+    ...(canAccessTab("histórico") ? ["histórico"] : []),
+    ...(canAccessTab("ai") ? ["ai"] : []),
+    ...(canAccessTab("base") ? ["base"] : []),
+    ...(canAccessTab("configuracao") ? ["configuracao"] : []),
+  ]) as Array<"endereçamento" | "lançamento" | "divergências" | "histórico" | "ai" | "base" | "configuracao">;
 
   const mobileActiveTab = mobileAllowedTabs.includes(activeTab)
     ? activeTab
-    : "endereçamento";
+    : (mobileAllowedTabs[0] ?? "");
 
   if (isMobileViewport) {
     return (
@@ -7716,7 +8293,21 @@ if (refRaw) {
         history={historyQueryRows ?? history}
         divergencias={divergencias}
         online={isOnline}
-        canExecute={canExecuteOperations(currentUser.role)}
+        canLaunch={permissionEnforcementEnabled ? canUseAppPermissionForUi("stock.launch.create") : canExecuteOperations(currentUser.role)}
+        canTransfer={permissionEnforcementEnabled ? canUseAppPermissionForUi("stock.transfer.create") : canExecuteOperations(currentUser.role)}
+        canEditSlotMetadata={permissionEnforcementEnabled ? canUseAppPermissionForUi("map.metadata.edit") : canExecuteOperations(currentUser.role)}
+        showStockDetailsInSearch={showStockDetailsInSearch}
+        showSlotMetadataInSearch={showSlotMetadataInSearch}
+        canResolveDivergences={permissionEnforcementEnabled
+          ? canUseAppPermissionForUi("divergences.view") && canUseAppPermissionForUi("divergences.resolve")
+          : canExecuteOperations(currentUser.role)}
+        canViewStock={canAccessTab("endereçamento")}
+        canViewLaunch={canAccessTab("lançamento")}
+        canViewDivergences={canAccessTab("divergências")}
+        canViewHistory={canAccessTab("histórico")}
+        canUseConsultor={canAccessTab("ai")}
+        canViewProducts={canAccessTab("base")}
+        canViewWarehouseLayout={canAccessTab("configuracao")}
         activeTab={mobileActiveTab}
         onTabChange={tab => setActiveTab(tab)}
         onUpdateSlot={handleMobileUpdateSlot}
@@ -7738,6 +8329,8 @@ if (refRaw) {
           onDeleteProduct: deleteProduct,
           hasAccess,
           currentUser,
+          permissionEnforcementEnabled,
+          canUsePermission: canUseAppPermissionForUi,
         }}
         warehouseConfigProps={{
           layout: warehouseLayout,
@@ -7958,7 +8551,7 @@ if (refRaw) {
               </div>
             </div>
             
-            <button 
+            <button
               onClick={handleLogout}
               title="Desconectar do terminal de endereçamento"
               className="p-1 text-slate-400 hover:text-white transition cursor-pointer"
@@ -8009,6 +8602,15 @@ if (refRaw) {
 
         {/* COMPONENT TAB CONTAINER WRAPPER */}
         <div className="p-6 flex-1 space-y-6">
+          {permissionEnforcementEnabled && currentUser && permissionContextStatus !== "ready" && (
+            <div role="alert" className="rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-xs text-amber-900">
+              <strong>{permissionContextStatus === "loading" ? "Validando permissões..." : "Permissões não disponíveis."}</strong>{" "}
+              {permissionContextStatus === "loading"
+                ? "As exportações ficam bloqueadas até a validação terminar."
+                : "As exportações foram bloqueadas por segurança. Atualize o aplicativo ou peça ao Administrador para verificar a matriz."}
+              {permissionContextError && <span className="block mt-1 text-[10px]">Detalhe técnico: {permissionContextError}</span>}
+            </div>
+          )}
           
           {/* TAB 1: DASHBOARD VIEW */}
             {activeTab === "dashboard" && canAccessTab("dashboard") && (
@@ -8025,8 +8627,8 @@ if (refRaw) {
                 <div className="flex gap-2 shrink-0">
                   <button
                     onClick={() => {
-                      if (!hasAccess("operador")) {
-                        alert("Permissão necessária. Sendo conta 'Consulta' você não pode lançar registros.");
+                      if (!canAccessTab("lançamento")) {
+                        alert("Seu perfil não possui permissão para abrir a tela de lançamentos.");
                         return;
                       }
                       setActiveTab("lançamento");
@@ -8049,7 +8651,12 @@ if (refRaw) {
                 e1CapacityTotal={getE1TotalCapacity(warehouseLayout)}
                 warehousePositions={warehousePositions}
                 appMode="avancado"
-                canPerformActions={canExecuteOperations(currentUser?.role)}
+                canPerformActions={permissionEnforcementEnabled
+                  ? canUseAppPermissionForUi("stock.physical_correction") ||
+                    (canUseAppPermissionForUi("divergences.view") && canUseAppPermissionForUi("divergences.resolve"))
+                  : canExecuteOperations(currentUser?.role)}
+                canExportReports={canExportDashboardDetails}
+                requestReportExportPermission={() => requestReportExportPermission(["dashboard.view"])}
               />
 
               {/* Graphic indicators */}
@@ -8110,14 +8717,14 @@ const pct = total > 0 ? (occupied / total) * 100 : 0;
                     </div>
                   </div>
 
-                  <button
-                    onClick={() => {
-                      setActiveTab("mapa");
-                    }}
-                    className="w-full bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-black transition rounded-lg py-2.5 mt-6 border border-slate-250 shadow-xs uppercase tracking-wider"
-                  >
-                    Visualizar Gêmeo Digital (2D)
-                  </button>
+                  {canAccessTab("mapa") && (
+                    <button
+                      onClick={() => setActiveTab("mapa")}
+                      className="w-full bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-black transition rounded-lg py-2.5 mt-6 border border-slate-250 shadow-xs uppercase tracking-wider"
+                    >
+                      Visualizar Gêmeo Digital (2D)
+                    </button>
+                  )}
                 </div>
 
                 {/* AI advisor Teaser */}
@@ -8154,14 +8761,14 @@ const pct = total > 0 ? (occupied / total) * 100 : 0;
                     </div>
                   </div>
 
-                  <button
-                    onClick={() => {
-                      setActiveTab("ai");
-                    }}
-                    className="w-full bg-amber-500/10 border border-amber-200 text-amber-820 hover:bg-amber-500/25 text-amber-800 text-xs font-black transition rounded-lg py-2.5 mt-6 uppercase tracking-wider"
-                  >
-                    Conversar com Diagnóstico IA
-                  </button>
+                  {canAccessTab("ai") && (
+                    <button
+                      onClick={() => setActiveTab("ai")}
+                      className="w-full bg-amber-500/10 border border-amber-200 text-amber-820 hover:bg-amber-500/25 text-amber-800 text-xs font-black transition rounded-lg py-2.5 mt-6 uppercase tracking-wider"
+                    >
+                      Conversar com Diagnóstico IA
+                    </button>
+                  )}
                 </div>
 
               </div>
@@ -8170,7 +8777,7 @@ const pct = total > 0 ? (occupied / total) * 100 : 0;
           )}
 
           {/* TAB 2: PESQUISA PRODUTOS (Endereçamento search grid) */}
-          {activeTab === "endereçamento" && (
+          {activeTab === "endereçamento" && canAccessTab("endereçamento") && (
             <div className="space-y-6">
               
               {/* Filter coordinates */}
@@ -8178,25 +8785,29 @@ const pct = total > 0 ? (occupied / total) * 100 : 0;
                 <div className="flex items-center justify-between pb-3 border-b border-slate-100">
                   <h3 className="text-xs font-bold text-slate-700 uppercase tracking-wider block">Filtro de Logística e Endereçamento</h3>
                   <div className="flex items-center gap-4">
-                    <button 
-                      onClick={handleExportarEnderecamento}
-                      className="text-xs text-indigo-600 hover:text-indigo-800 transition font-bold cursor-pointer flex items-center gap-1.5 font-sans uppercase tracking-wider text-[11px]"
-                    >
-                      <Download className="w-3.5 h-3.5 text-indigo-500" />
-                      Exportar Endereçamento (EXCEL)
-                    </button>
-                    <button 
+                    {canExportStockSearch && (
+                      <button
+                        onClick={handleExportarEnderecamento}
+                        className="text-xs text-indigo-600 hover:text-indigo-800 transition font-bold cursor-pointer flex items-center gap-1.5 font-sans uppercase tracking-wider text-[11px]"
+                      >
+                        <Download className="w-3.5 h-3.5 text-indigo-500" />
+                        Exportar Endereçamento (EXCEL)
+                      </button>
+                    )}
+                    <button
                       onClick={handleClearSlotsFilter}
                       className="text-xs text-slate-400 hover:text-blue-600 transition font-medium cursor-pointer font-sans uppercase tracking-wider text-[11px]"
                     >
                       Limpar Filtros
                     </button>
-                    <button
-                      onClick={handleExportarEnderecamentoPDF}
-                      className="bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-lg text-xs font-bold"
-                    >
-                      Exportar PDF
-                    </button>
+                    {canExportStockSearch && (
+                      <button
+                        onClick={handleExportarEnderecamentoPDF}
+                        className="bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-lg text-xs font-bold"
+                      >
+                        Exportar PDF
+                      </button>
+                    )}
                   </div>
                 </div>
 
@@ -8252,7 +8863,7 @@ const pct = total > 0 ? (occupied / total) * 100 : 0;
                         </select>
                       </div>
 
-                      <div>
+                      {showSlotMetadataInSearch && <div>
                         <label className="text-[10px] text-slate-450 font-bold block uppercase mb-1">Galpão</label>
                         <select
                           value={filterGalpao}
@@ -8263,9 +8874,9 @@ const pct = total > 0 ? (occupied / total) * 100 : 0;
                           <option value="3">Galpão 3</option>
                           <option value="12">Galpão 12</option>
                         </select>
-                      </div>
+                      </div>}
 
-                      <div>
+                      {showSlotMetadataInSearch && <div>
                         <label className="text-[10px] text-slate-450 font-bold block uppercase mb-1">Restrição</label>
                         <select
                           value={filterRestricao}
@@ -8278,9 +8889,9 @@ const pct = total > 0 ? (occupied / total) * 100 : 0;
                           <option value="autorizacao">Solicitar autorização</option>
                           <option value="outra">Outro motivo</option>
                         </select>
-                      </div>
+                      </div>}
 
-                      <div>
+                      {showSlotMetadataInSearch && <div>
                         <label className="text-[10px] text-slate-450 font-bold block uppercase mb-1">Observação</label>
                         <input
                           type="text"
@@ -8289,9 +8900,9 @@ const pct = total > 0 ? (occupied / total) * 100 : 0;
                           placeholder="Buscar observação"
                           className="w-full border border-slate-300 rounded-lg p-2 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500 font-bold"
                         />
-                      </div>
+                      </div>}
 
-                      <label className="flex items-center gap-2 self-end pb-2">
+                      {showStockDetailsInSearch && <label className="flex items-center gap-2 self-end pb-2">
                         <input
                           type="checkbox"
                           checked={somenteAcimaPaletizacao}
@@ -8303,7 +8914,7 @@ const pct = total > 0 ? (occupied / total) * 100 : 0;
                         <span className="text-xs font-bold text-indigo-600">
                           Apenas acima da paletização
                         </span>
-                      </label>
+                      </label>}
                     </>
                    }
                 </div>
@@ -8312,7 +8923,9 @@ const pct = total > 0 ? (occupied / total) * 100 : 0;
               {/* Stats header */}
               <div className="flex justify-between items-center bg-slate-100 text-slate-600 text-xs px-4 py-2 border border-slate-200 rounded-lg font-medium">
                 <span>Total de <strong>{filteredSlots.length}</strong> endereços correspondendo aos filtros inseridos.</span>
-                <span>Saldo físico total localizado: <strong>{filteredSlotsTotalSaldo.toLocaleString()} pçs</strong></span>
+                {showStockDetailsInSearch && (
+                  <span>Saldo físico total localizado: <strong>{filteredSlotsTotalSaldo.toLocaleString()} pçs</strong></span>
+                )}
               </div>
 
               {/* Data Table */}
@@ -8333,7 +8946,12 @@ const pct = total > 0 ? (occupied / total) * 100 : 0;
                           ["ultimaMov", "Última mov."],
                           ["responsavel", "Responsável"],
                           ["observacao", "Observação"],
-                        ] as Array<[SearchSortField, string]>).map(([field, label]) => (
+                        ] as Array<[SearchSortField, string]>).filter(([field]) => {
+                          const detailsOnly = ["saldo", "ultimaMov", "responsavel"];
+                          const metadataOnly = ["restricao", "dataChacote", "observacao"];
+                          return (showStockDetailsInSearch || !detailsOnly.includes(field)) &&
+                            (showSlotMetadataInSearch || !metadataOnly.includes(field));
+                        }).map(([field, label]) => (
                           <th
                             key={field}
                             className={`py-3 px-4 font-bold ${field === "referencia" ? "font-mono text-center" : ""} ${field === "restricao" ? "text-center" : ""} ${field === "saldo" ? "text-right" : ""}`}
@@ -8378,7 +8996,7 @@ const pct = total > 0 ? (occupied / total) * 100 : 0;
                                   <span className="text-slate-300 font-bold block">—</span>
                                 )}
                               </td>
-                              <td className="py-3 px-4 text-center">
+                              {showSlotMetadataInSearch && <td className="py-3 px-4 text-center">
                                 {isOccupied ? (
                                   <span className={`text-[9px] font-black uppercase px-2 py-0.5 rounded border ${
                                     (s.restricao || "nenhuma") === "nenhuma"
@@ -8394,11 +9012,11 @@ const pct = total > 0 ? (occupied / total) * 100 : 0;
                                 ) : (
                                   <span className="text-slate-300 font-bold block">—</span>
                                 )}
-                              </td>
+                              </td>}
                               <td className="py-3 px-4 truncate max-w-[200px]">
                                 {isOccupied ? s.descricao : <span className="text-slate-300 italic font-normal">Vaga desocupada</span>}
                               </td>
-                             <td className="py-3 px-4 text-right font-black pr-6">
+                             {showStockDetailsInSearch && <td className="py-3 px-4 text-right font-black pr-6">
                               {isOccupied ? (
                                 <span
                                   className={
@@ -8412,21 +9030,33 @@ const pct = total > 0 ? (occupied / total) * 100 : 0;
                               ) : (
                                 <span className="text-slate-300 font-normal">—</span>
                               )}
-                            </td>
-                              <td className="py-3 px-4 font-mono text-slate-550">{isOccupied ? (s.dataChacote || "—") : "—" }</td>
-                              <td className="py-3 px-4 font-mono text-slate-500 whitespace-nowrap">
-                                {isOccupied ? `${s.ultimaData || "—"} ${s.ultimaHora || ""}`.trim() : "—"}
-                              </td>
-                              <td className="py-3 px-4 text-slate-705 font-bold whitespace-nowrap">{isOccupied ? s.ultimoResponsavel : "—"}</td>
-                              <td className="py-3 px-4 max-w-[220px] truncate text-slate-500" title={isOccupied ? s.observacao || "" : ""}>
-                                {isOccupied ? s.observacao || "—" : "—"}
-                              </td>
+                            </td>}
+                              {showSlotMetadataInSearch && (
+                                <td className="py-3 px-4 font-mono text-slate-550">
+                                  {isOccupied ? (s.dataChacote || "—") : "—"}
+                                </td>
+                              )}
+                              {showStockDetailsInSearch && (
+                                <td className="py-3 px-4 font-mono text-slate-500 whitespace-nowrap">
+                                  {isOccupied ? `${s.ultimaData || "—"} ${s.ultimaHora || ""}`.trim() : "—"}
+                                </td>
+                              )}
+                              {showStockDetailsInSearch && (
+                                <td className="py-3 px-4 text-slate-705 font-bold whitespace-nowrap">
+                                  {isOccupied ? s.ultimoResponsavel : "—"}
+                                </td>
+                              )}
+                              {showSlotMetadataInSearch && (
+                                <td className="py-3 px-4 max-w-[220px] truncate text-slate-500" title={isOccupied ? s.observacao || "" : ""}>
+                                  {isOccupied ? s.observacao || "—" : "—"}
+                                </td>
+                              )}
                             </tr>
                           );
                         })
                       ) : (
                         <tr>
-                          <td colSpan={11} className="py-20 text-center text-slate-400 font-medium bg-slate-50">
+                          <td colSpan={5 + (showStockDetailsInSearch ? 3 : 0) + (showSlotMetadataInSearch ? 3 : 0)} className="py-20 text-center text-slate-400 font-medium bg-slate-50">
                             Nenhum endereço correspondente aos filtros de pesquisa inseridos.
                           </td>
                         </tr>
@@ -8513,7 +9143,7 @@ const pct = total > 0 ? (occupied / total) * 100 : 0;
           )}
 
           {/* TAB 3: LANÇAMENTO EM LOTE (Travas validator spreadsheet) */}
-          {activeTab === "lançamento" && (
+          {activeTab === "lançamento" && canAccessTab("lançamento") && (
             <div className="space-y-6">
               
               {/* If advanced mode, offer a toggle between Lançamento Unitário and Lançamento em Lote */}
@@ -8559,7 +9189,7 @@ const pct = total > 0 ? (occupied / total) * 100 : 0;
                     <div className="space-y-3">
                       <div className="border border-red-200 bg-red-50 rounded-lg p-4">
                         <p className="text-xs font-bold text-red-700 leading-relaxed">
-                          Apenas contas Administrador podem realizar movimentações de estoque.
+                          Seu perfil está configurado somente para consulta nesta área. Solicite ao Administrador a permissão de lançamento, se necessário.
                         </p>
                       </div>
                     </div>
@@ -9295,7 +9925,7 @@ const pct = total > 0 ? (occupied / total) * 100 : 0;
           )}
 
           {/* TAB 4: HISTÓRICO */}
-          {activeTab === "histórico" && (() => {
+          {activeTab === "histórico" && canAccessTab("histórico") && (() => {
             const historyForView = historyQueryRows ?? history.filter(
               h => h.data >= histDateStart && h.data <= histDateEnd
             );
@@ -9363,6 +9993,33 @@ const pct = total > 0 ? (occupied / total) * 100 : 0;
                 return true;
               });
 
+            const sortedFilteredHistory = [...filteredHistory].sort((a, b) => {
+              const valueA = a[historySortField];
+              const valueB = b[historySortField];
+              let comparison = 0;
+
+              if (historySortField === "quantidade") {
+                comparison = Number(valueA || 0) - Number(valueB || 0);
+              } else if (historySortField === "estoque" || historySortField === "modulo") {
+                const numberA = Number(String(valueA ?? "").replace(/\D/g, ""));
+                const numberB = Number(String(valueB ?? "").replace(/\D/g, ""));
+                comparison = numberA - numberB;
+                if (!Number.isFinite(comparison) || comparison === 0) {
+                  comparison = String(valueA ?? "").localeCompare(String(valueB ?? ""), "pt-BR", { numeric: true });
+                }
+              } else {
+                comparison = String(valueA ?? "").localeCompare(String(valueB ?? ""), "pt-BR", { numeric: true, sensitivity: "base" });
+              }
+
+              if (comparison === 0) {
+                comparison = String(b.data ?? "").localeCompare(String(a.data ?? "")) ||
+                  String(b.hora ?? "").localeCompare(String(a.hora ?? "")) ||
+                  String(b.id ?? "").localeCompare(String(a.id ?? ""));
+              }
+
+              return historySortDirection === "asc" ? comparison : -comparison;
+            });
+
             return (
               <div className="space-y-6">
                 <div className="bg-white border border-slate-200 rounded-xl p-6 shadow-xs">
@@ -9383,14 +10040,16 @@ const pct = total > 0 ? (occupied / total) * 100 : 0;
                         />
                         Todo histórico
                       </label>
-                      <button
-                        onClick={handleExportarHistorico}
-                        disabled={historyExportLoading}
-                        className="bg-indigo-50 hover:bg-indigo-100 disabled:opacity-60 border border-indigo-200 text-indigo-700 rounded-lg px-4 py-2 text-xs font-bold transition flex items-center gap-1.5 cursor-pointer uppercase tracking-wider font-sans whitespace-nowrap"
-                      >
-                        <Download className="w-3.5 h-3.5 text-indigo-600" />
-                        {historyExportLoading ? "Exportando..." : "Exportar Histórico"}
-                      </button>
+                      {canExportHistory && (
+                        <button
+                          onClick={handleExportarHistorico}
+                          disabled={historyExportLoading}
+                          className="bg-indigo-50 hover:bg-indigo-100 disabled:opacity-60 border border-indigo-200 text-indigo-700 rounded-lg px-4 py-2 text-xs font-bold transition flex items-center gap-1.5 cursor-pointer uppercase tracking-wider font-sans whitespace-nowrap"
+                        >
+                          <Download className="w-3.5 h-3.5 text-indigo-600" />
+                          {historyExportLoading ? "Exportando..." : "Exportar Histórico"}
+                        </button>
+                      )}
                     </div>
                   </div>
 
@@ -9489,11 +10148,37 @@ const pct = total > 0 ? (occupied / total) * 100 : 0;
                     </div>
                   </div>
 
+                  <div className="flex flex-wrap items-center justify-end gap-2 mb-2 text-xs">
+                    <label htmlFor="history-sort-field" className="font-bold text-slate-500">Ordenar por</label>
+                    <select
+                      id="history-sort-field"
+                      value={historySortField}
+                      onChange={(event) => setHistorySortField(event.target.value as typeof historySortField)}
+                      className="rounded-md border border-slate-300 bg-white px-2 py-1.5 text-slate-700"
+                    >
+                      <option value="dataLancamento">Data de registro</option>
+                      <option value="estoque">Estoque</option>
+                      <option value="modulo">Módulo / rua</option>
+                      <option value="posicao">Posição</option>
+                      <option value="referencia">SKU</option>
+                      <option value="quantidade">Quantidade</option>
+                      <option value="tipo">Tipo</option>
+                      <option value="hora">Hora</option>
+                    </select>
+                    <select
+                      aria-label="Sentido da ordenação do histórico"
+                      value={historySortDirection}
+                      onChange={(event) => setHistorySortDirection(event.target.value as "asc" | "desc")}
+                      className="rounded-md border border-slate-300 bg-white px-2 py-1.5 text-slate-700"
+                    >
+                      <option value="desc">Decrescente</option>
+                      <option value="asc">Crescente</option>
+                    </select>
+                  </div>
                   <div className="overflow-x-auto overflow-y-auto max-h-[650px]">
                     <table className="w-full text-left text-xs border-collapse">
                       <thead>
                         <tr className="bg-slate-100 border-b border-slate-200 text-slate-605 uppercase text-[10px] tracking-wider font-bold">
-                          <th className="py-3.5 px-4">Cod Mov</th>
                           <th className="py-3.5 px-4">Data Registro</th>
                           <th className="py-3.5 px-4">Efetuado por</th>
                           <th className="py-3.5 px-4 font-mono">Estoque</th>
@@ -9512,10 +10197,9 @@ const pct = total > 0 ? (occupied / total) * 100 : 0;
                       </thead>
 
                       <tbody className="divide-y divide-slate-100 font-medium text-slate-700">
-                        {filteredHistory.length > 0 ? (
-                          filteredHistory.map((h) => (
+                        {sortedFilteredHistory.length > 0 ? (
+                          sortedFilteredHistory.map((h) => (
                             <tr key={h.id} className="hover:bg-slate-50 border-b border-slate-100">
-                              <td className="py-3 px-4 font-bold text-blue-600">{h.id}</td>
                               <td className="py-3 px-4 font-mono text-slate-500">{h.dataLancamento}</td>
                               <td className="py-3 px-4 text-slate-800">{h.quemLancou}</td>
                               <td className="py-3 px-4 font-black text-slate-850 font-mono">{h.estoque.replace("E", "")}</td>
@@ -9560,7 +10244,7 @@ const pct = total > 0 ? (occupied / total) * 100 : 0;
           })()}
 
           {/* TAB 5: DIVERGÊNCIAS (Admin corrective reviewer) */}
-          {activeTab === "divergências" && (
+          {activeTab === "divergências" && canAccessTab("divergências") && (
             <DivergenciasPanel
               divergencias={divergencias}
               slots={slots}
@@ -9569,23 +10253,30 @@ const pct = total > 0 ? (occupied / total) * 100 : 0;
               launchDate={launchDate}
               onResolveDivergencia={handleMobileResolveDivergencia}
               hasAccess={hasAccess}
+              canResolveDivergences={permissionEnforcementEnabled
+                ? canUseAppPermissionForUi("divergences.view") && canUseAppPermissionForUi("divergences.resolve")
+                : canExecuteOperations(currentUser.role)}
+              canExportReports={canExportDivergences}
+              requestReportExportPermission={() => requestReportExportPermission(["divergences.view"])}
             />
           )}
 
           {/* TAB 6: BASE DE DADOS (References List and registering new ones) */}
-          {activeTab === "base" && (
+          {activeTab === "base" && canAccessTab("base") && (
            <BaseDeDadosPanel
-             productsList={productsList}
+              productsList={productsList}
               slots={slots}
               onRegisterProduct={registerNewProduct}
               onUpdateProduct={updateProduct}
               onDeleteProduct={deleteProduct}
               hasAccess={hasAccess}
               currentUser={currentUser}
+              permissionEnforcementEnabled={permissionEnforcementEnabled}
+              canUsePermission={canUseAppPermissionForUi}
           />
           )}
 
-          {activeTab === "configuracao" && (
+          {activeTab === "configuracao" && canAccessTab("configuracao") && (
             <WarehouseLayoutPanel
               layout={warehouseLayout}
               slots={slots}
@@ -9603,44 +10294,72 @@ const pct = total > 0 ? (occupied / total) * 100 : 0;
           )}
 
           {/* TAB 7: GÊMEO DIGITAL */}
-          {activeTab === "mapa" && (
+          {activeTab === "mapa" && canAccessTab("mapa") && (
             <div className="space-y-6">
               
           <InteractiveMapa
             slots={slots}
-            onQuickUpdateSlot={async (updated) => {
-              const slotsSaved = await persistSlotsUpdate(
-                slots.map(s => s.id === updated.id ? updated : s)
-              );
-
-              if (!slotsSaved) {
-                alert("Não foi possível salvar a alteração do endereço no Supabase.");
-                return;
+            onQuickUpdateSlot={async (requestedSlot, expectedSlot) => {
+              if (!(await requestAppMutationPermission("stock.physical_correction", "corrigir fisicamente o estoque"))) {
+                return { ok: false };
+              }
+              const currentSlots = slotsRef.current;
+              if (!isMapQuickCorrectionSnapshotCurrent(currentSlots, expectedSlot)) {
+                alert("O endereço mudou desde que você abriu a correção. Nenhum dado foi alterado; feche a edição, atualize o mapa e confira o saldo atual.");
+                return { ok: false };
               }
 
-                  // Keep history
-                  const logId = `MOV-${generateId()}`;
-                  const updateHistory: HistoricoMov = {
-                    id: logId,
-                    dataLancamento: getTodayIsoDate(),
-                    quemLancou: operator,
-                    data: getTodayIsoDate(),
-                    estoque: updated.estoque,
-                    modulo: updated.modulo,
-                    posicao: updated.posicao,
-                    referencia: updated.referencia || "RECONCILIADO",
-                    quantidade: updated.saldo,
-                    tipo: "Entrada",
-                    dataChacote: updated.dataChacote,
-                    hora: updated.ultimaHora || new Date().toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" }),
-                    responsavel: updated.ultimoResponsavel
-                  };
-                  const historySaved = await appendHistory([updateHistory]);
-                  if (!historySaved) {
-                    alert("O endereço foi salvo, mas o registro de reconciliação não pôde ser gravado no histórico.");
-                  }
-                }}
-              productsList={productsList}
+              const correctionDate = getTodayIsoDate();
+              const correctionTime = new Date().toLocaleTimeString("pt-BR", {
+                hour: "2-digit",
+                minute: "2-digit",
+              });
+              const plan = buildMapQuickCorrectionPlan({
+                slots: currentSlots,
+                requestedSlot,
+                productsList,
+                operator,
+                date: correctionDate,
+                time: correctionTime,
+                createHistoryId: () => `MOV-${generateId()}`,
+                createCorrectionId: () => globalThis.crypto?.randomUUID?.() ?? null,
+              });
+
+              if (plan.ok === false) {
+                alert(plan.reason);
+                return { ok: false };
+              }
+
+              // The map uses the same atomic writer as stock movements.
+              // Never fall back to upsert + history as separate requests.
+              try {
+                const currentDivergencias = divergenciasRef.current;
+                const transaction = await persistStockMutationAtomically(
+                  currentSlots,
+                  plan.updatedSlots,
+                  plan.history,
+                  currentDivergencias,
+                  currentDivergencias,
+                  undefined,
+                  "physical_correction",
+                );
+
+                if (!transaction.ok) {
+                  alert(
+                    "A correção do mapa não foi confirmada pelo Supabase. Nenhum fallback ou nova tentativa automática será executado.\n\n" +
+                    `${transaction.reason || "Atualize os dados e confira o endereço e o histórico antes de tentar novamente."}`
+                  );
+                  return { ok: false };
+                }
+
+                return { ok: true, selectedSlotId: plan.selectedSlotId };
+              } catch (error) {
+                console.error("Falha inesperada ao confirmar correção do mapa; nenhuma nova tentativa foi iniciada.", error);
+                alert("Não foi possível confirmar a correção do mapa. Não repita automaticamente; atualize os dados e confira o endereço e o histórico.");
+                return { ok: false };
+              }
+            }}
+            productsList={productsList}
               currentUser={currentUser}
               e1Layout={warehouseLayout}
               warehousePositions={warehousePositions}
@@ -9649,7 +10368,7 @@ const pct = total > 0 ? (occupied / total) * 100 : 0;
           )}
 
           {/* TAB 9: IA CONSULTOR (AI dialogue workspace chat) */}
-          {activeTab === "ai" && (
+          {activeTab === "ai" && canAccessTab("ai") && (
             <div className="space-y-6 pt-8">
               
               <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-xs flex flex-col lg:flex-row gap-5 items-stretch">
@@ -9681,7 +10400,7 @@ const pct = total > 0 ? (occupied / total) * 100 : 0;
                             {msg.text}
                           </div>
 
-                          {msg.kind === "executive" && (
+                          {msg.kind === "executive" && canExportConsultor && (
                             <div className="mt-4 border-t border-slate-100 pt-3">
                               <button
                                 type="button"
@@ -9782,10 +10501,13 @@ const pct = total > 0 ? (occupied / total) * 100 : 0;
           )}
 
           {/* TAB 10: CONTROLE DE USUÁRIOS */}
-          {activeTab === "users" && (
+          {activeTab === "users" && canAccessTab("users") && (
             <div className="space-y-6">
               <AdminUsersManagement
                 users={users}
+                usersLoading={usersLoading}
+                usersLoadError={usersLoadError}
+                onReloadUsers={() => { void loadUsersFromSupabase(); }}
                 currentUser={currentUser}
                 onRegisterUser={handleRegisterUser}
                 onDeleteUser={handleDeleteUser}

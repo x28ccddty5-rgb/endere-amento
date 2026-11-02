@@ -6,6 +6,8 @@ interface SkuAnalysisDrawerProps {
   uniqueSKUs: number;
   slots: WarehouseSlot[];
   history: HistoricoMov[];
+  canExportReports?: boolean;
+  requestReportExportPermission?: () => Promise<boolean>;
 }
 
 export function SkuAnalysisDrawer({
@@ -14,6 +16,8 @@ export function SkuAnalysisDrawer({
   uniqueSKUs,
   slots,
   history,
+  canExportReports = true,
+  requestReportExportPermission,
 }: SkuAnalysisDrawerProps) {
   const [selectedRanking, setSelectedRanking] =
     useState<10 | 20 | null>(null);
@@ -235,10 +239,12 @@ export function SkuAnalysisDrawer({
         },
       ];
   
-  const exportRankingCsv = (
+  const exportRankingCsv = async (
   ranking: typeof top10Skus,
   nomeArquivo: string
 ) => {
+  if (!canExportReports) return;
+  if (requestReportExportPermission && !(await requestReportExportPermission())) return;
 
   const headers = [
     "Referência",
@@ -539,9 +545,10 @@ export function SkuAnalysisDrawer({
           
                 <div className="flex gap-2">
 
-                  <button
-                    onClick={() =>
-                      exportRankingCsv(
+                  {canExportReports && (
+                    <button
+                      onClick={() =>
+                        exportRankingCsv(
                         selectedRanking === 10
                           ? top10Skus
                           : top20Skus,
@@ -552,6 +559,7 @@ export function SkuAnalysisDrawer({
                   >
                     Exportar CSV
                   </button>
+                  )}
                 
                   <button
                     onClick={() => setSelectedRanking(null)}

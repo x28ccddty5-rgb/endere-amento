@@ -1,0 +1,32 @@
+﻿ENDERECAMENTO - INVENTARIO ESTATICO DE CHAMADAS DE AUTORIZACAO E ESCRITA
+Gerado em: 2026-10-30 20:08:33 -03:00
+Raiz do codigo: C:\Projetos\endere-amento
+Modo: leitura estatica dos arquivos-fonte; nenhum servidor, banco ou endpoint e chamado.
+Arquivos escaneados: src, supabase/functions e server.ts se existir.
+Nao foram lidos arquivos .env, node_modules, dist, banco de dados ou logs.
+RPC_CALLSITE_COUNT=13
+DIRECT_DML_CALLSITE_COUNT=10
+---
+DIRECT_DML_CALLSITE|src\App.tsx|from_line=1804|table=products|method=INSERT|method_line=1805
+DIRECT_DML_CALLSITE|src\App.tsx|from_line=1834|table=products|method=UPDATE|method_line=1835
+DIRECT_DML_CALLSITE|src\App.tsx|from_line=1866|table=products|method=DELETE|method_line=1867
+DIRECT_DML_CALLSITE|src\App.tsx|from_line=808|table=divergencias|method=UPSERT|method_line=809
+DIRECT_DML_CALLSITE|src\App.tsx|from_line=815|table=divergencias|method=UPSERT|method_line=816
+DIRECT_DML_CALLSITE|src\components\DashboardCards.tsx|from_line=263|table=occupancy_history|method=UPSERT|method_line=264
+DIRECT_DML_CALLSITE|src\components\DashboardCards.tsx|from_line=328|table=occupancy_history|method=UPSERT|method_line=328
+DIRECT_DML_CALLSITE|src\lib\warehouseLayout.ts|from_line=147|table=warehouse_layout|method=UPSERT|method_line=148
+DIRECT_DML_CALLSITE|src\lib\warehousePositions.ts|from_line=121|table=warehouse_layout_positions|method=UPSERT|method_line=122
+DIRECT_DML_CALLSITE|supabase\functions\admin-users\index.ts|from_line=271|table=profiles|method=INSERT|method_line=272
+RPC_CALLSITE|src\App.tsx|170|get_shared_lancamento_draft
+RPC_CALLSITE|src\App.tsx|2034|update_slot_metadata_atomic
+RPC_CALLSITE|src\App.tsx|2545|get_shared_lancamento_batch_result
+RPC_CALLSITE|src\App.tsx|2658|resolve_stock_divergence_atomic
+RPC_CALLSITE|src\App.tsx|2833|zero_physical_divergence_address_atomic
+RPC_CALLSITE|src\App.tsx|3767|get_shared_lancamento_batch_result
+RPC_CALLSITE|src\lib\appPermissionService.ts|18|get_my_app_context
+RPC_CALLSITE|src\lib\permissionAdminService.ts|12|get_permission_admin_matrix
+RPC_CALLSITE|src\lib\permissionAdminService.ts|24|save_role_permission_changes
+RPC_CALLSITE|src\lib\permissionAdminService.ts|39|save_user_permission_overrides
+RPC_CALLSITE|src\lib\warehousePositions.ts|145|delete_warehouse_position
+RPC_CALLSITE|src\lib\warehousePositions.ts|165|delete_warehouse_module
+RPC_CALLSITE|src\PermissionTestApp.tsx|63|permission_test_list_users
