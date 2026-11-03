@@ -277,7 +277,7 @@ export const WarehouseLayoutPanel: React.FC<WarehouseLayoutPanelProps> = ({
   };
 
   const handleSave = async () => {
-    if (!canViewStructure) {
+    if (!admin) {
       alert("Somente usuários Administrador podem alterar a configuração física.");
       return;
     }
@@ -482,6 +482,19 @@ export const WarehouseLayoutPanel: React.FC<WarehouseLayoutPanelProps> = ({
         0
       );
 
+        if (!canViewStructure) {
+    return (
+      <div className="rounded-xl border border-red-200 bg-red-50 p-6">
+        <p className="text-sm font-black text-red-700 uppercase">
+          Acesso restrito
+        </p>
+        <p className="mt-1 text-xs font-semibold text-red-600">
+          Seu perfil não possui permissão para visualizar a estrutura física do estoque.
+        </p>
+      </div>
+    );
+  }
+  
         if (!admin) {
     return (
       <div className="space-y-5">
