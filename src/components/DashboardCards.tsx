@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { OccupancyAnalysisDrawer } from "./OccupancyAnalysisDrawer";
 import { FreeCapacityDrawer } from "./FreeCapacityDrawer";
 import { OccupationRateDrawer } from "./OccupationRateDrawer";
@@ -83,7 +83,6 @@ interface DashboardCardsProps {
   e1CapacityTotal: number;
   warehousePositions: WarehousePositionConfig[];
   appMode?: string;
-  canPerformActions?: boolean;
   canExportReports?: boolean;
   requestReportExportPermission?: () => Promise<boolean>;
 }
@@ -106,7 +105,6 @@ export const DashboardCards: React.FC<DashboardCardsProps> = ({
   e1CapacityTotal,
   warehousePositions,
   appMode,
-  canPerformActions = false,
   canExportReports = true,
   requestReportExportPermission,
 }) => {
@@ -118,8 +116,6 @@ export const DashboardCards: React.FC<DashboardCardsProps> = ({
   const [showTotalStockAnalysis, setShowTotalStockAnalysis] = useState(false);
   const [occupancyHistory, setOccupancyHistory] = useState<OccupancySnapshot[]>([]);
   const [occupancyHistoryLoaded, setOccupancyHistoryLoaded] = useState(false);
-  const occupancyWriteTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const lastAutomaticOccupancyAttemptRef = useRef(0);
   
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [drawerDays, setDrawerDays] = useState(7);
@@ -253,107 +249,10 @@ export const DashboardCards: React.FC<DashboardCardsProps> = ({
     return () => { active = false; };
   }, []);
 
-  const saveOccupancySnapshot = async () => {
-  try {
-    const now = new Date();
-    const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
-
-    const response = await guardedSupabaseRequest("occupancy-history.write", () =>
-      supabase
-        .from("occupancy_history")
-        .upsert({
-          snapshot_date: today,
-          occupied_positions: occupiedSlots,
-          free_positions: freeSlots,
-          total_positions: totalSlots,
-          occupancy_percent: Number(occupationRate.toFixed(2)),
-          total_pieces: totalStoredQuantity,
-        }, { onConflict: "snapshot_date" })
-    );
-
-    if (response.error) throw response.error;
-
-    await loadOccupancyHistory();
-    alert("Snapshot registrado com sucesso.");
-  } catch (err) {
-    console.error(err);
-    alert("Erro ao registrar snapshot.");
-  }
-};
-  
   // 2. SKUs & Total Quantities
   const uniqueSKUs = slotSummary.uniqueSKUs;
   const totalStoredQuantity = slotSummary.storedQuantity;
 
-  useEffect(() => {
-    // Só avalia gravação automática depois de ler os snapshots atuais. Isso evita
-    // sobrescrever o snapshot do dia logo ao montar o dashboard sem comparar o estado salvo.
-    if (!occupancyHistoryLoaded || !canPerformActions || totalSlots <= 0) return;
-
-    if (occupancyWriteTimerRef.current !== null) {
-      clearTimeout(occupancyWriteTimerRef.current);
-      occupancyWriteTimerRef.current = null;
-    }
-
-    const snapshotNow = new Date();
-    const today = `${snapshotNow.getFullYear()}-${String(snapshotNow.getMonth() + 1).padStart(2, "0")}-${String(snapshotNow.getDate()).padStart(2, "0")}`;
-    const payload: OccupancySnapshot = {
-      snapshot_date: today,
-      occupied_positions: occupiedSlots,
-      free_positions: freeSlots,
-      total_positions: totalSlots,
-      occupancy_percent: Number(occupationRate.toFixed(2)),
-      total_pieces: totalStoredQuantity,
-    };
-    const todaySnapshot = occupancyHistory.find(item => item.snapshot_date === today);
-    const snapshotUnchanged = todaySnapshot &&
-      todaySnapshot.occupied_positions === payload.occupied_positions &&
-      todaySnapshot.free_positions === payload.free_positions &&
-      todaySnapshot.total_positions === payload.total_positions &&
-      Number(todaySnapshot.occupancy_percent) === payload.occupancy_percent &&
-      todaySnapshot.total_pieces === payload.total_pieces;
-
-    // Abrir/fechar o dashboard sem mudança real não deve gerar um upsert de novo.
-    if (snapshotUnchanged) return;
-
-    // Um snapshot do dia pode ser atualizado no máximo uma vez a cada 15 minutos.
-    const now = Date.now();
-    const remainingCooldown = Math.max(0, 15 * 60 * 1000 - (now - lastAutomaticOccupancyAttemptRef.current));
-    const delay = Math.max(750, remainingCooldown);
-
-    occupancyWriteTimerRef.current = setTimeout(() => {
-      occupancyWriteTimerRef.current = null;
-      lastAutomaticOccupancyAttemptRef.current = Date.now();
-      void guardedSupabaseRequest("occupancy-history.write", () =>
-        supabase.from("occupancy_history").upsert(payload, { onConflict: "snapshot_date" })
-      ).then(({ error, blocked }) => {
-        if (error) {
-          if (!blocked) console.error("Erro ao registrar snapshot automático de ocupação:", error);
-          return;
-        }
-        setOccupancyHistory(current => [
-          ...current.filter(item => item.snapshot_date !== today),
-          payload,
-        ].sort((a, b) => a.snapshot_date.localeCompare(b.snapshot_date)));
-      });
-    }, delay);
-
-    return () => {
-      if (occupancyWriteTimerRef.current !== null) {
-        clearTimeout(occupancyWriteTimerRef.current);
-        occupancyWriteTimerRef.current = null;
-      }
-    };
-  }, [
-    canPerformActions,
-    occupancyHistoryLoaded,
-    occupancyHistory,
-    totalSlots,
-    occupiedSlots,
-    freeSlots,
-    occupationRate,
-    totalStoredQuantity,
-  ]);
 
 
 const synchronizationSummary = useMemo(() => {
@@ -609,17 +508,6 @@ const tempoMedio =
   return (
     <div className="space-y-5" id="dashboard-container">
       
-      {canPerformActions && (
-        <div className="mt-4 pt-4 border-t">
-          <button
-            onClick={saveOccupancySnapshot}
-            className="text-xs text-slate-500 hover:text-slate-700"
-          >
-            Registrar Ocupação
-          </button>
-        </div>
-      )}
-
       {/* SECTION 1: ENDEREÇAMENTO */}
       <div>
         <h3 className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-2 flex items-center gap-1.5">

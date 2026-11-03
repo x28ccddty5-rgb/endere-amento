@@ -59,6 +59,7 @@ import {
 import { PRODUCT_CATALOG, findProductInList } from "./data/products";
 import { normalizeRole, canExecuteOperations, isAdmin, isReadOnlyRole } from "./constants/permissions";
 import { DashboardCards } from "./components/DashboardCards";
+import { StockBalanceHistoryPanel } from "./components/StockBalanceHistoryPanel";
 import { InteractiveMapa } from "./components/InteractiveMapa";
 import { AdminUsersManagement, AppUser } from "./components/AdminUsersManagement";
 import { DivergenciasPanel } from "./components/DivergenciasPanel";
@@ -8305,6 +8306,8 @@ if (refRaw) {
         canViewLaunch={canAccessTab("lançamento")}
         canViewDivergences={canAccessTab("divergências")}
         canViewHistory={canAccessTab("histórico")}
+        canExportHistory={canExportHistory}
+        requestHistoryExportPermission={() => requestReportExportPermission(["history.view"])}
         canUseConsultor={canAccessTab("ai")}
         canViewProducts={canAccessTab("base")}
         canViewWarehouseLayout={canAccessTab("configuracao")}
@@ -8651,10 +8654,6 @@ if (refRaw) {
                 e1CapacityTotal={getE1TotalCapacity(warehouseLayout)}
                 warehousePositions={warehousePositions}
                 appMode="avancado"
-                canPerformActions={permissionEnforcementEnabled
-                  ? canUseAppPermissionForUi("stock.physical_correction") ||
-                    (canUseAppPermissionForUi("divergences.view") && canUseAppPermissionForUi("divergences.resolve"))
-                  : canExecuteOperations(currentUser?.role)}
                 canExportReports={canExportDashboardDetails}
                 requestReportExportPermission={() => requestReportExportPermission(["dashboard.view"])}
               />
@@ -10022,6 +10021,10 @@ const pct = total > 0 ? (occupied / total) * 100 : 0;
 
             return (
               <div className="space-y-6">
+                <StockBalanceHistoryPanel
+                  canExportReports={canExportHistory}
+                  requestReportExportPermission={() => requestReportExportPermission(["history.view"])}
+                />
                 <div className="bg-white border border-slate-200 rounded-xl p-6 shadow-xs">
                   <div className="pb-3 border-b border-slate-100 flex items-center justify-between mb-4">
                     <div>

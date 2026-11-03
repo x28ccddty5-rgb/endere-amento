@@ -26,6 +26,7 @@ import type { Divergencia, Galpao, HistoricoMov, Product, Restricao, WarehouseSl
 import type { AppUser } from "../AdminUsersManagement";
 import { BaseDeDadosPanel } from "../BaseDeDadosPanel";
 import { WarehouseLayoutPanel } from "../WarehouseLayoutPanel";
+import { StockBalanceHistoryPanel } from "../StockBalanceHistoryPanel";
 
 type MobileTab = "endereçamento" | "lançamento" | "divergências" | "histórico" | "ai" | "base" | "configuracao";
 
@@ -47,6 +48,8 @@ interface MobileShellProps {
   canViewLaunch: boolean;
   canViewDivergences: boolean;
   canViewHistory: boolean;
+  canExportHistory: boolean;
+  requestHistoryExportPermission?: () => Promise<boolean>;
   canUseConsultor: boolean;
   canViewProducts: boolean;
   canViewWarehouseLayout: boolean;
@@ -216,6 +219,8 @@ export function MobileShell({
   canViewLaunch,
   canViewDivergences,
   canViewHistory,
+  canExportHistory,
+  requestHistoryExportPermission,
   canUseConsultor,
   canViewProducts,
   canViewWarehouseLayout,
@@ -1973,9 +1978,14 @@ export function MobileShell({
             <div>
               <h1 className="text-xl font-black tracking-tight">Histórico</h1>
               <p className="mt-1 text-xs font-medium text-slate-500">
-                Consulte as movimentações recentes.
+                Consulte as movimentações e as fotografias diárias de saldo por SKU.
               </p>
             </div>
+
+            <StockBalanceHistoryPanel
+              canExportReports={canExportHistory}
+              requestReportExportPermission={requestHistoryExportPermission}
+            />
 
             <input
               value={historySearch}
