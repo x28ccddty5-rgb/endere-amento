@@ -279,6 +279,7 @@ export function MobileShell({
   const [historyGalpao, setHistoryGalpao] = useState("");
   const [historyObservacao, setHistoryObservacao] = useState("");
   const [historyFiltersOpen, setHistoryFiltersOpen] = useState(false);
+  const [historyContentTab, setHistoryContentTab] = useState<"movements" | "daily">("movements");
 
   const [selectedDivergenciaId, setSelectedDivergenciaId] = useState<string | null>(null);
   const [divergenciaResolveObservacao, setDivergenciaResolveObservacao] = useState("");
@@ -1982,11 +1983,35 @@ export function MobileShell({
               </p>
             </div>
 
-            <StockBalanceHistoryPanel
-              canExportReports={canExportHistory}
-              requestReportExportPermission={requestHistoryExportPermission}
-            />
+            <div role="tablist" aria-label="Tipo de histórico" className="grid grid-cols-2 gap-1 rounded-2xl border border-slate-200 bg-slate-100 p-1">
+              <button
+                type="button"
+                role="tab"
+                aria-selected={historyContentTab === "movements"}
+                onClick={() => setHistoryContentTab("movements")}
+                className={`min-h-11 rounded-xl px-2 text-[10px] font-black transition ${historyContentTab === "movements" ? "bg-white text-slate-900 shadow-sm" : "text-slate-500"}`}
+              >
+                Movimentações
+              </button>
+              <button
+                type="button"
+                role="tab"
+                aria-selected={historyContentTab === "daily"}
+                onClick={() => setHistoryContentTab("daily")}
+                className={`min-h-11 rounded-xl px-2 text-[10px] font-black transition ${historyContentTab === "daily" ? "bg-white text-slate-900 shadow-sm" : "text-slate-500"}`}
+              >
+                Saldo diário por SKU
+              </button>
+            </div>
 
+            {historyContentTab === "daily" && (
+              <StockBalanceHistoryPanel
+                canExportReports={canExportHistory}
+                requestReportExportPermission={requestHistoryExportPermission}
+              />
+            )}
+
+            <div hidden={historyContentTab !== "movements"} className="space-y-4">
             <input
               value={historySearch}
               onChange={event => setHistorySearch(event.target.value)}
@@ -2108,6 +2133,7 @@ export function MobileShell({
                   Nenhuma movimentação encontrada.
                 </div>
               )}
+            </div>
             </div>
           </section>
         )}

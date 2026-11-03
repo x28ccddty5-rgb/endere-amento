@@ -1107,6 +1107,7 @@ export default function App() {
   const [usersLoadError, setUsersLoadError] = useState<string | null>(null);
 
   const [activeTab, setActiveTab] = useState<string>("endereçamento");
+  const [historyContentTab, setHistoryContentTab] = useState<"movements" | "daily">("movements");
 
   const getAppRole = (role: string): AppUser["role"] => {
     switch (role.trim().toLowerCase()) {
@@ -10021,11 +10022,33 @@ const pct = total > 0 ? (occupied / total) * 100 : 0;
 
             return (
               <div className="space-y-6">
-                <StockBalanceHistoryPanel
-                  canExportReports={canExportHistory}
-                  requestReportExportPermission={() => requestReportExportPermission(["history.view"])}
-                />
-                <div className="bg-white border border-slate-200 rounded-xl p-6 shadow-xs">
+                <div role="tablist" aria-label="Tipo de histórico" className="inline-flex w-full sm:w-auto rounded-xl border border-slate-200 bg-slate-100 p-1 gap-1">
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected={historyContentTab === "movements"}
+                    onClick={() => setHistoryContentTab("movements")}
+                    className={`flex-1 sm:flex-none rounded-lg px-4 py-2.5 text-xs font-bold transition ${historyContentTab === "movements" ? "bg-white text-slate-900 shadow-sm" : "text-slate-500 hover:text-slate-800"}`}
+                  >
+                    Movimentações
+                  </button>
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected={historyContentTab === "daily"}
+                    onClick={() => setHistoryContentTab("daily")}
+                    className={`flex-1 sm:flex-none rounded-lg px-4 py-2.5 text-xs font-bold transition ${historyContentTab === "daily" ? "bg-white text-slate-900 shadow-sm" : "text-slate-500 hover:text-slate-800"}`}
+                  >
+                    Saldo diário por SKU
+                  </button>
+                </div>
+                {historyContentTab === "daily" && (
+                  <StockBalanceHistoryPanel
+                    canExportReports={canExportHistory}
+                    requestReportExportPermission={() => requestReportExportPermission(["history.view"])}
+                  />
+                )}
+                <div hidden={historyContentTab !== "movements"} className="bg-white border border-slate-200 rounded-xl p-6 shadow-xs">
                   <div className="pb-3 border-b border-slate-100 flex items-center justify-between mb-4">
                     <div>
                       <h3 className="text-md font-bold text-slate-800">Log Temporal de Movimentações</h3>
