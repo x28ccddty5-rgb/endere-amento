@@ -1,7 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { Check, CircleAlert, Plus, Save, Trash2, Warehouse } from "lucide-react";
 import { calcularPaletes } from "../lib/palletUtils";
-import { isAdmin } from "../constants/permissions";
 import { WarehouseLayoutEntry, WarehousePositionConfig, WarehouseSlot, Product } from "../types";
 import { normalizeWarehouseLayoutEntries } from "../lib/warehouseLayout";
 
@@ -11,6 +10,8 @@ interface WarehouseLayoutPanelProps {
   positions: WarehousePositionConfig[];
   productsList: Product[];
   currentUser: any;
+  canView: boolean;
+  canManage: boolean;
   loading?: boolean;
   saving?: boolean;
   loadError?: string | null;
@@ -42,6 +43,8 @@ export const WarehouseLayoutPanel: React.FC<WarehouseLayoutPanelProps> = ({
   positions,
   productsList,
   currentUser,
+  canView,
+  canManage,
   loading = false,
   saving = false,
   loadError = null,
@@ -58,7 +61,8 @@ export const WarehouseLayoutPanel: React.FC<WarehouseLayoutPanelProps> = ({
   const [moduleSearch, setModuleSearch] = useState("");
   const [newPositionByModule, setNewPositionByModule] = useState<Record<string, string>>({});
 
-  const admin = isAdmin(currentUser?.role);
+  const admin = canManage;
+  const canViewStructure = canView || canManage;
 
   useEffect(() => {
     setDraft(normalizeWarehouseLayoutEntries(layout));
@@ -273,7 +277,7 @@ export const WarehouseLayoutPanel: React.FC<WarehouseLayoutPanelProps> = ({
   };
 
   const handleSave = async () => {
-    if (!admin) {
+    if (!canViewStructure) {
       alert("Somente usuários Administrador podem alterar a configuração física.");
       return;
     }
@@ -478,6 +482,160 @@ export const WarehouseLayoutPanel: React.FC<WarehouseLayoutPanelProps> = ({
         0
       );
 
+        if (!admin) {
+    return (
+      <div className="space-y-5">
+        <div className="rounded-xl border border-slate-200 bg-white p-4 md:p-6">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h2 className="text-base font-black uppercase text-slate-800">
+                Estrutura física dos estoques
+              </h2>
+              <p className="mt-1 text-xs text-slate-500">
+                Consulta da estrutura cadastrada no banco de dados oficial.
+              </p>
+            </div>
+            <span className="rounded-lg bg-blue-50 px-3 py-2 text-xs font-bold text-blue-700">
+              SOMENTE LEITURA
+            </span>
+          </div>
+
+          {loadError && (
+            <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs font-semibold text-amber-800">
+              {loadError}
+            </div>
+          )}
+
+          <div className="mt-5 flex flex-wrap gap-2">
+            {(["1", "2", "3"] as const).map(estoque => (
+              <button
+                key={estoque}
+                type="button"
+                onClick={() => setSelectedEstoque(estoque)}
+                className={`rounded-lg border px-4 py-2 text-xs font-black uppercase ${
+                  selectedEstoque === estoque
+                    ? "border-blue-600 bg-blue-600 text-white"
+                    : "border-slate-200 bg-white text-slate-600"
+                }`}
+              >
+                Estoque {estoque}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {loading ? (
+          <div className="rounded-xl border border-slate-200 bg-white p-6 text-center text-sm font-semibold text-slate-500">
+            Carregando estrutura física...
+          </div>
+        ) : (
+          <div className="space-y-4">
+            <div className="rounded-xl border border-slate-200 bg-white p-4">
+              <p className="text-xs font-bold uppercase text-slate-500">
+                Módulos encontrados
+              </p>
+              <p className="mt-1 text-2xl font-black text-slate-800">
+                {selectedEntries.length}
+              </p>
+              <p className="mt-1 text-xs text-slate-500">
+                {selectedEntries.filter(entry => entry.ativo).length} módulos ativos
+              </p>
+            </div>
+
+            {selectedEntries.length === 0 ? (
+              <div className="rounded-xl border border-slate-200 bg-white p-6 text-center text-sm text-slate-500">
+                Nenhum módulo encontrado para este estoque.
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
+                {selectedEntries.map(entry => {
+                  const modulePositions = !isE1
+                    ? positionsByModule[`${entry.estoque}-${entry.modulo}`] || []
+                    : [];
+
+                  const activePositionCount =
+                    modulePositions.filter(position => position.ativo).length;
+
+                  const occupiedPallets =
+                    occupancyByModule[String(Number(entry.modulo))] || 0;
+
+                  return (
+                    <article
+                      key={entry.id}
+                      className={`rounded-xl border p-4 ${
+                        entry.ativo
+                          ? "border-slate-200 bg-white"
+                          : "border-slate-200 bg-slate-50"
+                      }`}
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <div>
+                          <p className="text-[10px] font-bold uppercase text-slate-400">
+                            Estoque {entry.estoque}
+                          </p>
+                          <h3 className="font-mono text-xl font-black text-slate-800">
+                            {isE1 ? `R${entry.modulo}` : `M${entry.modulo}`}
+                          </h3>
+                        </div>
+                        <span
+                          className={`rounded-md px-2 py-1 text-[10px] font-black uppercase ${
+                            entry.ativo
+                              ? "bg-green-50 text-green-700"
+                              : "bg-slate-200 text-slate-600"
+                          }`}
+                        >
+                          {entry.ativo ? "Ativo" : "Inativo"}
+                        </span>
+                      </div>
+
+                      {isE1 ? (
+                        <div className="mt-3 space-y-1 text-xs text-slate-600">
+                          <p>
+                            Capacidade: <strong>{entry.capacidade} paletes</strong>
+                          </p>
+                          <p>
+                            Ocupação calculada: <strong>{occupiedPallets} paletes</strong>
+                          </p>
+                        </div>
+                      ) : (
+                        <div className="mt-3">
+                          <p className="text-xs text-slate-600">
+                            Posições ativas:{" "}
+                            <strong>{activePositionCount} de {modulePositions.length}</strong>
+                          </p>
+                          <div className="mt-2 flex flex-wrap gap-1.5">
+                            {modulePositions.map(position => (
+                              <span
+                                key={position.id}
+                                className={`rounded-md px-2 py-1 text-[10px] font-bold ${
+                                  position.ativo
+                                    ? "bg-green-50 text-green-700"
+                                    : "bg-slate-200 text-slate-500"
+                                }`}
+                              >
+                                {position.posicao}
+                                {!position.ativo ? " · Inativa" : ""}
+                              </span>
+                            ))}
+                            {modulePositions.length === 0 && (
+                              <span className="text-xs text-slate-400">
+                                Sem posições cadastradas.
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      )}
+                    </article>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    );
+  }
+  
   return (
     <div className="space-y-6">
       <div className="rounded-xl border border-slate-200 bg-white p-4 md:p-6 shadow-xs">
