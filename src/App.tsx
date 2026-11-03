@@ -904,7 +904,12 @@ export default function App() {
   // Permission enforcement is opt-in during rollout and can run in development only
   // against the local Supabase sandbox. The normal localhost -> production setup stays unchanged.
   const permissionEnforcementEnabled = isAppPermissionEnforcementEnabled();
-  const [appPermissionContext, setAppPermissionContext] = useState<AppPermissionContext | null>(null);
+  const [appPermissionContext, setAppPermissionContextState] = useState<AppPermissionContext | null>(null);
+  const appPermissionContextRef = useRef<AppPermissionContext | null>(null);
+  const setAppPermissionContext = (context: AppPermissionContext | null) => {
+    appPermissionContextRef.current = context;
+    setAppPermissionContextState(context);
+  };
   const [permissionContextStatus, setPermissionContextStatus] = useState<"idle" | "loading" | "ready" | "error">("idle");
   const [permissionContextError, setPermissionContextError] = useState<string | null>(null);
   const [permissionContextRevision, setPermissionContextRevision] = useState(0);
@@ -947,8 +952,16 @@ export default function App() {
       return () => { active = false; };
     }
 
-    setAppPermissionContext(null);
-    setPermissionContextStatus("loading");
+    const hasReusablePermissionContext =
+      appPermissionContextRef.current?.userId === authUserId;
+
+    if (!hasReusablePermissionContext) {
+      setAppPermissionContext(null);
+      setPermissionContextStatus("loading");
+    } else {
+      setPermissionContextStatus("ready");
+    }
+
     setPermissionContextError(null);
 
     loadMyAppPermissionContext(authUserId)
@@ -1607,7 +1620,11 @@ useEffect(() => {
     permissionContextStatus !== "ready" ||
     (!canUseAppPermissionForUi("warehouse.layout.view") &&
       !canUseAppPermissionForUi("warehouse.layout.manage") &&
-      !canUseAppPermissionForUi("map.view"))
+      !canUseAppPermissionForUi("map.view") &&
+      !canUseAppPermissionForUi("stock.launch.view") &&
+      !canUseAppPermissionForUi("stock.launch.create") &&
+      !canUseAppPermissionForUi("stock.transfer.create") &&
+      !canUseAppPermissionForUi("stock.batch.process"))
   )) {
     setWarehouseLayout(getDefaultE1Layout());
     setWarehouseLayoutError(null);
@@ -1647,7 +1664,11 @@ useEffect(() => {
     permissionContextStatus !== "ready" ||
     (!canUseAppPermissionForUi("warehouse.layout.view") &&
       !canUseAppPermissionForUi("warehouse.layout.manage") &&
-      !canUseAppPermissionForUi("map.view"))
+      !canUseAppPermissionForUi("map.view") &&
+      !canUseAppPermissionForUi("stock.launch.view") &&
+      !canUseAppPermissionForUi("stock.launch.create") &&
+      !canUseAppPermissionForUi("stock.transfer.create") &&
+      !canUseAppPermissionForUi("stock.batch.process"))
   )) {
     setWarehousePositions([]);
     setWarehousePositionsError(null);
@@ -4538,10 +4559,37 @@ if (
       observacao: string;
     }
   ): Promise<boolean> => {
-    if (!hasAccess("operador")) {
-      alert("Seu perfil não possui permissão para efetuar lançamentos.");
-      return false;
-    }
+    if (!permissionEnforcementEnabled && !hasAccess("operador")) {
+  alert("Seu perfil não possui permissão para efetuar lançamentos.");
+  return false;
+  }
+
+  if (
+    permissionEnforcementEnabled &&
+    !canUseAppPermissionForUi("stock.launch.create")
+  ) {
+    alert("Seu perfil não possui permissão para efetuar lançamentos.");
+    return false;
+  }
+
+  if (
+    permissionEnforcementEnabled &&
+    (warehouseLayoutLoading || warehousePositionsLoading)
+  ) {
+    alert("A estrutura física ainda está sendo carregada. Aguarde alguns segundos e tente novamente.");
+    return false;
+  }
+
+  if (
+    permissionEnforcementEnabled &&
+    (warehouseLayoutError || warehousePositionsError)
+  ) {
+    alert(
+      "Não foi possível carregar a estrutura física do estoque. Atualize o aplicativo e tente novamente.\n\n" +
+      [warehouseLayoutError, warehousePositionsError].filter(Boolean).join("\n")
+    );
+    return false;
+  }
 
     const estVal = (mobileData?.estoque ?? unitEstoque).trim().toUpperCase().replace(/^E/, "");
     const cleanCorredor = (mobileData?.modulo ?? unitCorredor).trim().toUpperCase().replace(/^[RM]/i, "");
@@ -4723,10 +4771,37 @@ if (
     destinationId: string,
     observation = ""
   ): Promise<boolean> => {
-    if (!hasAccess("operador")) {
-      alert("Seu perfil não possui permissão para transferir posições.");
-      return false;
-    }
+    if (!permissionEnforcementEnabled && !hasAccess("operador")) {
+  alert("Seu perfil não possui permissão para transferir posições.");
+  return false;
+  }
+
+  if (
+    permissionEnforcementEnabled &&
+    !canUseAppPermissionForUi("stock.transfer.create")
+  ) {
+    alert("Seu perfil não possui permissão para transferir posições.");
+    return false;
+  }
+
+  if (
+    permissionEnforcementEnabled &&
+    (warehouseLayoutLoading || warehousePositionsLoading)
+  ) {
+    alert("A estrutura física ainda está sendo carregada. Aguarde alguns segundos e tente novamente.");
+    return false;
+  }
+
+  if (
+    permissionEnforcementEnabled &&
+    (warehouseLayoutError || warehousePositionsError)
+  ) {
+    alert(
+      "Não foi possível carregar a estrutura física do estoque. Atualize o aplicativo e tente novamente.\n\n" +
+      [warehouseLayoutError, warehousePositionsError].filter(Boolean).join("\n")
+    );
+    return false;
+  }
 
     if (!navigator.onLine) {
       alert("A transferência exige conexão com o Supabase. A operação offline ainda não está habilitada para escrita.");
@@ -10309,6 +10384,16 @@ const pct = total > 0 ? (occupied / total) * 100 : 0;
               positions={warehousePositions}
               productsList={productsList}
               currentUser={currentUser}
+              canView={
+                permissionEnforcementEnabled
+                  ? canUseAppPermissionForUi("warehouse.layout.view")
+                  : Boolean(currentUser && isAdmin(currentUser.role))
+              }
+              canManage={
+                permissionEnforcementEnabled
+                  ? canUseAppPermissionForUi("warehouse.layout.manage")
+                  : Boolean(currentUser && isAdmin(currentUser.role))
+              }
               loading={warehouseLayoutLoading || warehousePositionsLoading}
               saving={warehouseLayoutSaving || warehousePositionsSaving}
               loadError={warehouseLayoutError || warehousePositionsError}
